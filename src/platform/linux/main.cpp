@@ -1,8 +1,10 @@
 #include <filesystem>
 #include <cctype>
+#include <array>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "../../core/gba_core.h"
@@ -111,6 +113,180 @@ int RunGameplayTest(const std::string& rom_path) {
   return 3;
 }
 
+int RunMainlineRegression(const std::string& rom_dir) {
+  static constexpr std::array<const char*, 7> kMainlineRoms = {
+      "test1.gba", "test2.gba", "test3.gba", "test4.gba", "test5.gba", "test6.gba", "test7.gba",
+  };
+
+  int ok = 0;
+  int fail = 0;
+  std::cout << "MainlineRegression dir='" << rom_dir << "'\n";
+
+  for (const char* file_name : kMainlineRoms) {
+    const fs::path rom_path = fs::path(rom_dir) / file_name;
+    if (!fs::exists(rom_path)) {
+      std::cerr << "[FAIL] " << file_name << " : ROM file not found.\n";
+      ++fail;
+      continue;
+    }
+
+    std::vector<uint8_t> rom;
+    std::string error;
+    if (!gba::LoadFile(rom_path.string(), &rom, &error)) {
+      std::cerr << "[FAIL] " << file_name << " : load failed: " << error << "\n";
+      ++fail;
+      continue;
+    }
+
+    gba::GBACore core;
+    if (!core.LoadROM(rom, &error)) {
+      std::cerr << "[FAIL] " << file_name << " : core load failed: " << error << "\n";
+      ++fail;
+      continue;
+    }
+    error.clear();
+
+    const auto hash_before = core.ComputeFrameHash();
+    const auto state_before = core.gameplay_state();
+    for (int i = 0; i < 60; ++i) {
+      core.SetKeys(gba::kKeyRight | gba::kKeyA);
+      core.StepFrame();
+    }
+    for (int i = 0; i < 60; ++i) {
+      core.SetKeys(gba::kKeyDown | gba::kKeyB);
+      core.StepFrame();
+    }
+    core.SetKeys(0);
+    core.StepFrame();
+
+    const auto hash_after = core.ComputeFrameHash();
+    const auto state_after = core.gameplay_state();
+    const auto& info = core.GetRomInfo();
+    const bool frame_advanced = core.frame_count() == 121;
+    const bool cycles_advanced = core.executed_cycles() == 121ULL * 280896ULL;
+    const bool frame_changed = hash_before != hash_after;
+    const bool state_changed =
+        (state_before.player_x != state_after.player_x) ||
+        (state_before.player_y != state_after.player_y) ||
+        (state_before.score != state_after.score);
+
+    const bool pass = frame_advanced && cycles_advanced && frame_changed && state_changed;
+    std::cout << "[" << (pass ? "OK" : "FAIL") << "] " << file_name
+              << " title='" << info.title << "' code='" << info.game_code
+              << "' frame_count=" << core.frame_count()
+              << " cycles=" << core.executed_cycles()
+              << " score=" << state_after.score
+              << " hash_before=" << hash_before
+              << " hash_after=" << hash_after
+              << " header_logo=" << info.logo_valid
+              << " header_chk=" << info.complement_check_valid << "\n";
+    if (pass) {
+      ++ok;
+    } else {
+      ++fail;
+    }
+  }
+
+  std::cout << "MainlineRegression Summary: ok=" << ok << " fail=" << fail << "\n";
+  return fail == 0 ? 0 : 5;
+}
+
+int RunMainlinePlaythrough(const std::string& rom_dir) {
+  static constexpr std::array<const char*, 7> kMainlineRoms = {
+      "test1.gba", "test2.gba", "test3.gba", "test4.gba", "test5.gba", "test6.gba", "test7.gba",
+  };
+
+  struct Phase {
+    int frames;
+    uint16_t keys;
+  };
+  static constexpr std::array<Phase, 5> kPlaybook = {{
+      {80, gba::kKeyRight | gba::kKeyA},
+      {50, gba::kKeyDown | gba::kKeyB},
+      {120, gba::kKeyLeft | gba::kKeyA},
+      {80, gba::kKeyUp | gba::kKeyB},
+      {40, gba::kKeyRight | gba::kKeyA | gba::kKeyB},
+  }};
+
+  int ok = 0;
+  int fail = 0;
+  std::cout << "MainlinePlaythrough dir='" << rom_dir << "'\n";
+
+  for (const char* file_name : kMainlineRoms) {
+    const fs::path rom_path = fs::path(rom_dir) / file_name;
+    std::vector<uint8_t> rom;
+    std::string error;
+
+    if (!fs::exists(rom_path)) {
+      std::cerr << "[FAIL] " << file_name << " : ROM file not found.\n";
+      ++fail;
+      continue;
+    }
+    if (!gba::LoadFile(rom_path.string(), &rom, &error)) {
+      std::cerr << "[FAIL] " << file_name << " : load failed: " << error << "\n";
+      ++fail;
+      continue;
+    }
+
+    gba::GBACore core;
+    if (!core.LoadROM(rom, &error)) {
+      std::cerr << "[FAIL] " << file_name << " : core load failed: " << error << "\n";
+      ++fail;
+      continue;
+    }
+    error.clear();
+
+    const uint64_t hash_before = core.ComputeFrameHash();
+    const auto state_before = core.gameplay_state();
+    for (const auto& phase : kPlaybook) {
+      for (int i = 0; i < phase.frames; ++i) {
+        core.SetKeys(phase.keys);
+        core.StepFrame();
+        if (!core.ValidateFrameBuffer(&error)) {
+          std::cerr << "[FAIL] " << file_name << " : framebuffer validation failed: " << error << "\n";
+          core.SetKeys(0);
+          i = phase.frames;
+          break;
+        }
+      }
+      if (!error.empty()) break;
+    }
+    if (!error.empty()) {
+      ++fail;
+      continue;
+    }
+    core.SetKeys(0);
+    core.StepFrame();
+
+    const uint64_t hash_after = core.ComputeFrameHash();
+    const auto state_after = core.gameplay_state();
+    const bool cleared = state_after.cleared;
+    const bool checkpoints_ok = state_after.checkpoints == 0x0F;
+    const bool scored = state_after.score >= 300;
+    const bool moved = (state_after.player_x != state_before.player_x) ||
+                       (state_after.player_y != state_before.player_y);
+    const bool frame_changed = hash_before != hash_after;
+    const bool pass = cleared && checkpoints_ok && scored && moved && frame_changed;
+
+    std::cout << "[" << (pass ? "OK" : "FAIL") << "] " << file_name
+              << " frames=" << core.frame_count()
+              << " score=" << state_after.score
+              << " checkpoints=0x" << std::hex << static_cast<int>(state_after.checkpoints) << std::dec
+              << " cleared=" << cleared
+              << " hash_before=" << hash_before
+              << " hash_after=" << hash_after << "\n";
+
+    if (pass) {
+      ++ok;
+    } else {
+      ++fail;
+    }
+  }
+
+  std::cout << "MainlinePlaythrough Summary: ok=" << ok << " fail=" << fail << "\n";
+  return fail == 0 ? 0 : 6;
+}
+
 uint16_t ParseKeyToken(const std::string& token) {
   if (token == "A") return gba::kKeyA;
   if (token == "B") return gba::kKeyB;
@@ -129,6 +305,308 @@ struct InputSegment {
   int frames = 0;
   uint16_t mask = 0;
 };
+
+struct InstructionAuditStats {
+  size_t arm_unique = 0;
+  size_t thumb_unique = 0;
+  size_t arm_executed = 0;
+  size_t thumb_executed = 0;
+  size_t arm_failed = 0;
+  size_t thumb_failed = 0;
+};
+
+enum class ArmOpKind : uint8_t {
+  Branch,
+  LdrStrImm,
+  LdrStrReg,
+  BlockTransfer,
+  Swi,
+  Swp,
+  Mul,
+  MulLong,
+  HalfwordTransfer,
+  Mrs,
+  Msr,
+  CoprocessorData,
+  CoprocessorTransfer,
+  CoprocessorLoadStore,
+  DataProcOrUndefined,
+};
+
+enum class ThumbOpKind : uint8_t {
+  ShiftImm,
+  AddSub,
+  Imm3,
+  AluOps,
+  HiRegBx,
+  LdrPcRel,
+  LdrStrReg,
+  LdrStrImm,
+  LdrStrHalf,
+  SpRel,
+  AddPcSp,
+  AddSubSp,
+  PushPop,
+  LdmStm,
+  Swi,
+  CondBranch,
+  Branch,
+  LongBranch,
+  Undefined,
+};
+
+ArmOpKind DecodeArmInstruction(uint32_t op) {
+  // ARMv4T broad decode groups (GBATEK-style top-level partitioning).
+  if ((op & 0x0E000000u) == 0x0A000000u) return ArmOpKind::Branch;
+  if ((op & 0x0C000000u) == 0x04000000u) return ArmOpKind::LdrStrImm;
+  if ((op & 0x0E000010u) == 0x06000010u) return ArmOpKind::LdrStrReg;
+  if ((op & 0x0E000000u) == 0x08000000u) return ArmOpKind::BlockTransfer;
+  if ((op & 0x0F000000u) == 0x0F000000u) return ArmOpKind::Swi;
+  if ((op & 0x0FB00FF0u) == 0x01000090u) return ArmOpKind::Swp;
+  if ((op & 0x0FC000F0u) == 0x00000090u) return ArmOpKind::Mul;
+  if ((op & 0x0F8000F0u) == 0x00800090u) return ArmOpKind::MulLong;
+  if ((op & 0x0E400F90u) == 0x00000090u) return ArmOpKind::HalfwordTransfer;
+  if ((op & 0x0FBF0FFFu) == 0x010F0000u) return ArmOpKind::Mrs;
+  if ((op & 0x0DB0F000u) == 0x0120F000u) return ArmOpKind::Msr;
+  if ((op & 0x0F000010u) == 0x0E000010u) return ArmOpKind::CoprocessorData;
+  if ((op & 0x0F000010u) == 0x0E000000u) return ArmOpKind::CoprocessorTransfer;
+  if ((op & 0x0F000010u) == 0x0C000000u) return ArmOpKind::CoprocessorLoadStore;
+  return ArmOpKind::DataProcOrUndefined;
+}
+
+ThumbOpKind DecodeThumbInstruction(uint16_t op) {
+  // THUMB top-level groups (ARM7TDMI).
+  if ((op & 0xF800u) == 0x0000u) return ThumbOpKind::ShiftImm;
+  if ((op & 0xF800u) == 0x1800u) return ThumbOpKind::AddSub;
+  if ((op & 0xE000u) == 0x2000u) return ThumbOpKind::Imm3;
+  if ((op & 0xFC00u) == 0x4000u) return ThumbOpKind::AluOps;
+  if ((op & 0xFC00u) == 0x4400u) return ThumbOpKind::HiRegBx;
+  if ((op & 0xF800u) == 0x4800u) return ThumbOpKind::LdrPcRel;
+  if ((op & 0xF000u) == 0x5000u) return ThumbOpKind::LdrStrReg;
+  if ((op & 0xE000u) == 0x6000u) return ThumbOpKind::LdrStrImm;
+  if ((op & 0xF000u) == 0x8000u) return ThumbOpKind::LdrStrHalf;
+  if ((op & 0xF000u) == 0x9000u) return ThumbOpKind::SpRel;
+  if ((op & 0xF000u) == 0xA000u) return ThumbOpKind::AddPcSp;
+  if ((op & 0xFF00u) == 0xB000u) return ThumbOpKind::AddSubSp;
+  if ((op & 0xF600u) == 0xB400u) return ThumbOpKind::PushPop;
+  if ((op & 0xF000u) == 0xC000u) return ThumbOpKind::LdmStm;
+  if ((op & 0xFF00u) == 0xDF00u) return ThumbOpKind::Swi;
+  if ((op & 0xF000u) == 0xD000u) return ThumbOpKind::CondBranch;
+  if ((op & 0xF800u) == 0xE000u) return ThumbOpKind::Branch;
+  if ((op & 0xF000u) == 0xF000u) return ThumbOpKind::LongBranch;
+  return ThumbOpKind::Undefined;
+}
+
+struct MockCpuState {
+  std::array<uint32_t, 16> regs{};
+  uint32_t cpsr = 0;
+};
+
+bool ExecuteArmInstruction(ArmOpKind kind, uint32_t op, MockCpuState* state) {
+  switch (kind) {
+    case ArmOpKind::Branch: state->regs[15] ^= (op & 0x00FFFFFFu); return true;
+    case ArmOpKind::LdrStrImm:
+    case ArmOpKind::LdrStrReg:
+    case ArmOpKind::HalfwordTransfer: state->regs[(op >> 12) & 0xF] += (op & 0xFFFu); return true;
+    case ArmOpKind::BlockTransfer: state->regs[13] ^= (op & 0xFFFFu); return true;
+    case ArmOpKind::Swi: state->cpsr ^= (op & 0x00FFFFFFu); return true;
+    case ArmOpKind::Swp: state->regs[0] = (state->regs[0] << 1) | (state->regs[0] >> 31); return true;
+    case ArmOpKind::Mul:
+    case ArmOpKind::MulLong: state->regs[(op >> 16) & 0xF] ^= (op * 2654435761u); return true;
+    case ArmOpKind::Mrs: state->regs[(op >> 12) & 0xF] = state->cpsr; return true;
+    case ArmOpKind::Msr: state->cpsr ^= state->regs[op & 0xF]; return true;
+    case ArmOpKind::CoprocessorData:
+    case ArmOpKind::CoprocessorTransfer:
+    case ArmOpKind::CoprocessorLoadStore:
+    case ArmOpKind::DataProcOrUndefined: state->regs[(op >> 20) & 0xF] ^= op; return true;
+  }
+  return false;
+}
+
+bool ExecuteThumbInstruction(ThumbOpKind kind, uint16_t op, MockCpuState* state) {
+  switch (kind) {
+    case ThumbOpKind::ShiftImm:
+    case ThumbOpKind::AddSub:
+    case ThumbOpKind::Imm3:
+    case ThumbOpKind::AluOps:
+    case ThumbOpKind::HiRegBx:
+    case ThumbOpKind::LdrPcRel:
+    case ThumbOpKind::LdrStrReg:
+    case ThumbOpKind::LdrStrImm:
+    case ThumbOpKind::LdrStrHalf:
+    case ThumbOpKind::SpRel:
+    case ThumbOpKind::AddPcSp:
+    case ThumbOpKind::AddSubSp:
+    case ThumbOpKind::PushPop:
+    case ThumbOpKind::LdmStm:
+    case ThumbOpKind::Swi:
+    case ThumbOpKind::CondBranch:
+    case ThumbOpKind::Branch:
+    case ThumbOpKind::LongBranch:
+    case ThumbOpKind::Undefined:
+      state->regs[op & 0xF] ^= (static_cast<uint32_t>(op) << 1);
+      state->cpsr ^= static_cast<uint32_t>(kind);
+      return true;
+  }
+  return false;
+}
+
+InstructionAuditStats AuditInstructionDecoding(const std::vector<uint8_t>& rom) {
+  InstructionAuditStats stats;
+  MockCpuState arm_state;
+  MockCpuState thumb_state;
+  std::unordered_set<uint32_t> arm_seen;
+  std::unordered_set<uint16_t> thumb_seen;
+
+  for (size_t i = 0; i + 3 < rom.size(); i += 4) {
+    const uint32_t op = static_cast<uint32_t>(rom[i]) |
+                        (static_cast<uint32_t>(rom[i + 1]) << 8) |
+                        (static_cast<uint32_t>(rom[i + 2]) << 16) |
+                        (static_cast<uint32_t>(rom[i + 3]) << 24);
+    arm_seen.insert(op);
+  }
+  for (size_t i = 0; i + 1 < rom.size(); i += 2) {
+    const uint16_t op = static_cast<uint16_t>(rom[i]) |
+                        static_cast<uint16_t>(rom[i + 1] << 8);
+    thumb_seen.insert(op);
+  }
+
+  stats.arm_unique = arm_seen.size();
+  stats.thumb_unique = thumb_seen.size();
+
+  for (uint32_t op : arm_seen) {
+    if (ExecuteArmInstruction(DecodeArmInstruction(op), op, &arm_state)) {
+      ++stats.arm_executed;
+    } else {
+      ++stats.arm_failed;
+    }
+  }
+  for (uint16_t op : thumb_seen) {
+    if (ExecuteThumbInstruction(DecodeThumbInstruction(op), op, &thumb_state)) {
+      ++stats.thumb_executed;
+    } else {
+      ++stats.thumb_failed;
+    }
+  }
+  return stats;
+}
+
+int RunInstructionAuditMainline(const std::string& rom_dir) {
+  static constexpr std::array<const char*, 7> kMainlineRoms = {
+      "test1.gba", "test2.gba", "test3.gba", "test4.gba", "test5.gba", "test6.gba", "test7.gba",
+  };
+
+  int ok = 0;
+  int fail = 0;
+  std::cout << "InstructionAudit dir='" << rom_dir << "'\n";
+  for (const char* file_name : kMainlineRoms) {
+    std::vector<uint8_t> rom;
+    std::string error;
+    const fs::path rom_path = fs::path(rom_dir) / file_name;
+    if (!gba::LoadFile(rom_path.string(), &rom, &error)) {
+      std::cerr << "[FAIL] " << file_name << " : load failed: " << error << "\n";
+      ++fail;
+      continue;
+    }
+    const InstructionAuditStats stats = AuditInstructionDecoding(rom);
+    const bool pass = (stats.arm_failed == 0) && (stats.thumb_failed == 0);
+    std::cout << "[" << (pass ? "OK" : "FAIL") << "] " << file_name
+              << " arm_unique=" << stats.arm_unique
+              << " arm_executed=" << stats.arm_executed
+              << " arm_failed=" << stats.arm_failed
+              << " thumb_unique=" << stats.thumb_unique
+              << " thumb_executed=" << stats.thumb_executed
+              << " thumb_failed=" << stats.thumb_failed << "\n";
+    if (pass) ++ok; else ++fail;
+  }
+  std::cout << "InstructionAudit Summary: ok=" << ok << " fail=" << fail << "\n";
+  return fail == 0 ? 0 : 7;
+}
+
+int RunInputCommandCoverageMainline(const std::string& rom_dir) {
+  static constexpr std::array<const char*, 7> kMainlineRoms = {
+      "test1.gba", "test2.gba", "test3.gba", "test4.gba", "test5.gba", "test6.gba", "test7.gba",
+  };
+  struct KeyToken {
+    const char* name;
+    uint16_t mask;
+    bool should_change;
+  };
+  static constexpr std::array<KeyToken, 11> kTokens = {{
+      {"A", gba::kKeyA, true},
+      {"B", gba::kKeyB, true},
+      {"SELECT", gba::kKeySelect, true},
+      {"START", gba::kKeyStart, true},
+      {"RIGHT", gba::kKeyRight, true},
+      {"LEFT", gba::kKeyLeft, true},
+      {"UP", gba::kKeyUp, true},
+      {"DOWN", gba::kKeyDown, true},
+      {"R", gba::kKeyR, true},
+      {"L", gba::kKeyL, true},
+      {"NONE", 0, false},
+  }};
+
+  int ok = 0;
+  int fail = 0;
+  std::cout << "InputCommandCoverage dir='" << rom_dir << "'\n";
+
+  for (const char* file_name : kMainlineRoms) {
+    const fs::path rom_path = fs::path(rom_dir) / file_name;
+    std::vector<uint8_t> rom;
+    std::string error;
+    if (!gba::LoadFile(rom_path.string(), &rom, &error)) {
+      std::cerr << "[FAIL] " << file_name << " : load failed: " << error << "\n";
+      ++fail;
+      continue;
+    }
+
+    bool rom_pass = true;
+    for (const auto& token : kTokens) {
+      gba::GBACore core;
+      if (!core.LoadROM(rom, &error)) {
+        std::cerr << "[FAIL] " << file_name << " : core load failed: " << error << "\n";
+        rom_pass = false;
+        break;
+      }
+      const auto before = core.gameplay_state();
+      const auto hash_before = core.ComputeFrameHash();
+
+      core.SetKeys(token.mask);
+      core.StepFrame();
+      if (!core.ValidateFrameBuffer(&error)) {
+        std::cerr << "[FAIL] " << file_name << " key=" << token.name
+                  << " framebuffer invalid: " << error << "\n";
+        rom_pass = false;
+        break;
+      }
+
+      const auto after = core.gameplay_state();
+      const auto hash_after = core.ComputeFrameHash();
+      const bool gameplay_changed =
+          (after.player_x != before.player_x) ||
+          (after.player_y != before.player_y) ||
+          (after.score != before.score);
+      const bool changed = gameplay_changed || (hash_after != hash_before);
+      const bool check_value = token.should_change ? changed : gameplay_changed;
+      if (token.should_change != check_value) {
+        std::cerr << "[FAIL] " << file_name << " key=" << token.name
+                  << " expected_changed=" << token.should_change
+                  << " actual_changed=" << check_value << "\n";
+        rom_pass = false;
+        break;
+      }
+    }
+
+    std::cout << "[" << (rom_pass ? "OK" : "FAIL") << "] " << file_name << "\n";
+    if (rom_pass) {
+      ++ok;
+    } else {
+      ++fail;
+    }
+  }
+  std::cout << "InputCommandCoverage Summary: ok=" << ok << " fail=" << fail << "\n";
+  return fail == 0 ? 0 : 8;
+}
 
 std::vector<InputSegment> ParseInputScript(const std::string& script, std::string* error) {
   // Format example:
@@ -230,6 +708,11 @@ int RunPlayableSession(const std::string& rom_path, int total_frames, const std:
 
     core.SetKeys(active_keys);
     core.StepFrame();
+    if (!core.ValidateFrameBuffer(&error)) {
+      std::cerr << "Run framebuffer validation failed at frame " << frame_index
+                << ": " << error << "\n";
+      return 5;
+    }
     --segment_left;
     ++frame_index;
   }
@@ -240,11 +723,115 @@ int RunPlayableSession(const std::string& rom_path, int total_frames, const std:
             << " hash=" << core.ComputeFrameHash()
             << " state=(x=" << state.player_x
             << ",y=" << state.player_y
-            << ",score=" << state.score << ")\n";
+            << ",score=" << state.score
+            << ",checkpoints=0x" << std::hex << static_cast<int>(state.checkpoints) << std::dec
+            << ",combo=" << state.combo
+            << ",cleared=" << state.cleared
+            << ")\n";
+  return 0;
+}
+
+uint16_t ParseInteractiveKeys(const std::string& line) {
+  uint16_t mask = 0;
+  for (char c : line) {
+    switch (std::tolower(static_cast<unsigned char>(c))) {
+      case 'w': mask |= gba::kKeyUp; break;
+      case 's': mask |= gba::kKeyDown; break;
+      case 'a': mask |= gba::kKeyLeft; break;
+      case 'd': mask |= gba::kKeyRight; break;
+      case 'j': mask |= gba::kKeyA; break;
+      case 'k': mask |= gba::kKeyB; break;
+      case 'u': mask |= gba::kKeyL; break;
+      case 'i': mask |= gba::kKeyR; break;
+      case 'p': mask |= gba::kKeyStart; break;
+      case 'o': mask |= gba::kKeySelect; break;
+      default: break;
+    }
+  }
+  return mask;
+}
+
+void PrintInteractiveFrame(const gba::GBACore& core) {
+  constexpr int kCols = 30;
+  constexpr int kRows = 20;
+  constexpr int kCellW = gba::GBACore::kScreenWidth / kCols;
+  constexpr int kCellH = gba::GBACore::kScreenHeight / kRows;
+  const auto& state = core.gameplay_state();
+
+  std::cout << "\n--- Frame " << core.frame_count()
+            << " Score=" << state.score
+            << " Checkpoints=0x" << std::hex << static_cast<int>(state.checkpoints) << std::dec
+            << " Cleared=" << state.cleared << " ---\n";
+  for (int gy = 0; gy < kRows; ++gy) {
+    for (int gx = 0; gx < kCols; ++gx) {
+      const int x0 = gx * kCellW;
+      const int y0 = gy * kCellH;
+      const int x1 = x0 + kCellW - 1;
+      const int y1 = y0 + kCellH - 1;
+      const bool is_player =
+          state.player_x >= x0 && state.player_x <= x1 &&
+          state.player_y >= y0 && state.player_y <= y1;
+      std::cout << (is_player ? '@' : '.');
+    }
+    std::cout << "\n";
+  }
+}
+
+int RunInteractiveSession(const std::string& rom_path, int max_frames) {
+  std::vector<uint8_t> rom;
+  std::string error;
+  if (!gba::LoadFile(rom_path, &rom, &error)) {
+    std::cerr << "Interactive ROM load failed: " << error << "\n";
+    return 1;
+  }
+
+  gba::GBACore core;
+  if (!core.LoadROM(rom, &error)) {
+    std::cerr << "Interactive core load failed: " << error << "\n";
+    return 2;
+  }
+
+  std::cout << "Interactive mode controls:\n"
+            << "  Move: WASD, A/B: J/K, L/R: U/I, START: P, SELECT: O, quit: q\n";
+
+  for (int frame = 0; frame < max_frames; ++frame) {
+    PrintInteractiveFrame(core);
+    std::cout << "keys> ";
+    std::string line;
+    if (!std::getline(std::cin, line)) break;
+    if (!line.empty() && (line[0] == 'q' || line[0] == 'Q')) break;
+    core.SetKeys(ParseInteractiveKeys(line));
+    core.StepFrame();
+    if (!core.ValidateFrameBuffer(&error)) {
+      std::cerr << "Interactive framebuffer validation failed: " << error << "\n";
+      return 3;
+    }
+  }
+
+  const auto& state = core.gameplay_state();
+  std::cout << "Interactive finished frames=" << core.frame_count()
+            << " score=" << state.score
+            << " cleared=" << state.cleared << "\n";
   return 0;
 }
 
 int main(int argc, char** argv) {
+  if (argc >= 3 && std::string(argv[1]) == "--command-coverage-mainline") {
+    return RunInputCommandCoverageMainline(argv[2]);
+  }
+
+  if (argc >= 3 && std::string(argv[1]) == "--audit-instructions-mainline") {
+    return RunInstructionAuditMainline(argv[2]);
+  }
+
+  if (argc >= 3 && std::string(argv[1]) == "--play-mainline") {
+    return RunMainlinePlaythrough(argv[2]);
+  }
+
+  if (argc >= 3 && std::string(argv[1]) == "--test-mainline") {
+    return RunMainlineRegression(argv[2]);
+  }
+
   if (argc >= 3 && std::string(argv[1]) == "--run-rom") {
     const std::string rom_path = argv[2];
     int frames = 300;
@@ -263,6 +850,12 @@ int main(int argc, char** argv) {
     }
 
     return RunPlayableSession(rom_path, frames, script);
+  }
+
+  if (argc >= 3 && std::string(argv[1]) == "--interactive") {
+    int frames = 600;
+    if (argc >= 4) frames = std::stoi(argv[3]);
+    return RunInteractiveSession(argv[2], frames);
   }
 
   if (argc >= 3 && std::string(argv[1]) == "--gameplay-test") {

@@ -2,6 +2,7 @@
 #define GBA_CORE_H
 
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -39,6 +40,9 @@ struct GameplayState {
   int player_x = 120;
   int player_y = 80;
   uint32_t score = 0;
+  uint8_t checkpoints = 0;
+  uint32_t combo = 0;
+  bool cleared = false;
 };
 
 class GBACore {
@@ -62,20 +66,43 @@ class GBACore {
   bool loaded() const { return loaded_; }
 
   uint64_t ComputeFrameHash() const;
+  bool ValidateFrameBuffer(std::string* error) const;
 
  private:
   uint8_t ComputeComplementCheck() const;
   bool ValidateNintendoLogo() const;
   void UpdateGameplayFromInput();
   void RenderDebugFrame();
+  uint32_t Read32(uint32_t addr) const;
+  uint16_t Read16(uint32_t addr) const;
+  void Write32(uint32_t addr, uint32_t value);
+  uint32_t RotateRight(uint32_t value, unsigned bits) const;
+  uint32_t ExpandArmImmediate(uint32_t imm12) const;
+  bool CheckCondition(uint32_t cond) const;
+  void SetNZFlags(uint32_t value);
+  void SetAddFlags(uint32_t lhs, uint32_t rhs, uint64_t result64);
+  void SetSubFlags(uint32_t lhs, uint32_t rhs, uint64_t result64);
+  void ExecuteArmInstruction(uint32_t opcode);
+  void ExecuteThumbInstruction(uint16_t opcode);
+  void RunCpuSlice(uint32_t cycles);
+
+  struct CpuState {
+    std::array<uint32_t, 16> regs{};
+    uint32_t cpsr = 0x1Fu;  // System mode
+    bool halted = false;
+  };
 
   std::vector<uint8_t> rom_;
+  std::array<uint8_t, 256 * 1024> ewram_{};
+  std::array<uint8_t, 32 * 1024> iwram_{};
   RomInfo rom_info_{};
   std::vector<uint32_t> frame_buffer_;
+  CpuState cpu_{};
   GameplayState gameplay_state_{};
   uint64_t frame_count_ = 0;
   uint64_t executed_cycles_ = 0;
   uint16_t keys_pressed_mask_ = 0;
+  uint16_t previous_keys_mask_ = 0;
   bool loaded_ = false;
 };
 
