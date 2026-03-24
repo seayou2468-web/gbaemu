@@ -432,7 +432,7 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   if (saveData.length > 0) {
     std::vector<uint8_t> bytes(saveData.length);
     [saveData getBytes:bytes.data() length:saveData.length];
-    _core->LoadSaveRAM(bytes);
+    _core->ImportBackupData(bytes);
   }
 
   NSData *stateData = [NSData dataWithContentsOfURL:[self saveStateURL]];
@@ -445,7 +445,7 @@ constexpr CGFloat kStartButtonHeight = 40.0;
 }
 
 - (void)persistSaveRam {
-  const auto &save = _core->GetSaveRAM();
+  const std::vector<uint8_t> save = _core->ExportBackupData();
   NSData *data = [NSData dataWithBytes:save.data() length:save.size()];
   [data writeToURL:[self saveRamURL] atomically:YES];
 }

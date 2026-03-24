@@ -29,6 +29,10 @@ GBACore::BackupType GBACore::DetectBackupTypeFromRom() const {
       sv.find("SST_") != std::string_view::npos) {
     return BackupType::kFlash64K;
   }
+  if (sv.find("FLASH1M_V") != std::string_view::npos ||
+      sv.find("FLASH1M1024_V") != std::string_view::npos) {
+    return BackupType::kFlash128K;
+  }
   if (sv.find("SRAM_V") != std::string_view::npos ||
       sv.find("SRAM_F_V") != std::string_view::npos) {
     return BackupType::kSRAM;
@@ -134,6 +138,7 @@ void GBACore::Reset() {
   std::fill(vram_.begin(), vram_.end(), 0);
   std::fill(oam_.begin(), oam_.end(), 0);
   std::fill(sram_.begin(), sram_.end(), 0xFF);
+  std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
   ResetBackupControllerState();
   timers_ = {};
   ppu_cycle_accum_ = 0;
@@ -157,6 +162,40 @@ void GBACore::Reset() {
 }
 
 void GBACore::LoadSaveRAM(const std::vector<uint8_t>& data) {
+  ImportBackupData(data);
+}
+
+std::vector<uint8_t> GBACore::ExportBackupData() const {
+  if (backup_type_ == BackupType::kFlash128K) {
+    std::vector<uint8_t> out;
+    out.reserve(128 * 1024);
+    out.insert(out.end(), sram_.begin(), sram_.end());
+    out.insert(out.end(), flash_bank1_.begin(), flash_bank1_.end());
+    return out;
+  }
+  return std::vector<uint8_t>(sram_.begin(), sram_.end());
+}
+
+void GBACore::ImportBackupData(const std::vector<uint8_t>& data) {
+  if (backup_type_ == BackupType::kFlash128K) {
+    const size_t bank_size = sram_.size();
+    const size_t copy0 = std::min(bank_size, data.size());
+    std::copy_n(data.begin(), copy0, sram_.begin());
+    if (copy0 < bank_size) {
+      std::fill(sram_.begin() + static_cast<std::ptrdiff_t>(copy0), sram_.end(), 0xFF);
+    }
+    if (data.size() > bank_size) {
+      const size_t copy1 = std::min(bank_size, data.size() - bank_size);
+      std::copy_n(data.begin() + static_cast<std::ptrdiff_t>(bank_size), copy1, flash_bank1_.begin());
+      if (copy1 < bank_size) {
+        std::fill(flash_bank1_.begin() + static_cast<std::ptrdiff_t>(copy1), flash_bank1_.end(), 0xFF);
+      }
+    } else {
+      std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
+    }
+    return;
+  }
+
   const size_t copy_size = std::min(data.size(), sram_.size());
   std::copy_n(data.begin(), copy_size, sram_.begin());
   if (copy_size < sram_.size()) {
@@ -178,7 +217,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   std::vector<uint8_t> blob;
   blob.reserve(512 * 1024);
   blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
-  append_u32(&blob, 2u);  // version
+  append_u32(&blob, 3u);  // version
   append_u64(&blob, frame_count_);
   append_u64(&blob, executed_cycles_);
   append_u32(&blob, cpu_.cpsr);
@@ -191,6 +230,8 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   append_u32(&blob, flash_command_);
   append_u32(&blob, flash_id_mode_ ? 1u : 0u);
   append_u32(&blob, flash_program_mode_ ? 1u : 0u);
+  append_u32(&blob, flash_bank_switch_mode_ ? 1u : 0u);
+  append_u32(&blob, flash_bank_);
   for (uint32_t r : cpu_.regs) append_u32(&blob, r);
   blob.insert(blob.end(), ewram_.begin(), ewram_.end());
   blob.insert(blob.end(), iwram_.begin(), iwram_.end());
@@ -199,6 +240,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   blob.insert(blob.end(), vram_.begin(), vram_.end());
   blob.insert(blob.end(), oam_.begin(), oam_.end());
   blob.insert(blob.end(), sram_.begin(), sram_.end());
+  blob.insert(blob.end(), flash_bank1_.begin(), flash_bank1_.end());
   return blob;
 }
 
@@ -226,7 +268,7 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   }
   off = 4;
   uint32_t version = 0;
-  if (!read_u32(&off, &version) || (version != 1u && version != 2u)) {
+  if (!read_u32(&off, &version) || (version != 1u && version != 2u && version != 3u)) {
     if (error) *error = "Unsupported savestate version.";
     return false;
   }
@@ -255,6 +297,15 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
     flash_id_mode_ = (tmp32 & 1u) != 0;
     if (!read_u32(&off, &tmp32)) return false;
     flash_program_mode_ = (tmp32 & 1u) != 0;
+    if (version >= 3u) {
+      if (!read_u32(&off, &tmp32)) return false;
+      flash_bank_switch_mode_ = (tmp32 & 1u) != 0;
+      if (!read_u32(&off, &tmp32)) return false;
+      flash_bank_ = static_cast<uint8_t>(tmp32 & 0x1u);
+    } else {
+      flash_bank_switch_mode_ = false;
+      flash_bank_ = 0;
+    }
   } else {
     backup_type_ = DetectBackupTypeFromRom();
     ResetBackupControllerState();
@@ -272,6 +323,14 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
       !read_block(palette_ram_) || !read_block(vram_) || !read_block(oam_) || !read_block(sram_)) {
     if (error) *error = "Savestate payload truncated.";
     return false;
+  }
+  if (version >= 3u) {
+    if (!read_block(flash_bank1_)) {
+      if (error) *error = "Savestate payload truncated.";
+      return false;
+    }
+  } else {
+    std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
   }
   loaded_ = true;
   SyncKeyInputRegister();
@@ -291,15 +350,21 @@ void GBACore::ResetBackupControllerState() {
   flash_command_ = 0;
   flash_id_mode_ = false;
   flash_program_mode_ = false;
+  flash_bank_switch_mode_ = false;
+  flash_bank_ = 0;
 }
 
 uint8_t GBACore::ReadBackup8(uint32_t addr) const {
   const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
-  if (backup_type_ == BackupType::kFlash64K && flash_id_mode_) {
+  if ((backup_type_ == BackupType::kFlash64K || backup_type_ == BackupType::kFlash128K) && flash_id_mode_) {
     if (off32 == 0) return 0xBF;  // Sanyo/Panasonic style manufacturer id (common)
-    if (off32 == 1) return 0xD4;  // 64Kbit/512Kbit class device id (common test expectation)
+    if (off32 == 1) return (backup_type_ == BackupType::kFlash128K) ? 0x09u : 0xD4u;
   }
-  return sram_[static_cast<size_t>(off32 % sram_.size())];
+  const size_t idx = static_cast<size_t>(off32 % sram_.size());
+  if (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u) {
+    return flash_bank1_[idx];
+  }
+  return sram_[idx];
 }
 
 void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
@@ -307,15 +372,22 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
   const size_t off = static_cast<size_t>(off32 % sram_.size());
 
   // SRAM/unknown/eeprom fallback: raw byte write model.
-  if (backup_type_ != BackupType::kFlash64K) {
+  if (backup_type_ != BackupType::kFlash64K && backup_type_ != BackupType::kFlash128K) {
     sram_[off] = value;
     return;
   }
 
   if (flash_program_mode_) {
     // NOR flash programming behavior: only 1->0 transitions.
-    sram_[off] = static_cast<uint8_t>(sram_[off] & value);
+    auto& target = (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u) ? flash_bank1_ : sram_;
+    target[off] = static_cast<uint8_t>(target[off] & value);
     flash_program_mode_ = false;
+    return;
+  }
+
+  if (flash_bank_switch_mode_) {
+    flash_bank_ = static_cast<uint8_t>(value & 0x1u);
+    flash_bank_switch_mode_ = false;
     return;
   }
 
@@ -359,6 +431,12 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
       flash_command_ = 0;
       return;
     }
+    if (value == 0xB0u && backup_type_ == BackupType::kFlash128K) {
+      flash_bank_switch_mode_ = true;
+      flash_mode_unlocked_ = false;
+      flash_command_ = 0;
+      return;
+    }
     if (value == 0x80u) {
       // Erase setup done; wait for 2nd unlock + erase command.
       flash_command_ = 3;
@@ -388,11 +466,15 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
   if (flash_command_ == 5) {
     if (value == 0x10u && off32 == 0x5555u) {
       std::fill(sram_.begin(), sram_.end(), 0xFF);
+      if (backup_type_ == BackupType::kFlash128K) {
+        std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
+      }
     } else if (value == 0x30u) {
       const size_t sector_base = off & ~static_cast<size_t>(0x0FFFu);
       const size_t sector_end = std::min(sector_base + 0x1000u, sram_.size());
-      std::fill(sram_.begin() + static_cast<std::ptrdiff_t>(sector_base),
-                sram_.begin() + static_cast<std::ptrdiff_t>(sector_end), 0xFF);
+      auto& target = (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u) ? flash_bank1_ : sram_;
+      std::fill(target.begin() + static_cast<std::ptrdiff_t>(sector_base),
+                target.begin() + static_cast<std::ptrdiff_t>(sector_end), 0xFF);
     }
     ResetBackupControllerState();
     return;

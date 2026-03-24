@@ -74,6 +74,41 @@ int RunBackupControllerSelfTest() {
   }
 
   {
+    gba::GBACore flash1m;
+    std::string error;
+    std::vector<uint8_t> rom = MakeMinimalRomWithSaveTag("FLASH1M_V103");
+    if (!flash1m.LoadROM(rom, &error)) {
+      std::cerr << "[FAIL] backup_selftest flash1m load: " << error << "\n";
+      return 13;
+    }
+
+    // Program bank0.
+    FlashUnlock(&flash1m);
+    flash1m.DebugWrite8(0x0E005555u, 0xA0u);
+    flash1m.DebugWrite8(0x0E000042u, 0x12u);
+
+    // Switch to bank1: AA 55 B0 then write bank index to 0x0000.
+    FlashUnlock(&flash1m);
+    flash1m.DebugWrite8(0x0E005555u, 0xB0u);
+    flash1m.DebugWrite8(0x0E000000u, 0x01u);
+
+    FlashUnlock(&flash1m);
+    flash1m.DebugWrite8(0x0E005555u, 0xA0u);
+    flash1m.DebugWrite8(0x0E000042u, 0x34u);
+    const bool bank1_ok = flash1m.DebugRead8(0x0E000042u) == 0x34u;
+
+    // Back to bank0 and verify data differs.
+    FlashUnlock(&flash1m);
+    flash1m.DebugWrite8(0x0E005555u, 0xB0u);
+    flash1m.DebugWrite8(0x0E000000u, 0x00u);
+    const bool bank0_ok = flash1m.DebugRead8(0x0E000042u) == 0x12u;
+
+    const bool flash1m_ok = bank0_ok && bank1_ok;
+    std::cout << "[SELFTEST] flash1m bank switch pass=" << flash1m_ok << "\n";
+    if (!flash1m_ok) ++fail;
+  }
+
+  {
     gba::GBACore sram;
     std::string error;
     std::vector<uint8_t> rom = MakeMinimalRomWithSaveTag("SRAM_V113");

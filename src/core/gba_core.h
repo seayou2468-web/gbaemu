@@ -71,6 +71,8 @@ class GBACore {
   bool ValidateFrameBuffer(std::string* error) const;
   const std::array<uint8_t, 64 * 1024>& GetSaveRAM() const { return sram_; }
   void LoadSaveRAM(const std::vector<uint8_t>& data);
+  std::vector<uint8_t> ExportBackupData() const;
+  void ImportBackupData(const std::vector<uint8_t>& data);
   std::vector<uint8_t> SaveStateBlob() const;
   bool LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error);
 
@@ -136,7 +138,8 @@ class GBACore {
     kUnknown = 0,
     kSRAM = 1,
     kFlash64K = 2,
-    kEEPROM = 3,
+    kFlash128K = 3,
+    kEEPROM = 4,
   };
 
   BackupType DetectBackupTypeFromRom() const;
@@ -179,6 +182,9 @@ class GBACore {
   uint8_t flash_command_ = 0;
   bool flash_id_mode_ = false;
   bool flash_program_mode_ = false;
+  bool flash_bank_switch_mode_ = false;
+  uint8_t flash_bank_ = 0;
+  std::array<uint8_t, 64 * 1024> flash_bank1_{};
 };
 
 }  // namespace gba
