@@ -255,6 +255,10 @@ uint8_t GBACore::Read8(uint32_t addr) const {
 }
 
 void GBACore::Write32(uint32_t addr, uint32_t value) {
+  if (addr == 0x040000A0u || addr == 0x040000A4u) {
+    PushAudioFifo(addr == 0x040000A0u, value);
+    return;
+  }
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
     if (off32 <= ewram_.size() - 4) {
@@ -481,6 +485,19 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   // IME only bit0 is used.
   if (addr == 0x04000208u) {
     value &= 0x0001u;
+  }
+  // SOUNDCNT_H FIFO reset bits.
+  if (addr == 0x04000082u) {
+    if (value & (1u << 11)) {
+      fifo_a_.clear();
+      fifo_a_last_sample_ = 0;
+      value = static_cast<uint16_t>(value & ~(1u << 11));
+    }
+    if (value & (1u << 15)) {
+      fifo_b_.clear();
+      fifo_b_last_sample_ = 0;
+      value = static_cast<uint16_t>(value & ~(1u << 15));
+    }
   }
   io_regs_[off] = static_cast<uint8_t>(value & 0xFF);
   io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);

@@ -102,6 +102,8 @@ class GBACore {
   void StepTimers(uint32_t cycles);
   void StepDma();
   void StepApu(uint32_t cycles);
+  void PushAudioFifo(bool fifo_a, uint32_t value);
+  void ConsumeAudioFifoOnTimer(size_t timer_index);
   void SyncKeyInputRegister();
   void RaiseInterrupt(uint16_t mask);
   void EnterException(uint32_t vector_addr, uint32_t new_mode, bool disable_irq, bool thumb_state);
@@ -174,6 +176,10 @@ class GBACore {
   std::vector<uint32_t> frame_buffer_;
   uint32_t ppu_cycle_accum_ = 0;
   uint16_t audio_mix_level_ = 0;
+  std::vector<uint8_t> fifo_a_;
+  std::vector<uint8_t> fifo_b_;
+  int16_t fifo_a_last_sample_ = 0;
+  int16_t fifo_b_last_sample_ = 0;
 
   struct TimerState {
     uint16_t reload = 0;

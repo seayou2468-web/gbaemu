@@ -144,6 +144,10 @@ void GBACore::Reset() {
   timers_ = {};
   ppu_cycle_accum_ = 0;
   audio_mix_level_ = 0;
+  fifo_a_.clear();
+  fifo_b_.clear();
+  fifo_a_last_sample_ = 0;
+  fifo_b_last_sample_ = 0;
   bios_latch_ = 0;
   cpu_ = CpuState{};
   cpu_.active_mode = cpu_.cpsr & 0x1Fu;
@@ -235,7 +239,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   std::vector<uint8_t> blob;
   blob.reserve(512 * 1024);
   blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
-  append_u32(&blob, 7u);  // version
+  append_u32(&blob, 8u);  // version
   append_u64(&blob, frame_count_);
   append_u64(&blob, executed_cycles_);
   append_u32(&blob, cpu_.cpsr);
@@ -251,6 +255,12 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   append_u32(&blob, flash_program_mode_ ? 1u : 0u);
   append_u32(&blob, flash_bank_switch_mode_ ? 1u : 0u);
   append_u32(&blob, flash_bank_);
+  append_u32(&blob, static_cast<uint32_t>(static_cast<uint16_t>(fifo_a_last_sample_)));
+  append_u32(&blob, static_cast<uint32_t>(static_cast<uint16_t>(fifo_b_last_sample_)));
+  append_u32(&blob, static_cast<uint32_t>(fifo_a_.size()));
+  for (uint8_t b : fifo_a_) append_u32(&blob, b);
+  append_u32(&blob, static_cast<uint32_t>(fifo_b_.size()));
+  for (uint8_t b : fifo_b_) append_u32(&blob, b);
   append_u32(&blob, static_cast<uint32_t>(eeprom_read_pos_));
   append_u32(&blob, static_cast<uint32_t>(eeprom_cmd_bits_.size()));
   for (uint8_t b : eeprom_cmd_bits_) append_u32(&blob, b);
@@ -300,7 +310,7 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   uint32_t version = 0;
   if (!read_u32(&off, &version) ||
       (version != 1u && version != 2u && version != 3u && version != 4u && version != 5u &&
-       version != 6u && version != 7u)) {
+       version != 6u && version != 7u && version != 8u)) {
     if (error) *error = "Unsupported savestate version.";
     return false;
   }
@@ -339,6 +349,31 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
       flash_bank_switch_mode_ = (tmp32 & 1u) != 0;
       if (!read_u32(&off, &tmp32)) return false;
       flash_bank_ = static_cast<uint8_t>(tmp32 & 0x1u);
+      if (version >= 8u) {
+        if (!read_u32(&off, &tmp32)) return false;
+        fifo_a_last_sample_ = static_cast<int16_t>(tmp32 & 0xFFFFu);
+        if (!read_u32(&off, &tmp32)) return false;
+        fifo_b_last_sample_ = static_cast<int16_t>(tmp32 & 0xFFFFu);
+        if (!read_u32(&off, &tmp32)) return false;
+        fifo_a_.assign(tmp32, 0);
+        for (size_t i = 0; i < fifo_a_.size(); ++i) {
+          uint32_t v = 0;
+          if (!read_u32(&off, &v)) return false;
+          fifo_a_[i] = static_cast<uint8_t>(v & 0xFFu);
+        }
+        if (!read_u32(&off, &tmp32)) return false;
+        fifo_b_.assign(tmp32, 0);
+        for (size_t i = 0; i < fifo_b_.size(); ++i) {
+          uint32_t v = 0;
+          if (!read_u32(&off, &v)) return false;
+          fifo_b_[i] = static_cast<uint8_t>(v & 0xFFu);
+        }
+      } else {
+        fifo_a_.clear();
+        fifo_b_.clear();
+        fifo_a_last_sample_ = 0;
+        fifo_b_last_sample_ = 0;
+      }
       if (version >= 7u) {
         if (!read_u32(&off, &tmp32)) return false;
         eeprom_read_pos_ = tmp32;
@@ -371,6 +406,10 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   } else {
     backup_type_ = DetectBackupTypeFromRom();
     ResetBackupControllerState();
+    fifo_a_.clear();
+    fifo_b_.clear();
+    fifo_a_last_sample_ = 0;
+    fifo_b_last_sample_ = 0;
   }
   for (uint32_t& r : cpu_.regs) {
     if (!read_u32(&off, &r)) return false;

@@ -339,6 +339,7 @@ void GBACore::StepTimers(uint32_t cycles) {
       t.counter = static_cast<uint16_t>(t.counter + 1u);
       if (t.counter == 0) {
         t.counter = ReadIO16(static_cast<uint32_t>(0x04000100u + i * 4u));
+        ConsumeAudioFifoOnTimer(i);
         if (cnt_h & 0x0040u) {
           RaiseInterrupt(static_cast<uint16_t>(1u << static_cast<uint16_t>(3u + i)));
         }
@@ -424,12 +425,49 @@ void GBACore::StepDma() {
   }
 }
 
+void GBACore::PushAudioFifo(bool fifo_a, uint32_t value) {
+  auto& fifo = fifo_a ? fifo_a_ : fifo_b_;
+  for (int i = 0; i < 4; ++i) {
+    fifo.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFFu));
+  }
+  if (fifo.size() > 32u) {
+    fifo.erase(fifo.begin(), fifo.begin() + static_cast<std::ptrdiff_t>(fifo.size() - 32u));
+  }
+}
+
+void GBACore::ConsumeAudioFifoOnTimer(size_t timer_index) {
+  const uint16_t soundcnt_h = ReadIO16(0x04000082u);
+  const bool fifo_a_timer1 = (soundcnt_h & (1u << 10)) != 0;
+  const bool fifo_b_timer1 = (soundcnt_h & (1u << 14)) != 0;
+  auto pop_fifo = [&](std::vector<uint8_t>* fifo, int16_t* last_sample) {
+    if (!fifo->empty()) {
+      const int8_t sample = static_cast<int8_t>(fifo->front());
+      fifo->erase(fifo->begin());
+      *last_sample = static_cast<int16_t>(sample);
+    } else {
+      *last_sample = 0;
+    }
+  };
+  if ((timer_index == 0u && !fifo_a_timer1) || (timer_index == 1u && fifo_a_timer1)) {
+    pop_fifo(&fifo_a_, &fifo_a_last_sample_);
+  }
+  if ((timer_index == 0u && !fifo_b_timer1) || (timer_index == 1u && fifo_b_timer1)) {
+    pop_fifo(&fifo_b_, &fifo_b_last_sample_);
+  }
+}
+
 void GBACore::StepApu(uint32_t cycles) {
-  // Lightweight APU model: maintain a synthetic mix meter from sound enables.
+  // Lightweight APU model: mix PSG enable and FIFO outputs.
   const uint16_t soundcnt_x = ReadIO16(0x04000084u);
   const uint16_t soundcnt_l = ReadIO16(0x04000080u);
+  const uint16_t soundcnt_h = ReadIO16(0x04000082u);
   const uint16_t master = (soundcnt_x & 0x0080u) ? 1u : 0u;
-  audio_mix_level_ = static_cast<uint16_t>((audio_mix_level_ + cycles / 128u + (soundcnt_l & 0x7u) + master) & 0x03FFu);
+  const int fifo_a_gain = (soundcnt_h & (1u << 2)) ? 2 : 1;
+  const int fifo_b_gain = (soundcnt_h & (1u << 3)) ? 2 : 1;
+  const int fifo_mix = fifo_a_last_sample_ * fifo_a_gain + fifo_b_last_sample_ * fifo_b_gain;
+  const int psg_mix = static_cast<int>(soundcnt_l & 0x7u) * 16 + static_cast<int>(master) * 32;
+  const int mixed = psg_mix + fifo_mix + static_cast<int>(cycles / 128u);
+  audio_mix_level_ = static_cast<uint16_t>(ClampToByteLocal(mixed) & 0xFFu);
 }
 
 void GBACore::SyncKeyInputRegister() {

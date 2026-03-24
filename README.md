@@ -68,7 +68,8 @@ make linux_test
   - DMA enable 時の 16/32bit 転送（inc/dec/fixed）
   - DMA 開始タイミング (Immediate/VBlank/HBlank/特殊ch3) と Repeat/IRQ ビット対応
 - APU:
-  - SOUNDCNT系レジスタを参照した軽量ミキサーレベル更新スタブ
+  - SOUNDCNT系レジスタ参照の軽量ミキサー
+  - FIFO A/B への書き込み、FIFO reset、Timer overflow 連動のサンプル消費
 - 割り込み:
   - IE/IF/IME + CPSR I-bit を使った IRQ 受付
   - SWI/IRQ 例外ベクタ遷移の最小実装
