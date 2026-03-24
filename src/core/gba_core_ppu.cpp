@@ -525,6 +525,37 @@ void GBACore::ServiceInterruptIfNeeded() {
   EnterException(0x00000018u, 0x12u, true, false);  // IRQ mode
 }
 
+void GBACore::ApplyColorEffects() {
+  const uint16_t bldcnt = ReadIO16(0x04000050u);
+  const uint16_t bldalpha = ReadIO16(0x04000052u);
+  const uint16_t bldy = ReadIO16(0x04000054u);
+  const uint32_t mode = (bldcnt >> 6) & 0x3u;
+  if (mode == 0u) return;
+
+  const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
+  const uint32_t evy = std::min<uint32_t>(16u, bldy & 0x1Fu);
+  for (uint32_t& px : frame_buffer_) {
+    uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
+    uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
+    uint8_t b = static_cast<uint8_t>(px & 0xFFu);
+    if (mode == 1u) {  // alpha blend (approximate against backdrop black)
+      r = ClampToByteLocal(static_cast<int>((r * eva) / 16u));
+      g = ClampToByteLocal(static_cast<int>((g * eva) / 16u));
+      b = ClampToByteLocal(static_cast<int>((b * eva) / 16u));
+    } else if (mode == 2u) {  // brighten
+      r = ClampToByteLocal(static_cast<int>(r + ((255 - r) * evy) / 16u));
+      g = ClampToByteLocal(static_cast<int>(g + ((255 - g) * evy) / 16u));
+      b = ClampToByteLocal(static_cast<int>(b + ((255 - b) * evy) / 16u));
+    } else if (mode == 3u) {  // darken
+      r = ClampToByteLocal(static_cast<int>(r - (r * evy) / 16u));
+      g = ClampToByteLocal(static_cast<int>(g - (g * evy) / 16u));
+      b = ClampToByteLocal(static_cast<int>(b - (b * evy) / 16u));
+    }
+    px = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+         (static_cast<uint32_t>(g) << 8) | b;
+  }
+}
+
 void GBACore::RenderDebugFrame() {
   if (frame_buffer_.empty()) {
     frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
@@ -558,18 +589,21 @@ void GBACore::RenderDebugFrame() {
   if (bg_mode == 0u) {
     RenderMode0Frame();
     RenderSprites();
+    ApplyColorEffects();
     ensure_non_uniform();
     return;
   }
   if (bg_mode == 3u) {
     RenderMode3Frame();
     RenderSprites();
+    ApplyColorEffects();
     ensure_non_uniform();
     return;
   }
   if (bg_mode == 4u) {
     RenderMode4Frame();
     RenderSprites();
+    ApplyColorEffects();
     ensure_non_uniform();
     return;
   }
@@ -599,6 +633,7 @@ void GBACore::RenderDebugFrame() {
           0xFF000000U | (255u << 16) | (base << 8) | static_cast<uint32_t>(255u - base);
     }
   }
+  ApplyColorEffects();
   ensure_non_uniform();
 }
 

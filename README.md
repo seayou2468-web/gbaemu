@@ -60,6 +60,7 @@ make linux_test
   - Mode0 の 32/64 タイルマップ配置（screen size 0..3）を反映
   - BG Mode3 の VRAM 直描画をフレームバッファへ反映
   - Mode4 (8bpp bitmap + page flip) の描画
+  - BLDCNT/BLDALPHA/BLDY による色効果（簡易アルファ/明度UP/明度DOWN）適用
   - OAM スプライト（非 affine の最小実装）合成
 - Timer:
   - 4ch タイマの基本カウント/プリスケーラ/IRQ フラグ更新
