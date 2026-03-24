@@ -98,6 +98,7 @@ class GBACore {
   void RenderMode3Frame();
   void RenderMode4Frame();
   void RenderSprites();
+  void ApplyColorEffects();
   void StepPpu(uint32_t cycles);
   void StepTimers(uint32_t cycles);
   void StepDma();
@@ -180,6 +181,10 @@ class GBACore {
   std::vector<uint8_t> fifo_b_;
   int16_t fifo_a_last_sample_ = 0;
   int16_t fifo_b_last_sample_ = 0;
+  uint32_t apu_phase_sq1_ = 0;
+  uint32_t apu_phase_sq2_ = 0;
+  uint32_t apu_phase_wave_ = 0;
+  uint16_t apu_noise_lfsr_ = 0x7FFFu;
 
   struct TimerState {
     uint16_t reload = 0;

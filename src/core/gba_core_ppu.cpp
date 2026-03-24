@@ -457,15 +457,88 @@ void GBACore::ConsumeAudioFifoOnTimer(size_t timer_index) {
 }
 
 void GBACore::StepApu(uint32_t cycles) {
-  // Lightweight APU model: mix PSG enable and FIFO outputs.
+  // Lightweight APU model: PSG + FIFO mix.
   const uint16_t soundcnt_x = ReadIO16(0x04000084u);
   const uint16_t soundcnt_l = ReadIO16(0x04000080u);
   const uint16_t soundcnt_h = ReadIO16(0x04000082u);
   const uint16_t master = (soundcnt_x & 0x0080u) ? 1u : 0u;
+  if (!master) {
+    audio_mix_level_ = 0;
+    return;
+  }
+
+  auto duty_high_steps = [](uint16_t duty) -> int {
+    switch (duty & 0x3u) {
+      case 0: return 1;  // 12.5%
+      case 1: return 2;  // 25%
+      case 2: return 4;  // 50%
+      case 3: return 6;  // 75%
+      default: return 4;
+    }
+  };
+  auto square_sample = [&](uint32_t* phase, uint16_t freq_reg, uint16_t duty_reg) -> int {
+    const uint16_t n = static_cast<uint16_t>(freq_reg & 0x07FFu);
+    const uint32_t hz = (2048u > n) ? (131072u / std::max<uint16_t>(1u, static_cast<uint16_t>(2048u - n))) : 0u;
+    *phase += hz * std::max<uint32_t>(1u, cycles);
+    const int step = static_cast<int>((*phase / 1024u) & 7u);
+    const int high = duty_high_steps(static_cast<uint16_t>(duty_reg >> 6));
+    return (step < high) ? 48 : -48;
+  };
+
+  int psg_mix = 0;
+  if (soundcnt_x & 0x0001u) {  // CH1
+    const uint16_t nr11 = ReadIO16(0x04000062u);
+    const uint16_t nr13 = ReadIO16(0x04000064u);
+    const uint16_t nr14 = ReadIO16(0x04000065u);
+    const uint16_t freq = static_cast<uint16_t>(nr13 | ((nr14 & 0x7u) << 8));
+    psg_mix += square_sample(&apu_phase_sq1_, freq, nr11);
+  }
+  if (soundcnt_x & 0x0002u) {  // CH2
+    const uint16_t nr21 = ReadIO16(0x04000068u);
+    const uint16_t nr23 = ReadIO16(0x0400006Cu);
+    const uint16_t nr24 = ReadIO16(0x0400006Du);
+    const uint16_t freq = static_cast<uint16_t>(nr23 | ((nr24 & 0x7u) << 8));
+    psg_mix += square_sample(&apu_phase_sq2_, freq, nr21);
+  }
+  if (soundcnt_x & 0x0004u) {  // CH3 wave
+    const uint16_t nr30 = ReadIO16(0x04000070u);
+    const uint16_t nr32 = ReadIO16(0x04000072u);
+    if (nr30 & 0x0080u) {
+      const uint16_t nr33 = ReadIO16(0x04000074u);
+      const uint16_t nr34 = ReadIO16(0x04000075u);
+      const uint16_t n = static_cast<uint16_t>(nr33 | ((nr34 & 0x7u) << 8));
+      const uint32_t hz = (2048u > n) ? (65536u / std::max<uint16_t>(1u, static_cast<uint16_t>(2048u - n))) : 0u;
+      apu_phase_wave_ += hz * std::max<uint32_t>(1u, cycles);
+      const uint32_t sample_idx = (apu_phase_wave_ / 2048u) & 31u;
+      const size_t wave_off = static_cast<size_t>(sample_idx / 2u);
+      const uint8_t packed = (wave_off < 16u) ? io_regs_[0x90 + wave_off] : 0;
+      uint8_t sample4 = (sample_idx & 1u) ? (packed & 0x0Fu) : (packed >> 4);
+      const uint16_t vol_code = (nr32 >> 5) & 0x3u;
+      if (vol_code == 0) sample4 = 0;
+      else if (vol_code == 2) sample4 >>= 1;
+      else if (vol_code == 3) sample4 >>= 2;
+      psg_mix += static_cast<int>(sample4) * 8 - 60;
+    }
+  }
+  if (soundcnt_x & 0x0008u) {  // CH4 noise
+    const uint16_t nr43 = ReadIO16(0x04000078u);
+    const uint32_t div = (nr43 & 0x7u) == 0 ? 8u : (nr43 & 0x7u) * 16u;
+    const uint32_t shift = (nr43 >> 4) & 0xFu;
+    const uint32_t period = div << shift;
+    for (uint32_t i = 0; i < std::max<uint32_t>(1u, cycles / std::max<uint32_t>(1u, period)); ++i) {
+      const uint16_t x = static_cast<uint16_t>((apu_noise_lfsr_ ^ (apu_noise_lfsr_ >> 1)) & 1u);
+      apu_noise_lfsr_ = static_cast<uint16_t>((apu_noise_lfsr_ >> 1) | (x << 14));
+    }
+    psg_mix += (apu_noise_lfsr_ & 1u) ? 28 : -28;
+  }
+
+  const int left_vol = (soundcnt_l >> 4) & 0x7;
+  const int right_vol = soundcnt_l & 0x7;
+  psg_mix = (psg_mix * (left_vol + right_vol + 1)) / 4;
+
   const int fifo_a_gain = (soundcnt_h & (1u << 2)) ? 2 : 1;
   const int fifo_b_gain = (soundcnt_h & (1u << 3)) ? 2 : 1;
   const int fifo_mix = fifo_a_last_sample_ * fifo_a_gain + fifo_b_last_sample_ * fifo_b_gain;
-  const int psg_mix = static_cast<int>(soundcnt_l & 0x7u) * 16 + static_cast<int>(master) * 32;
   const int mixed = psg_mix + fifo_mix + static_cast<int>(cycles / 128u);
   audio_mix_level_ = static_cast<uint16_t>(ClampToByteLocal(mixed) & 0xFFu);
 }

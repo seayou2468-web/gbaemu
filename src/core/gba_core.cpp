@@ -148,6 +148,10 @@ void GBACore::Reset() {
   fifo_b_.clear();
   fifo_a_last_sample_ = 0;
   fifo_b_last_sample_ = 0;
+  apu_phase_sq1_ = 0;
+  apu_phase_sq2_ = 0;
+  apu_phase_wave_ = 0;
+  apu_noise_lfsr_ = 0x7FFFu;
   bios_latch_ = 0;
   cpu_ = CpuState{};
   cpu_.active_mode = cpu_.cpsr & 0x1Fu;
@@ -239,7 +243,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   std::vector<uint8_t> blob;
   blob.reserve(512 * 1024);
   blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
-  append_u32(&blob, 8u);  // version
+  append_u32(&blob, 9u);  // version
   append_u64(&blob, frame_count_);
   append_u64(&blob, executed_cycles_);
   append_u32(&blob, cpu_.cpsr);
@@ -257,6 +261,10 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   append_u32(&blob, flash_bank_);
   append_u32(&blob, static_cast<uint32_t>(static_cast<uint16_t>(fifo_a_last_sample_)));
   append_u32(&blob, static_cast<uint32_t>(static_cast<uint16_t>(fifo_b_last_sample_)));
+  append_u32(&blob, apu_phase_sq1_);
+  append_u32(&blob, apu_phase_sq2_);
+  append_u32(&blob, apu_phase_wave_);
+  append_u32(&blob, apu_noise_lfsr_);
   append_u32(&blob, static_cast<uint32_t>(fifo_a_.size()));
   for (uint8_t b : fifo_a_) append_u32(&blob, b);
   append_u32(&blob, static_cast<uint32_t>(fifo_b_.size()));
@@ -310,7 +318,7 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   uint32_t version = 0;
   if (!read_u32(&off, &version) ||
       (version != 1u && version != 2u && version != 3u && version != 4u && version != 5u &&
-       version != 6u && version != 7u && version != 8u)) {
+       version != 6u && version != 7u && version != 8u && version != 9u)) {
     if (error) *error = "Unsupported savestate version.";
     return false;
   }
@@ -354,6 +362,18 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
         fifo_a_last_sample_ = static_cast<int16_t>(tmp32 & 0xFFFFu);
         if (!read_u32(&off, &tmp32)) return false;
         fifo_b_last_sample_ = static_cast<int16_t>(tmp32 & 0xFFFFu);
+        if (version >= 9u) {
+          if (!read_u32(&off, &apu_phase_sq1_)) return false;
+          if (!read_u32(&off, &apu_phase_sq2_)) return false;
+          if (!read_u32(&off, &apu_phase_wave_)) return false;
+          if (!read_u32(&off, &tmp32)) return false;
+          apu_noise_lfsr_ = static_cast<uint16_t>(tmp32 & 0x7FFFu);
+        } else {
+          apu_phase_sq1_ = 0;
+          apu_phase_sq2_ = 0;
+          apu_phase_wave_ = 0;
+          apu_noise_lfsr_ = 0x7FFFu;
+        }
         if (!read_u32(&off, &tmp32)) return false;
         fifo_a_.assign(tmp32, 0);
         for (size_t i = 0; i < fifo_a_.size(); ++i) {
@@ -373,6 +393,10 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
         fifo_b_.clear();
         fifo_a_last_sample_ = 0;
         fifo_b_last_sample_ = 0;
+        apu_phase_sq1_ = 0;
+        apu_phase_sq2_ = 0;
+        apu_phase_wave_ = 0;
+        apu_noise_lfsr_ = 0x7FFFu;
       }
       if (version >= 7u) {
         if (!read_u32(&off, &tmp32)) return false;
@@ -410,6 +434,10 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
     fifo_b_.clear();
     fifo_a_last_sample_ = 0;
     fifo_b_last_sample_ = 0;
+    apu_phase_sq1_ = 0;
+    apu_phase_sq2_ = 0;
+    apu_phase_wave_ = 0;
+    apu_noise_lfsr_ = 0x7FFFu;
   }
   for (uint32_t& r : cpu_.regs) {
     if (!read_u32(&off, &r)) return false;

@@ -71,6 +71,7 @@ make linux_test
 - APU:
   - SOUNDCNT系レジスタ参照の軽量ミキサー
   - FIFO A/B への書き込み、FIFO reset、Timer overflow 連動のサンプル消費
+  - PSG (Square/Wave/Noise) の簡易合成
 - 割り込み:
   - IE/IF/IME + CPSR I-bit を使った IRQ 受付
   - SWI/IRQ 例外ベクタ遷移の最小実装
