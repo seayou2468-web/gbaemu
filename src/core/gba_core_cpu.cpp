@@ -1,6 +1,7 @@
 #include "gba_core.h"
 
 #include <algorithm>
+#include <bit>
 
 namespace gba {
 uint32_t GBACore::RotateRight(uint32_t value, unsigned bits) const {
@@ -182,6 +183,74 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     return;
   }
 
+  // UMULL/UMLAL/SMULL/SMLAL
+  if ((opcode & 0x0F8000F0u) == 0x00800090u) {
+    const bool signed_mul = (opcode & (1u << 22)) != 0;
+    const bool accumulate = (opcode & (1u << 21)) != 0;
+    const bool set_flags = (opcode & (1u << 20)) != 0;
+    const uint32_t rd_hi = (opcode >> 16) & 0xFu;
+    const uint32_t rd_lo = (opcode >> 12) & 0xFu;
+    const uint32_t rs = (opcode >> 8) & 0xFu;
+    const uint32_t rm = opcode & 0xFu;
+
+    uint64_t result = 0;
+    if (signed_mul) {
+      const int64_t a = static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rm]));
+      const int64_t b = static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rs]));
+      int64_t wide = a * b;
+      if (accumulate) {
+        const uint64_t acc_u = (static_cast<uint64_t>(cpu_.regs[rd_hi]) << 32) | cpu_.regs[rd_lo];
+        wide += static_cast<int64_t>(acc_u);
+      }
+      result = static_cast<uint64_t>(wide);
+    } else {
+      result = static_cast<uint64_t>(cpu_.regs[rm]) * static_cast<uint64_t>(cpu_.regs[rs]);
+      if (accumulate) {
+        const uint64_t acc = (static_cast<uint64_t>(cpu_.regs[rd_hi]) << 32) | cpu_.regs[rd_lo];
+        result += acc;
+      }
+    }
+
+    cpu_.regs[rd_lo] = static_cast<uint32_t>(result & 0xFFFFFFFFu);
+    cpu_.regs[rd_hi] = static_cast<uint32_t>(result >> 32);
+    if (set_flags) {
+      const uint32_t nz = cpu_.regs[rd_hi] | cpu_.regs[rd_lo];
+      SetNZFlags(nz);
+    }
+    cpu_.regs[15] += 4;
+    return;
+  }
+
+  // SWP/SWPB
+  if ((opcode & 0x0FB00FF0u) == 0x01000090u) {
+    const bool byte = (opcode & (1u << 22)) != 0;
+    const uint32_t rn = (opcode >> 16) & 0xFu;
+    const uint32_t rd = (opcode >> 12) & 0xFu;
+    const uint32_t rm = opcode & 0xFu;
+    const uint32_t addr = cpu_.regs[rn];
+    if (byte) {
+      const uint8_t old = Read8(addr);
+      Write8(addr, static_cast<uint8_t>(cpu_.regs[rm] & 0xFFu));
+      cpu_.regs[rd] = old;
+    } else {
+      const uint32_t aligned = addr & ~3u;
+      const uint32_t old = Read32(aligned);
+      Write32(aligned, cpu_.regs[rm]);
+      cpu_.regs[rd] = old;
+    }
+    cpu_.regs[15] += 4;
+    return;
+  }
+
+  // CLZ
+  if ((opcode & 0x0FFF0FF0u) == 0x016F0F10u) {
+    const uint32_t rd = (opcode >> 12) & 0xFu;
+    const uint32_t rm = opcode & 0xFu;
+    cpu_.regs[rd] = static_cast<uint32_t>(std::countl_zero(cpu_.regs[rm]));
+    cpu_.regs[15] += 4;
+    return;
+  }
+
   // LDM/STM (increment/decrement + before/after subset)
   if ((opcode & 0x0E000000u) == 0x08000000u) {
     const uint32_t rn = (opcode >> 16) & 0xFu;
@@ -273,7 +342,10 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       if (byte) {
         cpu_.regs[rd] = Read8(addr);
       } else {
-        cpu_.regs[rd] = Read32(addr & ~3u);
+        const uint32_t aligned = addr & ~3u;
+        const uint32_t raw = Read32(aligned);
+        const uint32_t rot = (addr & 3u) * 8u;
+        cpu_.regs[rd] = (rot == 0) ? raw : RotateRight(raw, rot);
       }
     } else {
       if (byte) {
@@ -397,6 +469,12 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       case 0x6: { // SBC
         uint32_t r = 0;
         do_sub(cpu_.regs[rn], operand2, GetFlagC() ? 0u : 1u, &r);
+        cpu_.regs[rd] = r;
+        break;
+      }
+      case 0x7: { // RSC
+        uint32_t r = 0;
+        do_sub(operand2, cpu_.regs[rn], GetFlagC() ? 0u : 1u, &r);
         cpu_.regs[rd] = r;
         break;
       }
