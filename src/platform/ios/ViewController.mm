@@ -33,12 +33,19 @@ constexpr CGFloat kStartButtonHeight = 40.0;
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UILabel *hudLabel;
 @property(nonatomic, strong) UILabel *biosLabel;
+@property(nonatomic, strong) UILabel *romLabel;
 @property(nonatomic, strong) UISegmentedControl *biosModeControl;
 @property(nonatomic, strong) UIButton *pickBiosButton;
+@property(nonatomic, strong) UIButton *pickRomButton;
+@property(nonatomic, strong) UIButton *saveStateButton;
+@property(nonatomic, strong) UIButton *loadStateButton;
+@property(nonatomic, strong) UIButton *pauseButton;
 @property(nonatomic, strong) CADisplayLink *displayLink;
 @property(nonatomic, strong) NSMutableArray<VirtualKeyButton *> *allButtons;
 @property(nonatomic, strong) NSMapTable<UITouch *, VirtualKeyButton *> *activeTouches;
 @property(nonatomic, strong) NSData *externalBiosData;
+@property(nonatomic, strong) NSData *externalRomData;
+@property(nonatomic, copy) NSString *activeRomName;
 @property(nonatomic, assign) CFTimeInterval lastTick;
 @property(nonatomic, assign) BOOL paused;
 @end
@@ -55,12 +62,13 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   self.paused = NO;
 
   [self buildLayout];
+  [self registerForAppLifecycleNotifications];
 
   _core = std::make_unique<gba::GBACore>();
   if (![self applyBIOSSelection]) {
     return;
   }
-  if (![self loadROMFromBundle]) {
+  if (![self loadInitialROM]) {
     return;
   }
 
@@ -71,6 +79,10 @@ constexpr CGFloat kStartButtonHeight = 40.0;
     self.displayLink.preferredFrameRateRange = CAFrameRateRangeMake(30.0, 60.0, 60.0);
   }
   [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSDefaultRunLoopMode];
+}
+
+- (void)dealloc {
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)buildLayout {
@@ -109,6 +121,26 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   [self.pickBiosButton addTarget:self action:@selector(onPickBios) forControlEvents:UIControlEventTouchUpInside];
   [self.view addSubview:self.pickBiosButton];
 
+  self.pickRomButton = [UIButton buttonWithType:UIButtonTypeSystem];
+  [self.pickRomButton setTitle:@"Pick ROM" forState:UIControlStateNormal];
+  self.pickRomButton.translatesAutoresizingMaskIntoConstraints = NO;
+  [self.pickRomButton addTarget:self action:@selector(onPickRom) forControlEvents:UIControlEventTouchUpInside];
+  [self.view addSubview:self.pickRomButton];
+
+  self.saveStateButton = [UIButton buttonWithType:UIButtonTypeSystem];
+  [self.saveStateButton setTitle:@"SaveState" forState:UIControlStateNormal];
+  self.saveStateButton.translatesAutoresizingMaskIntoConstraints = NO;
+  self.saveStateButton.titleLabel.font = [UIFont monospacedSystemFontOfSize:11.0 weight:UIFontWeightSemibold];
+  [self.saveStateButton addTarget:self action:@selector(onSaveState) forControlEvents:UIControlEventTouchUpInside];
+  [self.view addSubview:self.saveStateButton];
+
+  self.loadStateButton = [UIButton buttonWithType:UIButtonTypeSystem];
+  [self.loadStateButton setTitle:@"LoadState" forState:UIControlStateNormal];
+  self.loadStateButton.translatesAutoresizingMaskIntoConstraints = NO;
+  self.loadStateButton.titleLabel.font = [UIFont monospacedSystemFontOfSize:11.0 weight:UIFontWeightSemibold];
+  [self.loadStateButton addTarget:self action:@selector(onLoadState) forControlEvents:UIControlEventTouchUpInside];
+  [self.view addSubview:self.loadStateButton];
+
   self.biosLabel = [[UILabel alloc] initWithFrame:CGRectZero];
   self.biosLabel.text = @"BIOS: built-in";
   self.biosLabel.numberOfLines = 2;
@@ -116,6 +148,14 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   self.biosLabel.font = [UIFont monospacedSystemFontOfSize:11.0 weight:UIFontWeightRegular];
   self.biosLabel.translatesAutoresizingMaskIntoConstraints = NO;
   [self.view addSubview:self.biosLabel];
+
+  self.romLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+  self.romLabel.text = @"ROM: bundle test.gba";
+  self.romLabel.numberOfLines = 2;
+  self.romLabel.textColor = UIColor.lightGrayColor;
+  self.romLabel.font = [UIFont monospacedSystemFontOfSize:11.0 weight:UIFontWeightRegular];
+  self.romLabel.translatesAutoresizingMaskIntoConstraints = NO;
+  [self.view addSubview:self.romLabel];
 
   [NSLayoutConstraint activateConstraints:@[
     [self.screenView.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:12.0],
@@ -135,8 +175,16 @@ constexpr CGFloat kStartButtonHeight = 40.0;
     [self.biosModeControl.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:6.0],
     [self.pickBiosButton.leadingAnchor constraintEqualToAnchor:self.biosModeControl.trailingAnchor constant:8.0],
     [self.pickBiosButton.centerYAnchor constraintEqualToAnchor:self.biosModeControl.centerYAnchor],
+    [self.pickRomButton.leadingAnchor constraintEqualToAnchor:self.pickBiosButton.trailingAnchor constant:8.0],
+    [self.pickRomButton.centerYAnchor constraintEqualToAnchor:self.biosModeControl.centerYAnchor],
+    [self.saveStateButton.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-78.0],
+    [self.saveStateButton.centerYAnchor constraintEqualToAnchor:self.biosModeControl.centerYAnchor],
+    [self.loadStateButton.leadingAnchor constraintEqualToAnchor:self.saveStateButton.trailingAnchor constant:4.0],
+    [self.loadStateButton.centerYAnchor constraintEqualToAnchor:self.biosModeControl.centerYAnchor],
     [self.biosLabel.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:12.0],
     [self.biosLabel.topAnchor constraintEqualToAnchor:self.biosModeControl.bottomAnchor constant:2.0],
+    [self.romLabel.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:12.0],
+    [self.romLabel.topAnchor constraintEqualToAnchor:self.biosLabel.bottomAnchor constant:2.0],
   ]];
 
   [self buildVirtualPadInRect:bounds];
@@ -158,6 +206,15 @@ constexpr CGFloat kStartButtonHeight = 40.0;
 }
 
 - (void)buildVirtualPadInRect:(CGRect)bounds {
+  for (UIView *subview in [self.view.subviews copy]) {
+    if ([subview isKindOfClass:[VirtualKeyButton class]]) {
+      [subview removeFromSuperview];
+    }
+  }
+  [self.allButtons removeAllObjects];
+  [self.activeTouches removeAllObjects];
+  _core->SetKeys(0);
+
   const CGFloat bottomY = CGRectGetMaxY(bounds) - kButtonSize - 20.0;
   const CGFloat dpadX = kDPadInset + kButtonSize;
 
@@ -197,15 +254,22 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   start.titleLabel.font = [UIFont monospacedSystemFontOfSize:12.0 weight:UIFontWeightBold];
   select.titleLabel.font = [UIFont monospacedSystemFontOfSize:12.0 weight:UIFontWeightBold];
 
-  UIButton *pauseButton = [UIButton buttonWithType:UIButtonTypeSystem];
-  pauseButton.frame = CGRectMake(centerX - 50.0, bottomY - 46.0, 100.0, 34.0);
-  pauseButton.layer.cornerRadius = 8.0;
-  pauseButton.backgroundColor = [UIColor colorWithRed:0.22 green:0.22 blue:0.28 alpha:0.9];
-  [pauseButton setTitle:@"Pause/Resume" forState:UIControlStateNormal];
-  pauseButton.titleLabel.font = [UIFont monospacedSystemFontOfSize:12.0 weight:UIFontWeightSemibold];
-  [pauseButton setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-  [pauseButton addTarget:self action:@selector(togglePause) forControlEvents:UIControlEventTouchUpInside];
-  [self.view addSubview:pauseButton];
+  if (!self.pauseButton) {
+    self.pauseButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.pauseButton.layer.cornerRadius = 8.0;
+    self.pauseButton.backgroundColor = [UIColor colorWithRed:0.22 green:0.22 blue:0.28 alpha:0.9];
+    [self.pauseButton setTitle:@"Pause/Resume" forState:UIControlStateNormal];
+    self.pauseButton.titleLabel.font = [UIFont monospacedSystemFontOfSize:12.0 weight:UIFontWeightSemibold];
+    [self.pauseButton setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [self.pauseButton addTarget:self action:@selector(togglePause) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.pauseButton];
+  }
+  self.pauseButton.frame = CGRectMake(centerX - 50.0, bottomY - 46.0, 100.0, 34.0);
+}
+
+- (void)viewDidLayoutSubviews {
+  [super viewDidLayoutSubviews];
+  [self buildVirtualPadInRect:self.view.bounds];
 }
 
 - (BOOL)applyBIOSSelection {
@@ -231,7 +295,7 @@ constexpr CGFloat kStartButtonHeight = 40.0;
 
 - (void)onBiosModeChanged {
   if ([self applyBIOSSelection]) {
-    self.statusLabel.text = @"BIOS mode changed.";
+    [self reloadCoreWithActiveROM:@"BIOS mode changed."];
   }
 }
 
@@ -242,27 +306,56 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   } else {
     picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.data"] inMode:UIDocumentPickerModeImport];
   }
+  picker.view.tag = 1;
+  picker.delegate = self;
+  picker.allowsMultipleSelection = NO;
+  [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)onPickRom {
+  UIDocumentPickerViewController *picker = nil;
+  if (@available(iOS 14.0, *)) {
+    picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
+  } else {
+    picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.data"] inMode:UIDocumentPickerModeImport];
+  }
+  picker.view.tag = 2;
   picker.delegate = self;
   picker.allowsMultipleSelection = NO;
   [self presentViewController:picker animated:YES completion:nil];
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-  (void)controller;
   NSURL *url = urls.firstObject;
   if (!url) return;
+  const BOOL scoped = [url startAccessingSecurityScopedResource];
   NSError *err = nil;
   NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:&err];
+  if (scoped) {
+    [url stopAccessingSecurityScopedResource];
+  }
   if (!data || err) {
-    self.statusLabel.text = [NSString stringWithFormat:@"BIOS read failed: %@", err.localizedDescription ?: @"unknown"];
+    self.statusLabel.text = [NSString stringWithFormat:@"File read failed: %@", err.localizedDescription ?: @"unknown"];
     return;
   }
-  self.externalBiosData = data;
-  self.biosLabel.text = [NSString stringWithFormat:@"BIOS file selected: %@ (%lu bytes)", url.lastPathComponent, (unsigned long)data.length];
-  [self applyBIOSSelection];
+  if (controller.view.tag == 1) {
+    self.externalBiosData = data;
+    self.biosLabel.text = [NSString stringWithFormat:@"BIOS file selected: %@ (%lu bytes)",
+                                                     url.lastPathComponent, (unsigned long)data.length];
+    if ([self applyBIOSSelection]) {
+      [self reloadCoreWithActiveROM:@"BIOS file selected + reloaded ROM."];
+    }
+    return;
+  }
+
+  self.externalRomData = data;
+  self.activeRomName = url.lastPathComponent ?: @"picked.gba";
+  self.romLabel.text = [NSString stringWithFormat:@"ROM: %@ (%lu bytes)",
+                                                  self.activeRomName, (unsigned long)data.length];
+  [self reloadCoreWithActiveROM:@"ROM file loaded from Files app."];
 }
 
-- (BOOL)loadROMFromBundle {
+- (BOOL)loadInitialROM {
   NSString *romPath = [[NSBundle mainBundle] pathForResource:@"test" ofType:@"gba"];
   if (!romPath) {
     self.statusLabel.text = @"ROM not found in app bundle. Add test.gba";
@@ -276,13 +369,129 @@ constexpr CGFloat kStartButtonHeight = 40.0;
     return NO;
   }
 
+  self.externalRomData = [NSData dataWithBytes:rom.data() length:rom.size()];
+  self.activeRomName = @"test.gba";
+  self.romLabel.text = @"ROM: bundle test.gba";
+  return [self reloadCoreWithActiveROM:@"ROM loaded. Multi-touch virtual pad enabled."];
+}
+
+- (BOOL)reloadCoreWithActiveROM:(NSString *)message {
+  if (self.externalRomData.length == 0) {
+    self.statusLabel.text = @"No ROM data loaded.";
+    return NO;
+  }
+  std::vector<uint8_t> rom(self.externalRomData.length);
+  [self.externalRomData getBytes:rom.data() length:self.externalRomData.length];
+  std::string error;
   if (!_core->LoadROM(rom, &error)) {
     self.statusLabel.text = [NSString stringWithFormat:@"ROM invalid: %s", error.c_str()];
     return NO;
   }
-
-  self.statusLabel.text = @"ROM loaded. Multi-touch virtual pad enabled.";
+  [self loadPersistentSaveData];
+  self.lastTick = 0;
+  self.statusLabel.text = message;
   return YES;
+}
+
+- (NSString *)persistenceKey {
+  NSString *name = self.activeRomName.length > 0 ? self.activeRomName : @"default";
+  NSCharacterSet *safeChars = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-."];
+  NSMutableString *sanitized = [NSMutableString stringWithCapacity:name.length];
+  for (NSUInteger i = 0; i < name.length; ++i) {
+    unichar c = [name characterAtIndex:i];
+    if ([safeChars characterIsMember:c]) {
+      [sanitized appendFormat:@"%C", c];
+    } else {
+      [sanitized appendString:@"_"];
+    }
+  }
+  return sanitized;
+}
+
+- (NSURL *)persistenceDirectoryURL {
+  NSURL *dir = [[[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory
+                                                        inDomains:NSUserDomainMask].firstObject
+      URLByAppendingPathComponent:@"gbaemu" isDirectory:YES];
+  [[NSFileManager defaultManager] createDirectoryAtURL:dir
+                           withIntermediateDirectories:YES
+                                            attributes:nil
+                                                 error:nil];
+  return dir;
+}
+
+- (NSURL *)saveRamURL {
+  return [[self persistenceDirectoryURL] URLByAppendingPathComponent:[NSString stringWithFormat:@"%@.sav", [self persistenceKey]]];
+}
+
+- (NSURL *)saveStateURL {
+  return [[self persistenceDirectoryURL] URLByAppendingPathComponent:[NSString stringWithFormat:@"%@.state", [self persistenceKey]]];
+}
+
+- (void)loadPersistentSaveData {
+  NSData *saveData = [NSData dataWithContentsOfURL:[self saveRamURL]];
+  if (saveData.length > 0) {
+    std::vector<uint8_t> bytes(saveData.length);
+    [saveData getBytes:bytes.data() length:saveData.length];
+    _core->LoadSaveRAM(bytes);
+  }
+
+  NSData *stateData = [NSData dataWithContentsOfURL:[self saveStateURL]];
+  if (stateData.length > 0) {
+    std::vector<uint8_t> blob(stateData.length);
+    [stateData getBytes:blob.data() length:stateData.length];
+    std::string error;
+    _core->LoadStateBlob(blob, &error);
+  }
+}
+
+- (void)persistSaveRam {
+  const auto &save = _core->GetSaveRAM();
+  NSData *data = [NSData dataWithBytes:save.data() length:save.size()];
+  [data writeToURL:[self saveRamURL] atomically:YES];
+}
+
+- (void)onSaveState {
+  if (!_core || !_core->loaded()) return;
+  std::vector<uint8_t> stateBlob = _core->SaveStateBlob();
+  NSData *data = [NSData dataWithBytes:stateBlob.data() length:stateBlob.size()];
+  if ([data writeToURL:[self saveStateURL] atomically:YES]) {
+    [self persistSaveRam];
+    self.statusLabel.text = @"Saved state + SRAM.";
+  } else {
+    self.statusLabel.text = @"SaveState write failed.";
+  }
+}
+
+- (void)onLoadState {
+  if (!_core || !_core->loaded()) return;
+  NSData *stateData = [NSData dataWithContentsOfURL:[self saveStateURL]];
+  if (stateData.length == 0) {
+    self.statusLabel.text = @"No SaveState file.";
+    return;
+  }
+  std::vector<uint8_t> blob(stateData.length);
+  [stateData getBytes:blob.data() length:stateData.length];
+  std::string error;
+  if (!_core->LoadStateBlob(blob, &error)) {
+    self.statusLabel.text = [NSString stringWithFormat:@"LoadState failed: %s", error.c_str()];
+    return;
+  }
+  [self loadPersistentSaveData];
+  self.statusLabel.text = @"Loaded state.";
+}
+
+- (void)registerForAppLifecycleNotifications {
+  NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+  [center addObserver:self selector:@selector(onAppWillResignActive) name:UIApplicationWillResignActiveNotification object:nil];
+  [center addObserver:self selector:@selector(onAppWillTerminate) name:UIApplicationWillTerminateNotification object:nil];
+}
+
+- (void)onAppWillResignActive {
+  [self persistSaveRam];
+}
+
+- (void)onAppWillTerminate {
+  [self persistSaveRam];
 }
 
 - (void)togglePause {
