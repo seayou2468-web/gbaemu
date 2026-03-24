@@ -630,9 +630,51 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
         SetFlagC(c);
         break;
       }
+      case 0x5: {  // ADC
+        const uint32_t lhs = cpu_.regs[rd];
+        const uint32_t rhs = cpu_.regs[rs];
+        const uint32_t carry = GetFlagC() ? 1u : 0u;
+        const uint64_t r64 = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(rhs) + carry;
+        cpu_.regs[rd] = static_cast<uint32_t>(r64);
+        SetAddFlags(lhs, rhs + carry, r64);
+        break;
+      }
+      case 0x6: {  // SBC
+        const uint32_t lhs = cpu_.regs[rd];
+        const uint32_t rhs = cpu_.regs[rs];
+        const uint32_t borrow = GetFlagC() ? 0u : 1u;
+        const uint64_t r64 = static_cast<uint64_t>(lhs) - static_cast<uint64_t>(rhs) - borrow;
+        cpu_.regs[rd] = static_cast<uint32_t>(r64);
+        SetSubFlags(lhs, rhs + borrow, r64);
+        break;
+      }
+      case 0x7: {  // ROR
+        bool c = GetFlagC();
+        const uint32_t amount = cpu_.regs[rs] & 0xFFu;
+        cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 3, amount, &c);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(c);
+        break;
+      }
+      case 0x8: {  // TST
+        SetNZFlags(cpu_.regs[rd] & cpu_.regs[rs]);
+        break;
+      }
+      case 0x9: {  // NEG
+        const uint32_t rhs = cpu_.regs[rs];
+        const uint64_t r64 = static_cast<uint64_t>(0) - static_cast<uint64_t>(rhs);
+        cpu_.regs[rd] = static_cast<uint32_t>(r64);
+        SetSubFlags(0u, rhs, r64);
+        break;
+      }
       case 0xA: {  // CMP
         const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - static_cast<uint64_t>(cpu_.regs[rs]);
         SetSubFlags(cpu_.regs[rd], cpu_.regs[rs], r64);
+        break;
+      }
+      case 0xB: {  // CMN
+        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) + static_cast<uint64_t>(cpu_.regs[rs]);
+        SetAddFlags(cpu_.regs[rd], cpu_.regs[rs], r64);
         break;
       }
       case 0xC: { cpu_.regs[rd] |= cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }           // ORR
@@ -641,6 +683,8 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
         SetNZFlags(cpu_.regs[rd]);
         break;
       }
+      case 0xE: { cpu_.regs[rd] &= ~cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }           // BIC
+      case 0xF: { cpu_.regs[rd] = ~cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }            // MVN
       default:
         break;
     }
@@ -668,11 +712,19 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     }
     if (op == 0) {  // ADD
       cpu_.regs[rd] += cpu_.regs[rs];
+      if (rd == 15) {
+        cpu_.regs[15] &= ~1u;
+        return;
+      }
     } else if (op == 1) {  // CMP
       const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - static_cast<uint64_t>(cpu_.regs[rs]);
       SetSubFlags(cpu_.regs[rd], cpu_.regs[rs], r64);
     } else if (op == 2) {  // MOV
       cpu_.regs[rd] = cpu_.regs[rs];
+      if (rd == 15) {
+        cpu_.regs[15] &= ~1u;
+        return;
+      }
     }
     cpu_.regs[15] += 2;
     return;
@@ -697,7 +749,14 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint16_t rd = opcode & 0x7u;
     const uint32_t addr = cpu_.regs[rb] + cpu_.regs[ro];
     if (load) {
-      cpu_.regs[rd] = byte ? Read8(addr) : Read32(addr & ~3u);
+      if (byte) {
+        cpu_.regs[rd] = Read8(addr);
+      } else {
+        const uint32_t aligned = addr & ~3u;
+        const uint32_t raw = Read32(aligned);
+        const uint32_t rot = (addr & 3u) * 8u;
+        cpu_.regs[rd] = (rot == 0) ? raw : RotateRight(raw, rot);
+      }
     } else if (byte) {
       Write8(addr, static_cast<uint8_t>(cpu_.regs[rd] & 0xFFu));
     } else {
@@ -734,7 +793,14 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint32_t offset = byte ? imm5 : (imm5 << 2u);
     const uint32_t addr = cpu_.regs[rb] + offset;
     if (load) {
-      cpu_.regs[rd] = byte ? Read8(addr) : Read32(addr & ~3u);
+      if (byte) {
+        cpu_.regs[rd] = Read8(addr);
+      } else {
+        const uint32_t aligned = addr & ~3u;
+        const uint32_t raw = Read32(aligned);
+        const uint32_t rot = (addr & 3u) * 8u;
+        cpu_.regs[rd] = (rot == 0) ? raw : RotateRight(raw, rot);
+      }
     } else if (byte) {
       Write8(addr, static_cast<uint8_t>(cpu_.regs[rd]));
     } else {
