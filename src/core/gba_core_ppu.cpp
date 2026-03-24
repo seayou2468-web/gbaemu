@@ -242,21 +242,52 @@ void GBACore::RenderMode0Frame() {
 }
 
 void GBACore::StepPpu(uint32_t cycles) {
+  constexpr uint32_t kHBlankStartCycle = 1006u;
   ppu_cycle_accum_ += cycles;
+  uint16_t dispstat = ReadIO16(0x04000004u);
+  const bool was_hblank = (dispstat & 0x0002u) != 0;
+  const bool now_hblank = ppu_cycle_accum_ >= kHBlankStartCycle;
+  if (now_hblank) {
+    dispstat |= 0x0002u;
+  } else {
+    dispstat &= static_cast<uint16_t>(~0x0002u);
+  }
+  if (!was_hblank && now_hblank && (dispstat & (1u << 4))) {
+    RaiseInterrupt(1u << 1);  // HBlank IRQ
+  }
+  WriteIO16(0x04000004u, dispstat);
+
   while (ppu_cycle_accum_ >= kCyclesPerScanline) {
     ppu_cycle_accum_ -= kCyclesPerScanline;
     uint16_t vcount = ReadIO16(0x04000006u);
     vcount = static_cast<uint16_t>((vcount + 1u) % kTotalScanlines);
     WriteIO16(0x04000006u, vcount);
 
-    uint16_t dispstat = ReadIO16(0x04000004u);
+    dispstat = ReadIO16(0x04000004u);
+    const bool was_vblank = (dispstat & 0x0001u) != 0;
     const bool in_vblank = vcount >= kVisibleScanlines;
     if (in_vblank) {
       dispstat |= 0x0001u;
-      RaiseInterrupt(0x0001u);  // VBlank
+      if (!was_vblank && (dispstat & (1u << 3))) {
+        RaiseInterrupt(0x0001u);  // VBlank IRQ
+      }
     } else {
       dispstat &= static_cast<uint16_t>(~0x0001u);
     }
+
+    const uint16_t vcount_compare = static_cast<uint16_t>((dispstat >> 8) & 0x00FFu);
+    const bool vcount_match = (vcount == vcount_compare);
+    if (vcount_match) {
+      if ((dispstat & 0x0004u) == 0u && (dispstat & (1u << 5))) {
+        RaiseInterrupt(1u << 2);  // VCount IRQ
+      }
+      dispstat |= 0x0004u;
+    } else {
+      dispstat &= static_cast<uint16_t>(~0x0004u);
+    }
+
+    // New scanline starts outside HBlank.
+    dispstat &= static_cast<uint16_t>(~0x0002u);
     WriteIO16(0x04000004u, dispstat);
   }
 }
@@ -288,6 +319,9 @@ void GBACore::StepTimers(uint32_t cycles) {
 }
 
 void GBACore::StepDma() {
+  const uint16_t dispstat = ReadIO16(0x04000004u);
+  const bool in_vblank = (dispstat & 0x0001u) != 0;
+  const bool in_hblank = (dispstat & 0x0002u) != 0;
   for (int ch = 0; ch < 4; ++ch) {
     const uint32_t base = static_cast<uint32_t>(0x040000B0u + ch * 12u);
     const uint32_t src = Read32(base + 0u);
@@ -295,6 +329,14 @@ void GBACore::StepDma() {
     const uint16_t cnt_l = ReadIO16(base + 8u);
     const uint16_t cnt_h = ReadIO16(base + 10u);
     if ((cnt_h & 0x8000u) == 0) continue;
+    const uint16_t start_timing = static_cast<uint16_t>((cnt_h >> 12) & 0x3u);
+    bool fire_now = false;
+    if (start_timing == 0u) fire_now = true;                  // Immediate
+    if (start_timing == 1u && in_vblank) fire_now = true;     // VBlank
+    if (start_timing == 2u && in_hblank) fire_now = true;     // HBlank
+    if (start_timing == 3u && ch == 3) fire_now = true;       // Video capture/special fallback
+    if (!fire_now) continue;
+
     const bool word32 = (cnt_h & (1u << 10)) != 0;
     uint32_t count = cnt_l;
     if (count == 0) count = (ch == 3) ? 0x10000u : 0x4000u;
@@ -323,8 +365,15 @@ void GBACore::StepDma() {
 
     Write32(base + 0u, src_cur);
     Write32(base + 4u, (dst_ctl == 3) ? dst : dst_cur);
-    WriteIO16(base + 10u, static_cast<uint16_t>(cnt_h & ~0x8000u));
-    RaiseInterrupt(static_cast<uint16_t>(1u << static_cast<uint16_t>(8u + ch)));
+    const bool repeat = (cnt_h & (1u << 9)) != 0;
+    uint16_t next_cnt_h = cnt_h;
+    if (!(repeat && start_timing != 0u)) {
+      next_cnt_h = static_cast<uint16_t>(cnt_h & ~0x8000u);
+    }
+    WriteIO16(base + 10u, next_cnt_h);
+    if (cnt_h & (1u << 14)) {
+      RaiseInterrupt(static_cast<uint16_t>(1u << static_cast<uint16_t>(8u + ch)));
+    }
   }
 }
 
@@ -363,8 +412,12 @@ void GBACore::RaiseInterrupt(uint16_t mask) {
 }
 
 void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode, bool disable_irq, bool thumb_state) {
-  cpu_.regs[14] = cpu_.regs[15] + ((cpu_.cpsr & (1u << 5)) ? 2u : 4u);
+  const uint32_t old_cpsr = cpu_.cpsr;
+  SwitchCpuMode(new_mode & 0x1Fu);
+  if (HasSpsr(GetCpuMode())) cpu_.spsr[GetCpuMode()] = old_cpsr;
+  cpu_.regs[14] = cpu_.regs[15] + ((old_cpsr & (1u << 5)) ? 2u : 4u);
   cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | (new_mode & 0x1Fu);
+  cpu_.active_mode = new_mode & 0x1Fu;
   if (disable_irq) cpu_.cpsr |= (1u << 7);
   if (thumb_state) {
     cpu_.cpsr |= (1u << 5);

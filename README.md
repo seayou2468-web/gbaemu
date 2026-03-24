@@ -25,7 +25,15 @@ make linux_test
   - データ処理命令の対応拡張 (AND/EOR/SUB/RSB/ADD/ADC/SBC/TST/TEQ/CMP/CMN/ORR/MOV/BIC/MVN)
   - 即値シフタ + レジスタシフタ (LSL/LSR/ASR/ROR/RRX)
   - MUL/MLA
-  - LDR/STR (即値/レジスタオフセット、byte/word) と LDM/STM の最小実装
+  - LDR/STR (即値/レジスタオフセット、byte/word)
+  - LDM/STM の 4 アドレッシングモード (IA/IB/DA/DB) + 空レジスタリスト動作
+  - MRS/MSR の CPSR/SPSR 読み書き（フィールドマスク対応）
+  - 例外遷移時のモードバンク (R8-R12_fiq / SP / LR) と SPSR 保存
+  - データ処理で `Rd=PC` 時の分岐反映 + `S` ビット時の SPSR→CPSR 復帰
+  - ARM オペランドの `R15` 読み出しでパイプライン補正 (`PC+8`) を反映
+  - LDM^ (`S` + `PC` 読み込み) で SPSR→CPSR 復帰
+  - 未定義 ARM/Thumb 命令の UND 例外遷移
+  - 命令種別ベースの CPU サイクル見積もりループ
 - Thumb:
   - シフト即値、ADD/SUB (レジスタ/即値3)、MOV/CMP/ADD/SUB 即値
   - ALU 命令の一部、Hi register ops、BX
@@ -35,15 +43,19 @@ make linux_test
 ## CPU 以外の実装状況
 - メモリマップ拡張:
   - BIOS (`0x00000000`) のロード/参照
+  - BIOS lockout（BIOS外実行時は BIOS latch 値を返す）を反映
   - IO (`0x04000000`)
   - Palette RAM (`0x05000000`)
   - VRAM (`0x06000000`)
   - OAM (`0x07000000`)
+  - Palette/VRAM/OAM の byte write は halfword ミラー動作を反映
   - SRAM/Flash ウィンドウ (`0x0E000000`) を SRAM モデルで実装
+  - EEPROM バックアップ（シリアル bitstream 読み書き）の基礎実装
+  - GamePak ROM 読み出しのミラー/ラップアラウンドを反映
   - SaveState/LoadState バイナリスナップショット API
 - PPU:
   - VCOUNT / DISPSTAT の更新
-  - VBlank フラグ更新
+  - VBlank/HBlank/VCOUNT 一致フラグ更新 + DISPSTAT IRQ 条件評価
   - Mode0 BG0 (4bpp text BG) の最小描画
   - BG Mode3 の VRAM 直描画をフレームバッファへ反映
   - Mode4 (8bpp bitmap + page flip) の描画
@@ -51,7 +63,8 @@ make linux_test
 - Timer:
   - 4ch タイマの基本カウント/プリスケーラ/IRQ フラグ更新
 - DMA:
-  - DMA enable 時の 16/32bit 転送（inc/dec/fixed の最小対応）+ IF 反映
+  - DMA enable 時の 16/32bit 転送（inc/dec/fixed）
+  - DMA 開始タイミング (Immediate/VBlank/HBlank/特殊ch3) と Repeat/IRQ ビット対応
 - APU:
   - SOUNDCNT系レジスタを参照した軽量ミキサーレベル更新スタブ
 - 割り込み:

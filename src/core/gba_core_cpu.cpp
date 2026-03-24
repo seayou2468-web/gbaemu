@@ -134,7 +134,65 @@ void GBACore::SetSubFlags(uint32_t lhs, uint32_t rhs, uint64_t result64) {
               (overflow ? (1u << 28) : 0u);
 }
 
+uint32_t GBACore::GetCpuMode() const { return cpu_.cpsr & 0x1Fu; }
+
+bool GBACore::IsPrivilegedMode(uint32_t mode) const { return mode != 0x10u; }
+
+bool GBACore::HasSpsr(uint32_t mode) const {
+  return mode == 0x11u || mode == 0x12u || mode == 0x13u || mode == 0x17u || mode == 0x1Bu;
+}
+
+void GBACore::SwitchCpuMode(uint32_t new_mode) {
+  new_mode &= 0x1Fu;
+  const uint32_t old_mode = cpu_.active_mode & 0x1Fu;
+  if (old_mode == new_mode) return;
+  if (old_mode == 0x11u) {  // Leaving FIQ: bank out R8-R12.
+    for (size_t i = 0; i < cpu_.banked_fiq_r8_r12.size(); ++i) {
+      cpu_.banked_fiq_r8_r12[i] = cpu_.regs[8 + i];
+    }
+  }
+  cpu_.banked_sp[old_mode] = cpu_.regs[13];
+  cpu_.banked_lr[old_mode] = cpu_.regs[14];
+  if (new_mode == 0x11u) {  // Entering FIQ: bank in R8-R12.
+    for (size_t i = 0; i < cpu_.banked_fiq_r8_r12.size(); ++i) {
+      cpu_.regs[8 + i] = cpu_.banked_fiq_r8_r12[i];
+    }
+  }
+  cpu_.regs[13] = cpu_.banked_sp[new_mode];
+  cpu_.regs[14] = cpu_.banked_lr[new_mode];
+  cpu_.active_mode = new_mode;
+  cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | new_mode;
+}
+
+uint32_t GBACore::EstimateArmCycles(uint32_t opcode) const {
+  if ((opcode & 0x0E000000u) == 0x0A000000u) return 3u;              // B/BL
+  if ((opcode & 0x0E000000u) == 0x08000000u) return 2u;              // LDM/STM
+  if ((opcode & 0x0C000000u) == 0x04000000u) return 2u;              // LDR/STR
+  if ((opcode & 0x0FC000F0u) == 0x00000090u) return 2u;              // MUL/MLA
+  if ((opcode & 0x0F8000F0u) == 0x00800090u) return 3u;              // UMULL/...
+  if ((opcode & 0x0F000000u) == 0x0F000000u) return 3u;              // SWI
+  return 1u;                                                          // ALU/other
+}
+
+uint32_t GBACore::EstimateThumbCycles(uint16_t opcode) const {
+  if ((opcode & 0xF800u) == 0xE000u) return 3u;                      // B
+  if ((opcode & 0xF000u) == 0xD000u) return 2u;                      // Bcond/SWI space
+  if ((opcode & 0xF000u) == 0xC000u) return 2u;                      // LDMIA/STMIA
+  if ((opcode & 0xE000u) == 0x6000u || (opcode & 0xF000u) == 0x8000u) return 2u;  // Load/store
+  if ((opcode & 0xF800u) == 0x4800u) return 2u;                      // LDR literal
+  return 1u;                                                          // ALU/other
+}
+
 void GBACore::ExecuteArmInstruction(uint32_t opcode) {
+  auto arm_reg_value = [&](uint32_t reg) -> uint32_t {
+    if ((reg & 0xFu) == 15u) return cpu_.regs[15] + 8u;
+    return cpu_.regs[reg & 0xFu];
+  };
+  auto arm_shift_operand_value = [&](uint32_t reg, bool reg_shift) -> uint32_t {
+    if ((reg & 0xFu) != 15u) return cpu_.regs[reg & 0xFu];
+    return cpu_.regs[15] + (reg_shift ? 12u : 8u);
+  };
+
   const uint32_t cond = (opcode >> 28) & 0xFu;
   if (!CheckCondition(cond)) {
     cpu_.regs[15] += 4;
@@ -144,7 +202,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   // BX Rm
   if ((opcode & 0x0FFFFFF0u) == 0x012FFF10u) {
     const uint32_t rm = opcode & 0xFu;
-    const uint32_t target = cpu_.regs[rm];
+    const uint32_t target = arm_reg_value(rm);
     if (target & 1u) {
       cpu_.cpsr |= (1u << 5);  // Thumb bit.
       cpu_.regs[15] = target & ~1u;
@@ -175,8 +233,8 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const uint32_t rn = (opcode >> 12) & 0xFu;
     const uint32_t rs = (opcode >> 8) & 0xFu;
     const uint32_t rm = opcode & 0xFu;
-    uint32_t result = cpu_.regs[rm] * cpu_.regs[rs];
-    if (accumulate) result += cpu_.regs[rn];
+    uint32_t result = arm_reg_value(rm) * arm_reg_value(rs);
+    if (accumulate) result += arm_reg_value(rn);
     cpu_.regs[rd] = result;
     if (set_flags) SetNZFlags(result);
     cpu_.regs[15] += 4;
@@ -195,8 +253,8 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
 
     uint64_t result = 0;
     if (signed_mul) {
-      const int64_t a = static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rm]));
-      const int64_t b = static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rs]));
+      const int64_t a = static_cast<int64_t>(static_cast<int32_t>(arm_reg_value(rm)));
+      const int64_t b = static_cast<int64_t>(static_cast<int32_t>(arm_reg_value(rs)));
       int64_t wide = a * b;
       if (accumulate) {
         const uint64_t acc_u = (static_cast<uint64_t>(cpu_.regs[rd_hi]) << 32) | cpu_.regs[rd_lo];
@@ -204,7 +262,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       }
       result = static_cast<uint64_t>(wide);
     } else {
-      result = static_cast<uint64_t>(cpu_.regs[rm]) * static_cast<uint64_t>(cpu_.regs[rs]);
+      result = static_cast<uint64_t>(arm_reg_value(rm)) * static_cast<uint64_t>(arm_reg_value(rs));
       if (accumulate) {
         const uint64_t acc = (static_cast<uint64_t>(cpu_.regs[rd_hi]) << 32) | cpu_.regs[rd_lo];
         result += acc;
@@ -227,15 +285,15 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const uint32_t rn = (opcode >> 16) & 0xFu;
     const uint32_t rd = (opcode >> 12) & 0xFu;
     const uint32_t rm = opcode & 0xFu;
-    const uint32_t addr = cpu_.regs[rn];
+    const uint32_t addr = arm_reg_value(rn);
     if (byte) {
       const uint8_t old = Read8(addr);
-      Write8(addr, static_cast<uint8_t>(cpu_.regs[rm] & 0xFFu));
+      Write8(addr, static_cast<uint8_t>(arm_reg_value(rm) & 0xFFu));
       cpu_.regs[rd] = old;
     } else {
       const uint32_t aligned = addr & ~3u;
       const uint32_t old = Read32(aligned);
-      Write32(aligned, cpu_.regs[rm]);
+      Write32(aligned, arm_reg_value(rm));
       cpu_.regs[rd] = old;
     }
     cpu_.regs[15] += 4;
@@ -251,31 +309,62 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     return;
   }
 
-  // LDM/STM (increment/decrement + before/after subset)
+  // LDM/STM
   if ((opcode & 0x0E000000u) == 0x08000000u) {
     const uint32_t rn = (opcode >> 16) & 0xFu;
     const bool load = (opcode & (1u << 20)) != 0;
     const bool write_back = (opcode & (1u << 21)) != 0;
+    const bool psr_or_user = (opcode & (1u << 22)) != 0;
     const bool up = (opcode & (1u << 23)) != 0;
     const bool pre = (opcode & (1u << 24)) != 0;
     const uint32_t reg_list = opcode & 0xFFFFu;
-    uint32_t addr = cpu_.regs[rn];
-    const auto adjust_addr = [&](uint32_t current) -> uint32_t {
-      if (up) return current + 4u;
-      return current - 4u;
-    };
+    const uint32_t count = std::popcount(reg_list);
+    if (count == 0) {  // ARMv4 treats empty list as transfer of R15.
+      const uint32_t base = cpu_.regs[rn];
+      const uint32_t addr = up ? (pre ? base + 4u : base) : (pre ? base - 4u : base);
+      if (load) {
+        cpu_.regs[15] = Read32(addr) & ~3u;
+      } else {
+        Write32(addr, cpu_.regs[15] + 4u);
+      }
+      if (write_back) cpu_.regs[rn] = up ? (base + 0x40u) : (base - 0x40u);
+      cpu_.regs[15] += 4;
+      return;
+    }
 
+    const uint32_t base = cpu_.regs[rn];
+    uint32_t start_addr = base;
+    if (up) {
+      start_addr = pre ? (base + 4u) : base;
+    } else {
+      start_addr = pre ? (base - 4u * count) : (base - 4u * (count - 1u));
+    }
+    uint32_t addr = start_addr;
     for (int r = 0; r < 16; ++r) {
       if ((reg_list & (1u << r)) == 0) continue;
-      if (pre) addr = adjust_addr(addr);
       if (load) {
         cpu_.regs[r] = Read32(addr);
       } else {
-        Write32(addr, cpu_.regs[r]);
+        uint32_t value = arm_reg_value(r);
+        if (r == 15) value += 4u;
+        Write32(addr, value);
       }
-      if (!pre) addr = adjust_addr(addr);
+      addr += 4u;
     }
-    if (write_back) cpu_.regs[rn] = addr;
+    if (load && psr_or_user && (reg_list & (1u << 15)) && HasSpsr(GetCpuMode())) {
+      const uint32_t old_mode = GetCpuMode();
+      const uint32_t restored = cpu_.spsr[old_mode];
+      cpu_.cpsr = restored;
+      const uint32_t new_mode = restored & 0x1Fu;
+      if (new_mode != old_mode) {
+        SwitchCpuMode(new_mode);
+      } else {
+        cpu_.active_mode = new_mode;
+      }
+    }
+    if (write_back && !(load && (reg_list & (1u << rn)))) {
+      cpu_.regs[rn] = up ? (base + 4u * count) : (base - 4u * count);
+    }
     cpu_.regs[15] += 4;
     return;
   }
@@ -291,9 +380,9 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const uint32_t rd = (opcode >> 12) & 0xFu;
     const uint32_t sh = (opcode >> 5) & 0x3u;
     const uint32_t offset = imm ? (((opcode >> 8) & 0xFu) << 4u) | (opcode & 0xFu)
-                                : cpu_.regs[opcode & 0xFu];
+                                : arm_reg_value(opcode & 0xFu);
 
-    uint32_t addr = cpu_.regs[rn];
+    uint32_t addr = arm_reg_value(rn);
     if (pre) addr = up ? (addr + offset) : (addr - offset);
 
     if (load) {
@@ -334,7 +423,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       bool ignored_carry = false;
       offset = ApplyShift(cpu_.regs[rm], shift_type, shift_imm, &ignored_carry);
     }
-    uint32_t addr = cpu_.regs[rn];
+    uint32_t addr = arm_reg_value(rn);
     if (pre) {
       addr = up ? (addr + offset) : (addr - offset);
     }
@@ -362,21 +451,55 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     return;
   }
 
-  // MRS/MSR minimal support
-  if ((opcode & 0x0FBF0FFFu) == 0x010F0000u) {  // MRS Rd, CPSR
+  // MRS CPSR/SPSR
+  if ((opcode & 0x0FBF0FFFu) == 0x010F0000u) {
     const uint32_t rd = (opcode >> 12) & 0xFu;
-    cpu_.regs[rd] = cpu_.cpsr;
+    const bool use_spsr = (opcode & (1u << 22)) != 0;
+    const uint32_t mode = GetCpuMode();
+    cpu_.regs[rd] = (use_spsr && HasSpsr(mode)) ? cpu_.spsr[mode] : cpu_.cpsr;
     cpu_.regs[15] += 4;
     return;
   }
-  if ((opcode & 0x0DBFF000u) == 0x0129F000u) { // MSR CPSR_f, Rm/#imm
+  // MSR CPSR/SPSR with field mask support
+  if ((opcode & 0x0DB0F000u) == 0x0120F000u) {
+    const bool use_imm = (opcode & (1u << 25)) != 0;
+    const bool write_spsr = (opcode & (1u << 22)) != 0;
+    const uint32_t field_mask = (opcode >> 16) & 0xFu;
     uint32_t value = 0;
-    if (opcode & (1u << 25)) {
+    if (use_imm) {
       value = ExpandArmImmediate(opcode & 0xFFFu);
     } else {
       value = cpu_.regs[opcode & 0xFu];
     }
-    cpu_.cpsr = (cpu_.cpsr & 0x0FFFFFFFu) | (value & 0xF0000000u);
+    uint32_t mask = 0;
+    if (field_mask & 0x8u) mask |= 0xFF000000u;
+    if (field_mask & 0x4u) mask |= 0x00FF0000u;
+    if (field_mask & 0x2u) mask |= 0x0000FF00u;
+    if (field_mask & 0x1u) mask |= 0x000000FFu;
+    if (mask == 0) {
+      cpu_.regs[15] += 4;
+      return;
+    }
+
+    const uint32_t mode = GetCpuMode();
+    if (write_spsr) {
+      if (HasSpsr(mode)) cpu_.spsr[mode] = (cpu_.spsr[mode] & ~mask) | (value & mask);
+      cpu_.regs[15] += 4;
+      return;
+    }
+
+    if (!IsPrivilegedMode(mode)) {
+      mask &= 0xF0000000u;  // User mode can only update condition flags.
+    }
+    const uint32_t new_cpsr = (cpu_.cpsr & ~mask) | (value & mask);
+    const uint32_t old_mode = GetCpuMode();
+    const uint32_t new_mode = new_cpsr & 0x1Fu;
+    cpu_.cpsr = new_cpsr;
+    if (new_mode != old_mode && IsPrivilegedMode(old_mode)) {
+      SwitchCpuMode(new_mode);
+    } else {
+      cpu_.active_mode = GetCpuMode();
+    }
     cpu_.regs[15] += 4;
     return;
   }
@@ -407,11 +530,11 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       uint32_t shift_amount = 0;
       if (reg_shift) {
         const uint32_t rs = (opcode >> 8) & 0xFu;
-        shift_amount = cpu_.regs[rs] & 0xFFu;
+        shift_amount = arm_reg_value(rs) & 0xFFu;
       } else {
         shift_amount = (opcode >> 7) & 0x1Fu;
       }
-      operand2 = ApplyShift(cpu_.regs[rm], shift_type, shift_amount, &shifter_carry);
+      operand2 = ApplyShift(arm_shift_operand_value(rm, reg_shift), shift_type, shift_amount, &shifter_carry);
     }
 
     auto set_logic_flags = [&](uint32_t value) {
@@ -429,75 +552,80 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       if (set_flags) SetSubFlags(lhs, rhs + borrow, r64);
     };
 
+    bool writes_result = true;
     switch (op) {
       case 0x0: { // AND
-        const uint32_t r = cpu_.regs[rn] & operand2;
+        const uint32_t r = arm_reg_value(rn) & operand2;
         cpu_.regs[rd] = r;
         if (set_flags) set_logic_flags(r);
         break;
       }
       case 0x1: { // EOR
-        const uint32_t r = cpu_.regs[rn] ^ operand2;
+        const uint32_t r = arm_reg_value(rn) ^ operand2;
         cpu_.regs[rd] = r;
         if (set_flags) set_logic_flags(r);
         break;
       }
       case 0x2: { // SUB
-        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rn]) - static_cast<uint64_t>(operand2);
+        const uint64_t r64 = static_cast<uint64_t>(arm_reg_value(rn)) - static_cast<uint64_t>(operand2);
         cpu_.regs[rd] = static_cast<uint32_t>(r64);
-        if (set_flags) SetSubFlags(cpu_.regs[rn], operand2, r64);
+        if (set_flags) SetSubFlags(arm_reg_value(rn), operand2, r64);
         break;
       }
       case 0x3: { // RSB
-        const uint64_t r64 = static_cast<uint64_t>(operand2) - static_cast<uint64_t>(cpu_.regs[rn]);
+        const uint64_t r64 = static_cast<uint64_t>(operand2) - static_cast<uint64_t>(arm_reg_value(rn));
         cpu_.regs[rd] = static_cast<uint32_t>(r64);
-        if (set_flags) SetSubFlags(operand2, cpu_.regs[rn], r64);
+        if (set_flags) SetSubFlags(operand2, arm_reg_value(rn), r64);
         break;
       }
       case 0x4: { // ADD
-        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rn]) + static_cast<uint64_t>(operand2);
+        const uint64_t r64 = static_cast<uint64_t>(arm_reg_value(rn)) + static_cast<uint64_t>(operand2);
         cpu_.regs[rd] = static_cast<uint32_t>(r64);
-        if (set_flags) SetAddFlags(cpu_.regs[rn], operand2, r64);
+        if (set_flags) SetAddFlags(arm_reg_value(rn), operand2, r64);
         break;
       }
       case 0x5: { // ADC
         uint32_t r = 0;
-        do_add(cpu_.regs[rn], operand2, GetFlagC() ? 1u : 0u, &r);
+        do_add(arm_reg_value(rn), operand2, GetFlagC() ? 1u : 0u, &r);
         cpu_.regs[rd] = r;
         break;
       }
       case 0x6: { // SBC
         uint32_t r = 0;
-        do_sub(cpu_.regs[rn], operand2, GetFlagC() ? 0u : 1u, &r);
+        do_sub(arm_reg_value(rn), operand2, GetFlagC() ? 0u : 1u, &r);
         cpu_.regs[rd] = r;
         break;
       }
       case 0x7: { // RSC
         uint32_t r = 0;
-        do_sub(operand2, cpu_.regs[rn], GetFlagC() ? 0u : 1u, &r);
+        do_sub(operand2, arm_reg_value(rn), GetFlagC() ? 0u : 1u, &r);
         cpu_.regs[rd] = r;
         break;
       }
       case 0x8: { // TST
-        set_logic_flags(cpu_.regs[rn] & operand2);
+        writes_result = false;
+        set_logic_flags(arm_reg_value(rn) & operand2);
         break;
       }
       case 0x9: { // TEQ
-        set_logic_flags(cpu_.regs[rn] ^ operand2);
+        writes_result = false;
+        set_logic_flags(arm_reg_value(rn) ^ operand2);
         break;
       }
       case 0xA: { // CMP
-        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rn]) - static_cast<uint64_t>(operand2);
-        SetSubFlags(cpu_.regs[rn], operand2, r64);
+        writes_result = false;
+        const uint64_t r64 = static_cast<uint64_t>(arm_reg_value(rn)) - static_cast<uint64_t>(operand2);
+        SetSubFlags(arm_reg_value(rn), operand2, r64);
         break;
       }
       case 0xB: { // CMN
-        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rn]) + static_cast<uint64_t>(operand2);
-        SetAddFlags(cpu_.regs[rn], operand2, r64);
+        writes_result = false;
+        const uint64_t r64 = static_cast<uint64_t>(arm_reg_value(rn)) + static_cast<uint64_t>(operand2);
+        SetAddFlags(arm_reg_value(rn), operand2, r64);
         break;
       }
       case 0xC: { // ORR
-        const uint32_t r = cpu_.regs[rn] | operand2;
+        const uint32_t r = arm_reg_value(rn) | operand2;
         cpu_.regs[rd] = r;
         if (set_flags) set_logic_flags(r);
         break;
@@ -508,7 +636,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         break;
       }
       case 0xE: { // BIC
-        const uint32_t r = cpu_.regs[rn] & ~operand2;
+        const uint32_t r = arm_reg_value(rn) & ~operand2;
         cpu_.regs[rd] = r;
         if (set_flags) set_logic_flags(r);
         break;
@@ -519,14 +647,37 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         if (set_flags) set_logic_flags(r);
         break;
       }
-      default: break;  // graceful NOP for unsupported ALU ops
+      default:
+        writes_result = false;
+        EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+        return;
+    }
+
+    if (writes_result && rd == 15) {
+      if (set_flags && HasSpsr(GetCpuMode())) {
+        const uint32_t old_mode = GetCpuMode();
+        const uint32_t restored = cpu_.spsr[old_mode];
+        cpu_.cpsr = restored;
+        const uint32_t new_mode = restored & 0x1Fu;
+        if (new_mode != old_mode) {
+          SwitchCpuMode(new_mode);
+        } else {
+          cpu_.active_mode = new_mode;
+        }
+      }
+      if (cpu_.cpsr & (1u << 5)) {
+        cpu_.regs[15] &= ~1u;
+      } else {
+        cpu_.regs[15] &= ~3u;
+      }
+      return;
     }
     cpu_.regs[15] += 4;
     return;
   }
 
-  // SWI / unknown => advance PC (graceful NOP in this minimal core)
-  cpu_.regs[15] += 4;
+  // Unknown ARM instruction -> undefined exception.
+  EnterException(0x00000004u, 0x1Bu, true, false);
 }
 
 void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
@@ -960,22 +1111,29 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     return;
   }
 
-  // Fallback NOP-like advance.
-  cpu_.regs[15] += 2;
+  // Canonical Thumb NOP (MOV r8, r8)
+  if (opcode == 0x46C0u) {
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // Unknown Thumb instruction -> undefined exception.
+  EnterException(0x00000004u, 0x1Bu, true, false);
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
   if (cpu_.halted) return;
-  // Minimal budget: roughly 1 ARM instruction per 4 cycles.
-  const uint32_t instruction_budget = std::max<uint32_t>(1, cycles / 4u);
-  for (uint32_t i = 0; i < instruction_budget; ++i) {
+  uint32_t consumed = 0;
+  while (consumed < cycles) {
     ServiceInterruptIfNeeded();
     const uint32_t pc = cpu_.regs[15];
     if (cpu_.cpsr & (1u << 5)) {
       const uint16_t opcode = Read16(pc);
+      consumed += EstimateThumbCycles(opcode);
       ExecuteThumbInstruction(opcode);
     } else {
       const uint32_t opcode = Read32(pc);
+      consumed += EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
     }
     // Keep PC sane when branch jumps outside mapped ranges.

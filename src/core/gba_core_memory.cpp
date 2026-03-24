@@ -10,14 +10,18 @@ inline uint32_t MirrorOffset(uint32_t addr, uint32_t base, uint32_t mask) {
 uint32_t GBACore::Read32(uint32_t addr) const {
   // 0x00000000-0x00003FFF: BIOS
   if (bios_loaded_ && addr < 0x00004000u) {
-    const uint32_t off32 = addr & 0x3FFFu;
-    if (off32 <= bios_.size() - 4) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(bios_[off]) |
-             (static_cast<uint32_t>(bios_[off + 1]) << 8) |
-             (static_cast<uint32_t>(bios_[off + 2]) << 16) |
-             (static_cast<uint32_t>(bios_[off + 3]) << 24);
+    if (cpu_.regs[15] < 0x00004000u) {
+      const uint32_t off32 = addr & 0x3FFFu;
+      if (off32 <= bios_.size() - 4) {
+        const size_t off = static_cast<size_t>(off32);
+        bios_latch_ = static_cast<uint32_t>(bios_[off]) |
+                      (static_cast<uint32_t>(bios_[off + 1]) << 8) |
+                      (static_cast<uint32_t>(bios_[off + 2]) << 16) |
+                      (static_cast<uint32_t>(bios_[off + 3]) << 24);
+        return bios_latch_;
+      }
     }
+    return bios_latch_;
   }
   // 0x02000000-0x02FFFFFF: EWRAM mirror (256KB)
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
@@ -92,12 +96,22 @@ uint32_t GBACore::Read32(uint32_t addr) const {
   }
   // 0x08000000-0x0DFFFFFF: ROM mirror (32MB window)
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
-    const size_t off = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu);
-    if (off + 3 < rom_.size()) {
-      return static_cast<uint32_t>(rom_[off]) |
-             (static_cast<uint32_t>(rom_[off + 1]) << 8) |
-             (static_cast<uint32_t>(rom_[off + 2]) << 16) |
-             (static_cast<uint32_t>(rom_[off + 3]) << 24);
+    if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
+      return static_cast<uint32_t>(ReadBackup8(addr)) |
+             (static_cast<uint32_t>(ReadBackup8(addr + 1u)) << 8) |
+             (static_cast<uint32_t>(ReadBackup8(addr + 2u)) << 16) |
+             (static_cast<uint32_t>(ReadBackup8(addr + 3u)) << 24);
+    }
+    if (!rom_.empty()) {
+      const size_t base = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu);
+      const size_t off0 = base % rom_.size();
+      const size_t off1 = (base + 1u) % rom_.size();
+      const size_t off2 = (base + 2u) % rom_.size();
+      const size_t off3 = (base + 3u) % rom_.size();
+      return static_cast<uint32_t>(rom_[off0]) |
+             (static_cast<uint32_t>(rom_[off1]) << 8) |
+             (static_cast<uint32_t>(rom_[off2]) << 16) |
+             (static_cast<uint32_t>(rom_[off3]) << 24);
     }
   }
   return 0;
@@ -105,12 +119,18 @@ uint32_t GBACore::Read32(uint32_t addr) const {
 
 uint16_t GBACore::Read16(uint32_t addr) const {
   if (bios_loaded_ && addr < 0x00004000u) {
-    const uint32_t off32 = addr & 0x3FFFu;
-    if (off32 <= bios_.size() - 2) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(bios_[off]) |
-             static_cast<uint16_t>(bios_[off + 1] << 8);
+    if (cpu_.regs[15] < 0x00004000u) {
+      const uint32_t off32 = addr & 0x3FFFu;
+      if (off32 <= bios_.size() - 2) {
+        const size_t off = static_cast<size_t>(off32);
+        const uint16_t value = static_cast<uint16_t>(bios_[off]) |
+                               static_cast<uint16_t>(bios_[off + 1] << 8);
+        const uint32_t shift = (addr & 2u) * 8u;
+        bios_latch_ = (bios_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(value) << shift);
+        return value;
+      }
     }
+    return static_cast<uint16_t>((bios_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu);
   }
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
@@ -129,10 +149,16 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     }
   }
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
-    const size_t off = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu);
-    if (off + 1 < rom_.size()) {
-      return static_cast<uint16_t>(rom_[off]) |
-             static_cast<uint16_t>(rom_[off + 1] << 8);
+    if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
+      return static_cast<uint16_t>(ReadBackup8(addr)) |
+             static_cast<uint16_t>(ReadBackup8(addr + 1u) << 8);
+    }
+    if (!rom_.empty()) {
+      const size_t base = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu);
+      const size_t off0 = base % rom_.size();
+      const size_t off1 = (base + 1u) % rom_.size();
+      return static_cast<uint16_t>(rom_[off0]) |
+             static_cast<uint16_t>(rom_[off1] << 8);
     }
   }
   if (addr >= 0x04000000u) {
@@ -174,7 +200,13 @@ uint16_t GBACore::Read16(uint32_t addr) const {
 
 uint8_t GBACore::Read8(uint32_t addr) const {
   if (bios_loaded_ && addr < 0x00004000u) {
-    return bios_[static_cast<size_t>(addr & 0x3FFFu)];
+    if (cpu_.regs[15] < 0x00004000u) {
+      const uint8_t value = bios_[static_cast<size_t>(addr & 0x3FFFu)];
+      const uint32_t shift = (addr & 3u) * 8u;
+      bios_latch_ = (bios_latch_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(value) << shift);
+      return value;
+    }
+    return static_cast<uint8_t>((bios_latch_ >> ((addr & 3u) * 8u)) & 0xFFu);
   }
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
@@ -189,8 +221,11 @@ uint8_t GBACore::Read8(uint32_t addr) const {
     }
   }
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
-    const size_t off = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu);
-    if (off < rom_.size()) {
+    if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
+      return ReadBackup8(addr);
+    }
+    if (!rom_.empty()) {
+      const size_t off = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu) % rom_.size();
       return rom_[off];
     }
   }
@@ -287,6 +322,13 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
     WriteBackup8(addr + 2, static_cast<uint8_t>((value >> 16) & 0xFFu));
     WriteBackup8(addr + 3, static_cast<uint8_t>((value >> 24) & 0xFFu));
   }
+  if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u && addr <= 0x0DFFFFFFu) {
+    WriteBackup8(addr, static_cast<uint8_t>(value & 0x1u));
+    WriteBackup8(addr + 1u, static_cast<uint8_t>((value >> 8) & 0x1u));
+    WriteBackup8(addr + 2u, static_cast<uint8_t>((value >> 16) & 0x1u));
+    WriteBackup8(addr + 3u, static_cast<uint8_t>((value >> 24) & 0x1u));
+    return;
+  }
 }
 
 void GBACore::Write16(uint32_t addr, uint16_t value) {
@@ -343,6 +385,12 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
   if (addr >= 0x0E000000u) {
     WriteBackup8(addr, static_cast<uint8_t>(value & 0xFFu));
     WriteBackup8(addr + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
+    return;
+  }
+  if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u && addr <= 0x0DFFFFFFu) {
+    WriteBackup8(addr, static_cast<uint8_t>(value & 0x1u));
+    WriteBackup8(addr + 1u, static_cast<uint8_t>((value >> 8) & 0x1u));
+    return;
   }
 }
 
@@ -361,28 +409,38 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     }
   }
   if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x05000000u, 0x3FFu);
-    if (off32 < palette_ram_.size()) {
-      palette_ram_[static_cast<size_t>(off32)] = value;
+    const uint32_t off32 = MirrorOffset(addr & ~1u, 0x05000000u, 0x3FFu);
+    if (off32 + 1u < palette_ram_.size()) {
+      const size_t off = static_cast<size_t>(off32);
+      palette_ram_[off] = value;
+      palette_ram_[off + 1] = value;
       return;
     }
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x17FFFu);
-    if (off32 < vram_.size()) {
-      vram_[static_cast<size_t>(off32)] = value;
+    const uint32_t off32 = MirrorOffset(addr & ~1u, 0x06000000u, 0x17FFFu);
+    if (off32 + 1u < vram_.size()) {
+      const size_t off = static_cast<size_t>(off32);
+      vram_[off] = value;
+      vram_[off + 1] = value;
       return;
     }
   }
   if (addr >= 0x07000000u && addr <= 0x07FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x07000000u, 0x3FFu);
-    if (off32 < oam_.size()) {
-      oam_[static_cast<size_t>(off32)] = value;
+    const uint32_t off32 = MirrorOffset(addr & ~1u, 0x07000000u, 0x3FFu);
+    if (off32 + 1u < oam_.size()) {
+      const size_t off = static_cast<size_t>(off32);
+      oam_[off] = value;
+      oam_[off + 1] = value;
       return;
     }
   }
   if (addr >= 0x0E000000u) {
     WriteBackup8(addr, value);
+    return;
+  }
+  if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u && addr <= 0x0DFFFFFFu) {
+    WriteBackup8(addr, static_cast<uint8_t>(value & 0x1u));
     return;
   }
   if (addr >= 0x04000000u) {

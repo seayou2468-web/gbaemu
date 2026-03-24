@@ -138,12 +138,18 @@ void GBACore::Reset() {
   std::fill(vram_.begin(), vram_.end(), 0);
   std::fill(oam_.begin(), oam_.end(), 0);
   std::fill(sram_.begin(), sram_.end(), 0xFF);
+  std::fill(eeprom_.begin(), eeprom_.end(), 0xFF);
   std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
   ResetBackupControllerState();
   timers_ = {};
   ppu_cycle_accum_ = 0;
   audio_mix_level_ = 0;
+  bios_latch_ = 0;
   cpu_ = CpuState{};
+  cpu_.active_mode = cpu_.cpsr & 0x1Fu;
+  cpu_.banked_fiq_r8_r12.fill(0);
+  cpu_.banked_sp[cpu_.active_mode] = cpu_.regs[13];
+  cpu_.banked_lr[cpu_.active_mode] = cpu_.regs[14];
   cpu_.regs[15] = 0x08000000u;  // ROM entry area.
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
@@ -166,6 +172,9 @@ void GBACore::LoadSaveRAM(const std::vector<uint8_t>& data) {
 }
 
 std::vector<uint8_t> GBACore::ExportBackupData() const {
+  if (backup_type_ == BackupType::kEEPROM) {
+    return std::vector<uint8_t>(eeprom_.begin(), eeprom_.end());
+  }
   if (backup_type_ == BackupType::kFlash128K) {
     std::vector<uint8_t> out;
     out.reserve(128 * 1024);
@@ -177,6 +186,15 @@ std::vector<uint8_t> GBACore::ExportBackupData() const {
 }
 
 void GBACore::ImportBackupData(const std::vector<uint8_t>& data) {
+  if (backup_type_ == BackupType::kEEPROM) {
+    const size_t copy_size = std::min(data.size(), eeprom_.size());
+    std::copy_n(data.begin(), copy_size, eeprom_.begin());
+    if (copy_size < eeprom_.size()) {
+      std::fill(eeprom_.begin() + static_cast<std::ptrdiff_t>(copy_size), eeprom_.end(), 0xFF);
+    }
+    return;
+  }
+
   if (backup_type_ == BackupType::kFlash128K) {
     const size_t bank_size = sram_.size();
     const size_t copy0 = std::min(bank_size, data.size());
@@ -217,12 +235,13 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   std::vector<uint8_t> blob;
   blob.reserve(512 * 1024);
   blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
-  append_u32(&blob, 3u);  // version
+  append_u32(&blob, 7u);  // version
   append_u64(&blob, frame_count_);
   append_u64(&blob, executed_cycles_);
   append_u32(&blob, cpu_.cpsr);
   append_u32(&blob, ppu_cycle_accum_);
   append_u32(&blob, audio_mix_level_);
+  append_u32(&blob, bios_latch_);
   append_u32(&blob, keys_pressed_mask_);
   append_u32(&blob, previous_keys_mask_);
   append_u32(&blob, static_cast<uint32_t>(backup_type_));
@@ -232,7 +251,17 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   append_u32(&blob, flash_program_mode_ ? 1u : 0u);
   append_u32(&blob, flash_bank_switch_mode_ ? 1u : 0u);
   append_u32(&blob, flash_bank_);
+  append_u32(&blob, static_cast<uint32_t>(eeprom_read_pos_));
+  append_u32(&blob, static_cast<uint32_t>(eeprom_cmd_bits_.size()));
+  for (uint8_t b : eeprom_cmd_bits_) append_u32(&blob, b);
+  append_u32(&blob, static_cast<uint32_t>(eeprom_read_bits_.size()));
+  for (uint8_t b : eeprom_read_bits_) append_u32(&blob, b);
   for (uint32_t r : cpu_.regs) append_u32(&blob, r);
+  for (uint32_t v : cpu_.banked_fiq_r8_r12) append_u32(&blob, v);
+  for (uint32_t v : cpu_.banked_sp) append_u32(&blob, v);
+  for (uint32_t v : cpu_.banked_lr) append_u32(&blob, v);
+  for (uint32_t v : cpu_.spsr) append_u32(&blob, v);
+  append_u32(&blob, cpu_.active_mode);
   blob.insert(blob.end(), ewram_.begin(), ewram_.end());
   blob.insert(blob.end(), iwram_.begin(), iwram_.end());
   blob.insert(blob.end(), io_regs_.begin(), io_regs_.end());
@@ -240,6 +269,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   blob.insert(blob.end(), vram_.begin(), vram_.end());
   blob.insert(blob.end(), oam_.begin(), oam_.end());
   blob.insert(blob.end(), sram_.begin(), sram_.end());
+  blob.insert(blob.end(), eeprom_.begin(), eeprom_.end());
   blob.insert(blob.end(), flash_bank1_.begin(), flash_bank1_.end());
   return blob;
 }
@@ -268,7 +298,9 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   }
   off = 4;
   uint32_t version = 0;
-  if (!read_u32(&off, &version) || (version != 1u && version != 2u && version != 3u)) {
+  if (!read_u32(&off, &version) ||
+      (version != 1u && version != 2u && version != 3u && version != 4u && version != 5u &&
+       version != 6u && version != 7u)) {
     if (error) *error = "Unsupported savestate version.";
     return false;
   }
@@ -282,6 +314,11 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
     return false;
   }
   audio_mix_level_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
+  if (version >= 6u) {
+    if (!read_u32(&off, &bios_latch_)) return false;
+  } else {
+    bios_latch_ = 0;
+  }
   if (!read_u32(&off, &tmp32)) return false;
   keys_pressed_mask_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
   if (!read_u32(&off, &tmp32)) return false;
@@ -302,9 +339,34 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
       flash_bank_switch_mode_ = (tmp32 & 1u) != 0;
       if (!read_u32(&off, &tmp32)) return false;
       flash_bank_ = static_cast<uint8_t>(tmp32 & 0x1u);
+      if (version >= 7u) {
+        if (!read_u32(&off, &tmp32)) return false;
+        eeprom_read_pos_ = tmp32;
+        if (!read_u32(&off, &tmp32)) return false;
+        eeprom_cmd_bits_.assign(tmp32, 0);
+        for (size_t i = 0; i < eeprom_cmd_bits_.size(); ++i) {
+          uint32_t v = 0;
+          if (!read_u32(&off, &v)) return false;
+          eeprom_cmd_bits_[i] = static_cast<uint8_t>(v & 1u);
+        }
+        if (!read_u32(&off, &tmp32)) return false;
+        eeprom_read_bits_.assign(tmp32, 0);
+        for (size_t i = 0; i < eeprom_read_bits_.size(); ++i) {
+          uint32_t v = 0;
+          if (!read_u32(&off, &v)) return false;
+          eeprom_read_bits_[i] = static_cast<uint8_t>(v & 1u);
+        }
+      } else {
+        eeprom_cmd_bits_.clear();
+        eeprom_read_bits_.clear();
+        eeprom_read_pos_ = 0;
+      }
     } else {
       flash_bank_switch_mode_ = false;
       flash_bank_ = 0;
+      eeprom_cmd_bits_.clear();
+      eeprom_read_bits_.clear();
+      eeprom_read_pos_ = 0;
     }
   } else {
     backup_type_ = DetectBackupTypeFromRom();
@@ -312,6 +374,27 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   }
   for (uint32_t& r : cpu_.regs) {
     if (!read_u32(&off, &r)) return false;
+  }
+  if (version >= 4u) {
+    if (version >= 5u) {
+      for (uint32_t& v : cpu_.banked_fiq_r8_r12) if (!read_u32(&off, &v)) return false;
+    } else {
+      cpu_.banked_fiq_r8_r12.fill(0);
+    }
+    for (uint32_t& v : cpu_.banked_sp) if (!read_u32(&off, &v)) return false;
+    for (uint32_t& v : cpu_.banked_lr) if (!read_u32(&off, &v)) return false;
+    for (uint32_t& v : cpu_.spsr) if (!read_u32(&off, &v)) return false;
+    if (!read_u32(&off, &cpu_.active_mode)) return false;
+    cpu_.active_mode &= 0x1Fu;
+    cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | cpu_.active_mode;
+  } else {
+    cpu_.active_mode = cpu_.cpsr & 0x1Fu;
+    cpu_.banked_fiq_r8_r12.fill(0);
+    cpu_.banked_sp.fill(0);
+    cpu_.banked_lr.fill(0);
+    cpu_.spsr.fill(0);
+    cpu_.banked_sp[cpu_.active_mode] = cpu_.regs[13];
+    cpu_.banked_lr[cpu_.active_mode] = cpu_.regs[14];
   }
   auto read_block = [&](auto& arr) -> bool {
     if (off + arr.size() > blob.size()) return false;
@@ -323,6 +406,14 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
       !read_block(palette_ram_) || !read_block(vram_) || !read_block(oam_) || !read_block(sram_)) {
     if (error) *error = "Savestate payload truncated.";
     return false;
+  }
+  if (version >= 7u) {
+    if (!read_block(eeprom_)) {
+      if (error) *error = "Savestate payload truncated.";
+      return false;
+    }
+  } else {
+    std::fill(eeprom_.begin(), eeprom_.end(), 0xFF);
   }
   if (version >= 3u) {
     if (!read_block(flash_bank1_)) {
@@ -352,9 +443,24 @@ void GBACore::ResetBackupControllerState() {
   flash_program_mode_ = false;
   flash_bank_switch_mode_ = false;
   flash_bank_ = 0;
+  eeprom_cmd_bits_.clear();
+  eeprom_read_bits_.clear();
+  eeprom_read_pos_ = 0;
 }
 
 uint8_t GBACore::ReadBackup8(uint32_t addr) const {
+  if (backup_type_ == BackupType::kEEPROM) {
+    if (eeprom_read_pos_ < eeprom_read_bits_.size()) {
+      const uint8_t bit = static_cast<uint8_t>(eeprom_read_bits_[eeprom_read_pos_++] & 1u);
+      if (eeprom_read_pos_ >= eeprom_read_bits_.size()) {
+        eeprom_read_bits_.clear();
+        eeprom_read_pos_ = 0;
+      }
+      return static_cast<uint8_t>(0xFEu | bit);
+    }
+    return 0xFFu;
+  }
+
   const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
   if ((backup_type_ == BackupType::kFlash64K || backup_type_ == BackupType::kFlash128K) && flash_id_mode_) {
     if (off32 == 0) return 0xBF;  // Sanyo/Panasonic style manufacturer id (common)
@@ -368,6 +474,81 @@ uint8_t GBACore::ReadBackup8(uint32_t addr) const {
 }
 
 void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
+  if (backup_type_ == BackupType::kEEPROM) {
+    const uint8_t bit = static_cast<uint8_t>(value & 1u);
+    eeprom_cmd_bits_.push_back(bit);
+    auto reset_cmd = [&]() {
+      eeprom_cmd_bits_.clear();
+    };
+    auto load_read_bits = [&](uint32_t block_addr, uint32_t addr_bits) {
+      eeprom_read_bits_.clear();
+      eeprom_read_pos_ = 0;
+      for (int i = 0; i < 4; ++i) eeprom_read_bits_.push_back(0);  // dummy bits
+      const size_t block_bytes = 8;
+      const size_t max_blocks = eeprom_.size() / block_bytes;
+      const size_t block = static_cast<size_t>(block_addr % std::max<uint32_t>(1, static_cast<uint32_t>(max_blocks)));
+      const size_t base = block * block_bytes;
+      (void)addr_bits;
+      for (size_t i = 0; i < block_bytes; ++i) {
+        const uint8_t byte = eeprom_[base + i];
+        for (int b = 7; b >= 0; --b) {
+          eeprom_read_bits_.push_back(static_cast<uint8_t>((byte >> b) & 1u));
+        }
+      }
+    };
+    auto try_decode = [&](uint32_t addr_bits) -> bool {
+      const size_t write_len = 2u + addr_bits + 64u + 1u;
+      const size_t read_len = 2u + addr_bits + 1u;
+      if (eeprom_cmd_bits_.size() == write_len) {
+        const uint8_t op0 = eeprom_cmd_bits_[0];
+        const uint8_t op1 = eeprom_cmd_bits_[1];
+        if (op0 == 1u && op1 == 0u) {  // write
+          uint32_t block_addr = 0;
+          for (uint32_t i = 0; i < addr_bits; ++i) {
+            block_addr = (block_addr << 1u) | static_cast<uint32_t>(eeprom_cmd_bits_[2u + i] & 1u);
+          }
+          const size_t block_bytes = 8;
+          const size_t max_blocks = eeprom_.size() / block_bytes;
+          const size_t block = static_cast<size_t>(block_addr % std::max<uint32_t>(1, static_cast<uint32_t>(max_blocks)));
+          const size_t base = block * block_bytes;
+          for (size_t i = 0; i < block_bytes; ++i) {
+            uint8_t out = 0;
+            for (int b = 0; b < 8; ++b) {
+              const size_t bit_idx = 2u + addr_bits + (i * 8u) + static_cast<size_t>(b);
+              out = static_cast<uint8_t>((out << 1u) | (eeprom_cmd_bits_[bit_idx] & 1u));
+            }
+            eeprom_[base + i] = out;
+          }
+          reset_cmd();
+          return true;
+        }
+      }
+      if (eeprom_cmd_bits_.size() == read_len) {
+        const uint8_t op0 = eeprom_cmd_bits_[0];
+        const uint8_t op1 = eeprom_cmd_bits_[1];
+        if (op0 == 1u && op1 == 1u) {  // read
+          uint32_t block_addr = 0;
+          for (uint32_t i = 0; i < addr_bits; ++i) {
+            block_addr = (block_addr << 1u) | static_cast<uint32_t>(eeprom_cmd_bits_[2u + i] & 1u);
+          }
+          load_read_bits(block_addr, addr_bits);
+          reset_cmd();
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (eeprom_cmd_bits_.size() > 90u) {
+      reset_cmd();
+      return;
+    }
+    if (try_decode(6u) || try_decode(14u)) {
+      return;
+    }
+    return;
+  }
+
   const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
   const size_t off = static_cast<size_t>(off32 % sram_.size());
 

@@ -124,6 +124,12 @@ class GBACore {
   void SetNZFlags(uint32_t value);
   void SetAddFlags(uint32_t lhs, uint32_t rhs, uint64_t result64);
   void SetSubFlags(uint32_t lhs, uint32_t rhs, uint64_t result64);
+  uint32_t GetCpuMode() const;
+  bool IsPrivilegedMode(uint32_t mode) const;
+  bool HasSpsr(uint32_t mode) const;
+  void SwitchCpuMode(uint32_t new_mode);
+  uint32_t EstimateArmCycles(uint32_t opcode) const;
+  uint32_t EstimateThumbCycles(uint16_t opcode) const;
   void ExecuteArmInstruction(uint32_t opcode);
   void ExecuteThumbInstruction(uint16_t opcode);
   void RunCpuSlice(uint32_t cycles);
@@ -131,6 +137,11 @@ class GBACore {
   struct CpuState {
     std::array<uint32_t, 16> regs{};
     uint32_t cpsr = 0x1Fu;  // System mode
+    std::array<uint32_t, 5> banked_fiq_r8_r12{};
+    std::array<uint32_t, 32> banked_sp{};
+    std::array<uint32_t, 32> banked_lr{};
+    std::array<uint32_t, 32> spsr{};
+    uint32_t active_mode = 0x1Fu;
     bool halted = false;
   };
 
@@ -149,6 +160,7 @@ class GBACore {
 
   std::vector<uint8_t> rom_;
   std::array<uint8_t, 16 * 1024> bios_{};
+  mutable uint32_t bios_latch_ = 0;
   bool bios_loaded_ = false;
   std::array<uint8_t, 256 * 1024> ewram_{};
   std::array<uint8_t, 32 * 1024> iwram_{};
@@ -157,6 +169,7 @@ class GBACore {
   std::array<uint8_t, 96 * 1024> vram_{};
   std::array<uint8_t, 1024> oam_{};
   std::array<uint8_t, 64 * 1024> sram_{};
+  std::array<uint8_t, 8 * 1024> eeprom_{};
   RomInfo rom_info_{};
   std::vector<uint32_t> frame_buffer_;
   uint32_t ppu_cycle_accum_ = 0;
@@ -185,6 +198,9 @@ class GBACore {
   bool flash_bank_switch_mode_ = false;
   uint8_t flash_bank_ = 0;
   std::array<uint8_t, 64 * 1024> flash_bank1_{};
+  mutable std::vector<uint8_t> eeprom_cmd_bits_{};
+  mutable std::vector<uint8_t> eeprom_read_bits_{};
+  mutable size_t eeprom_read_pos_ = 0;
 };
 
 }  // namespace gba
