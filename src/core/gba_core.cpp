@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string_view>
 
 namespace gba {
 namespace {
@@ -20,6 +21,24 @@ constexpr uint8_t kNintendoLogo[156] = {
 
 }  // namespace
 
+GBACore::BackupType GBACore::DetectBackupTypeFromRom() const {
+  if (rom_.empty()) return BackupType::kUnknown;
+  const std::string_view sv(reinterpret_cast<const char*>(rom_.data()), rom_.size());
+  if (sv.find("FLASH512_V") != std::string_view::npos ||
+      sv.find("FLASH_V") != std::string_view::npos ||
+      sv.find("SST_") != std::string_view::npos) {
+    return BackupType::kFlash64K;
+  }
+  if (sv.find("SRAM_V") != std::string_view::npos ||
+      sv.find("SRAM_F_V") != std::string_view::npos) {
+    return BackupType::kSRAM;
+  }
+  if (sv.find("EEPROM_V") != std::string_view::npos) {
+    return BackupType::kEEPROM;
+  }
+  return BackupType::kUnknown;
+}
+
 bool GBACore::LoadROM(const std::vector<uint8_t>& rom, std::string* error) {
   if (rom.size() < 0xC0) {
     if (error) *error = "ROM too small (needs at least 0xC0 bytes).";
@@ -28,6 +47,7 @@ bool GBACore::LoadROM(const std::vector<uint8_t>& rom, std::string* error) {
 
   rom_ = rom;
   loaded_ = true;
+  backup_type_ = DetectBackupTypeFromRom();
 
   rom_info_.title = std::string(reinterpret_cast<const char*>(&rom_[0xA0]), 12);
   rom_info_.title.erase(std::find(rom_info_.title.begin(), rom_info_.title.end(), '\0'),
@@ -114,6 +134,7 @@ void GBACore::Reset() {
   std::fill(vram_.begin(), vram_.end(), 0);
   std::fill(oam_.begin(), oam_.end(), 0);
   std::fill(sram_.begin(), sram_.end(), 0xFF);
+  ResetBackupControllerState();
   timers_ = {};
   ppu_cycle_accum_ = 0;
   audio_mix_level_ = 0;
@@ -157,7 +178,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   std::vector<uint8_t> blob;
   blob.reserve(512 * 1024);
   blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
-  append_u32(&blob, 1u);  // version
+  append_u32(&blob, 2u);  // version
   append_u64(&blob, frame_count_);
   append_u64(&blob, executed_cycles_);
   append_u32(&blob, cpu_.cpsr);
@@ -165,6 +186,11 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   append_u32(&blob, audio_mix_level_);
   append_u32(&blob, keys_pressed_mask_);
   append_u32(&blob, previous_keys_mask_);
+  append_u32(&blob, static_cast<uint32_t>(backup_type_));
+  append_u32(&blob, flash_mode_unlocked_ ? 1u : 0u);
+  append_u32(&blob, flash_command_);
+  append_u32(&blob, flash_id_mode_ ? 1u : 0u);
+  append_u32(&blob, flash_program_mode_ ? 1u : 0u);
   for (uint32_t r : cpu_.regs) append_u32(&blob, r);
   blob.insert(blob.end(), ewram_.begin(), ewram_.end());
   blob.insert(blob.end(), iwram_.begin(), iwram_.end());
@@ -200,7 +226,7 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   }
   off = 4;
   uint32_t version = 0;
-  if (!read_u32(&off, &version) || version != 1u) {
+  if (!read_u32(&off, &version) || (version != 1u && version != 2u)) {
     if (error) *error = "Unsupported savestate version.";
     return false;
   }
@@ -218,6 +244,21 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   keys_pressed_mask_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
   if (!read_u32(&off, &tmp32)) return false;
   previous_keys_mask_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
+  if (version >= 2u) {
+    if (!read_u32(&off, &tmp32)) return false;
+    backup_type_ = static_cast<BackupType>(tmp32 & 0xFFu);
+    if (!read_u32(&off, &tmp32)) return false;
+    flash_mode_unlocked_ = (tmp32 & 1u) != 0;
+    if (!read_u32(&off, &tmp32)) return false;
+    flash_command_ = static_cast<uint8_t>(tmp32 & 0xFFu);
+    if (!read_u32(&off, &tmp32)) return false;
+    flash_id_mode_ = (tmp32 & 1u) != 0;
+    if (!read_u32(&off, &tmp32)) return false;
+    flash_program_mode_ = (tmp32 & 1u) != 0;
+  } else {
+    backup_type_ = DetectBackupTypeFromRom();
+    ResetBackupControllerState();
+  }
   for (uint32_t& r : cpu_.regs) {
     if (!read_u32(&off, &r)) return false;
   }
@@ -236,6 +277,121 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   SyncKeyInputRegister();
   RenderDebugFrame();
   return true;
+}
+
+void GBACore::ResetBackupControllerState() {
+  flash_mode_unlocked_ = false;
+  flash_command_ = 0;
+  flash_id_mode_ = false;
+  flash_program_mode_ = false;
+}
+
+uint8_t GBACore::ReadBackup8(uint32_t addr) const {
+  const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
+  if (backup_type_ == BackupType::kFlash64K && flash_id_mode_) {
+    if (off32 == 0) return 0xBF;  // Sanyo/Panasonic style manufacturer id (common)
+    if (off32 == 1) return 0xD4;  // 64Kbit/512Kbit class device id (common test expectation)
+  }
+  return sram_[static_cast<size_t>(off32 % sram_.size())];
+}
+
+void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
+  const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
+  const size_t off = static_cast<size_t>(off32 % sram_.size());
+
+  // SRAM/unknown/eeprom fallback: raw byte write model.
+  if (backup_type_ != BackupType::kFlash64K) {
+    sram_[off] = value;
+    return;
+  }
+
+  // Flash command prefix: AA to 0x5555 then 55 to 0x2AAA.
+  if (!flash_mode_unlocked_) {
+    if (off32 == 0x5555u && value == 0xAAu) {
+      flash_mode_unlocked_ = true;
+      flash_command_ = 1;
+      return;
+    }
+    // Non-command byte writes are ignored while not in program mode.
+    return;
+  }
+
+  if (flash_command_ == 1) {
+    if (off32 == 0x2AAAu && value == 0x55u) {
+      flash_command_ = 2;
+      return;
+    }
+    ResetBackupControllerState();
+    return;
+  }
+
+  // third step command byte at 0x5555.
+  if (flash_command_ == 2 && off32 == 0x5555u) {
+    if (value == 0x90u) {
+      flash_id_mode_ = true;
+      flash_mode_unlocked_ = false;
+      flash_command_ = 0;
+      return;
+    }
+    if (value == 0xF0u) {
+      flash_id_mode_ = false;
+      flash_mode_unlocked_ = false;
+      flash_command_ = 0;
+      return;
+    }
+    if (value == 0xA0u) {
+      flash_program_mode_ = true;
+      flash_mode_unlocked_ = false;
+      flash_command_ = 0;
+      return;
+    }
+    if (value == 0x80u) {
+      // Erase setup done; wait for 2nd unlock + erase command.
+      flash_command_ = 3;
+      return;
+    }
+    ResetBackupControllerState();
+    return;
+  }
+
+  // Erase flow: AA 55 80 AA 55 (30 sector / 10 chip)
+  if (flash_command_ == 3) {
+    if (off32 == 0x5555u && value == 0xAAu) {
+      flash_command_ = 4;
+      return;
+    }
+    ResetBackupControllerState();
+    return;
+  }
+  if (flash_command_ == 4) {
+    if (off32 == 0x2AAAu && value == 0x55u) {
+      flash_command_ = 5;
+      return;
+    }
+    ResetBackupControllerState();
+    return;
+  }
+  if (flash_command_ == 5) {
+    if (value == 0x10u && off32 == 0x5555u) {
+      std::fill(sram_.begin(), sram_.end(), 0xFF);
+    } else if (value == 0x30u) {
+      const size_t sector_base = off & ~static_cast<size_t>(0x0FFFu);
+      const size_t sector_end = std::min(sector_base + 0x1000u, sram_.size());
+      std::fill(sram_.begin() + static_cast<std::ptrdiff_t>(sector_base),
+                sram_.begin() + static_cast<std::ptrdiff_t>(sector_end), 0xFF);
+    }
+    ResetBackupControllerState();
+    return;
+  }
+
+  if (flash_program_mode_) {
+    // NOR flash programming behavior: only 1->0 transitions.
+    sram_[off] = static_cast<uint8_t>(sram_[off] & value);
+    flash_program_mode_ = false;
+    return;
+  }
+
+  ResetBackupControllerState();
 }
 
 void GBACore::RunCycles(uint32_t cycles) {

@@ -85,14 +85,10 @@ uint32_t GBACore::Read32(uint32_t addr) const {
   }
   // 0x0E000000-0x0E00FFFF: SRAM/Flash window (modeled as SRAM)
   if (addr >= 0x0E000000u) {
-    const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
-    if (off32 <= sram_.size() - 4) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(sram_[off]) |
-             (static_cast<uint32_t>(sram_[off + 1]) << 8) |
-             (static_cast<uint32_t>(sram_[off + 2]) << 16) |
-             (static_cast<uint32_t>(sram_[off + 3]) << 24);
-    }
+    return static_cast<uint32_t>(ReadBackup8(addr)) |
+           (static_cast<uint32_t>(ReadBackup8(addr + 1)) << 8) |
+           (static_cast<uint32_t>(ReadBackup8(addr + 2)) << 16) |
+           (static_cast<uint32_t>(ReadBackup8(addr + 3)) << 24);
   }
   // 0x08000000-0x0DFFFFFF: ROM mirror (32MB window)
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
@@ -170,12 +166,8 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     }
   }
   if (addr >= 0x0E000000u) {
-    const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
-    if (off32 <= sram_.size() - 2) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(sram_[off]) |
-             static_cast<uint16_t>(sram_[off + 1] << 8);
-    }
+    return static_cast<uint16_t>(ReadBackup8(addr)) |
+           static_cast<uint16_t>(ReadBackup8(addr + 1) << 8);
   }
   return 0;
 }
@@ -222,8 +214,7 @@ uint8_t GBACore::Read8(uint32_t addr) const {
     if (off32 < oam_.size()) return oam_[static_cast<size_t>(off32)];
   }
   if (addr >= 0x0E000000u) {
-    const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
-    if (off32 < sram_.size()) return sram_[static_cast<size_t>(off32)];
+    return ReadBackup8(addr);
   }
   return 0;
 }
@@ -291,14 +282,10 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
     }
   }
   if (addr >= 0x0E000000u) {
-    const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
-    if (off32 <= sram_.size() - 4) {
-      const size_t off = static_cast<size_t>(off32);
-      sram_[off] = static_cast<uint8_t>(value & 0xFF);
-      sram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-      sram_[off + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
-      sram_[off + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
-    }
+    WriteBackup8(addr, static_cast<uint8_t>(value & 0xFFu));
+    WriteBackup8(addr + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
+    WriteBackup8(addr + 2, static_cast<uint8_t>((value >> 16) & 0xFFu));
+    WriteBackup8(addr + 3, static_cast<uint8_t>((value >> 24) & 0xFFu));
   }
 }
 
@@ -354,12 +341,8 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
     }
   }
   if (addr >= 0x0E000000u) {
-    const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
-    if (off32 <= sram_.size() - 2) {
-      const size_t off = static_cast<size_t>(off32);
-      sram_[off] = static_cast<uint8_t>(value & 0xFF);
-      sram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-    }
+    WriteBackup8(addr, static_cast<uint8_t>(value & 0xFFu));
+    WriteBackup8(addr + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
   }
 }
 
@@ -399,11 +382,8 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     }
   }
   if (addr >= 0x0E000000u) {
-    const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
-    if (off32 < sram_.size()) {
-      sram_[static_cast<size_t>(off32)] = value;
-      return;
-    }
+    WriteBackup8(addr, value);
+    return;
   }
   if (addr >= 0x04000000u) {
     const uint32_t off32 = addr - 0x04000000u;

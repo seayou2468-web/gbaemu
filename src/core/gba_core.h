@@ -124,6 +124,18 @@ class GBACore {
     bool halted = false;
   };
 
+  enum class BackupType : uint8_t {
+    kUnknown = 0,
+    kSRAM = 1,
+    kFlash64K = 2,
+    kEEPROM = 3,
+  };
+
+  BackupType DetectBackupTypeFromRom() const;
+  uint8_t ReadBackup8(uint32_t addr) const;
+  void WriteBackup8(uint32_t addr, uint8_t value);
+  void ResetBackupControllerState();
+
   std::vector<uint8_t> rom_;
   std::array<uint8_t, 16 * 1024> bios_{};
   bool bios_loaded_ = false;
@@ -154,6 +166,11 @@ class GBACore {
   uint16_t keys_pressed_mask_ = 0;
   uint16_t previous_keys_mask_ = 0;
   bool loaded_ = false;
+  BackupType backup_type_ = BackupType::kUnknown;
+  bool flash_mode_unlocked_ = false;
+  uint8_t flash_command_ = 0;
+  bool flash_id_mode_ = false;
+  bool flash_program_mode_ = false;
 };
 
 }  // namespace gba
