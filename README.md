@@ -57,11 +57,13 @@ make linux_test
   - VCOUNT / DISPSTAT の更新
   - VBlank/HBlank/VCOUNT 一致フラグ更新 + DISPSTAT IRQ 条件評価
   - Mode0 Text BG (BG0-BG3) の優先度付き合成描画
+  - Mode0 の 32/64 タイルマップ配置（screen size 0..3）を反映
   - BG Mode3 の VRAM 直描画をフレームバッファへ反映
   - Mode4 (8bpp bitmap + page flip) の描画
   - OAM スプライト（非 affine の最小実装）合成
 - Timer:
   - 4ch タイマの基本カウント/プリスケーラ/IRQ フラグ更新
+  - Count-up（カスケード）モードを反映
 - DMA:
   - DMA enable 時の 16/32bit 転送（inc/dec/fixed）
   - DMA 開始タイミング (Immediate/VBlank/HBlank/特殊ch3) と Repeat/IRQ ビット対応

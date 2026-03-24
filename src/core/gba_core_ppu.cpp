@@ -191,8 +191,20 @@ void GBACore::RenderMode0Frame() {
     const int pixel_x = sx & 7;
     const int pixel_y = sy & 7;
 
-    const uint32_t map_index = static_cast<uint32_t>(tile_y * map_w + tile_x);
-    const size_t se_off = static_cast<size_t>(screen_base + map_index * 2u);
+    const int sc_x = tile_x / 32;
+    const int sc_y = tile_y / 32;
+    const int local_x = tile_x & 31;
+    const int local_y = tile_y & 31;
+    int screenblock = 0;
+    switch (screen_size) {
+      case 0: screenblock = 0; break;                           // 32x32
+      case 1: screenblock = sc_x; break;                        // 64x32
+      case 2: screenblock = sc_y; break;                        // 32x64
+      case 3: screenblock = sc_y * 2 + sc_x; break;             // 64x64
+      default: screenblock = 0; break;
+    }
+    const size_t se_off = static_cast<size_t>(screen_base + screenblock * 0x800u +
+                                              (local_y * 32 + local_x) * 2u);
     if (se_off + 1 >= vram_.size()) return;
     const uint16_t se = static_cast<uint16_t>(vram_[se_off]) |
                         static_cast<uint16_t>(vram_[se_off + 1] << 8);
@@ -314,25 +326,40 @@ void GBACore::StepPpu(uint32_t cycles) {
 
 void GBACore::StepTimers(uint32_t cycles) {
   static constexpr uint32_t kPrescalerLut[4] = {1, 64, 256, 1024};
+  bool overflowed[4] = {false, false, false, false};
   for (size_t i = 0; i < timers_.size(); ++i) {
     TimerState& t = timers_[i];
     const uint16_t cnt_h = ReadIO16(static_cast<uint32_t>(0x04000102u + i * 4u));
     t.control = cnt_h;
     if ((cnt_h & 0x0080u) == 0) continue;  // disabled
+    const bool count_up = (cnt_h & 0x0004u) != 0;
 
-    const uint32_t prescaler = kPrescalerLut[cnt_h & 0x3u];
-    t.prescaler_accum += cycles;
-    while (t.prescaler_accum >= prescaler) {
-      t.prescaler_accum -= prescaler;
+    auto tick_once = [&](bool* ov) {
       const uint16_t old = t.counter;
-      ++t.counter;
+      t.counter = static_cast<uint16_t>(t.counter + 1u);
       if (t.counter == 0) {
         t.counter = ReadIO16(static_cast<uint32_t>(0x04000100u + i * 4u));
         if (cnt_h & 0x0040u) {
           RaiseInterrupt(static_cast<uint16_t>(1u << static_cast<uint16_t>(3u + i)));
         }
+        *ov = true;
       }
-      if (old == 0xFFFFu) break;
+      if (old == 0xFFFFu) return;
+    };
+
+    if (count_up && i > 0) {
+      if (overflowed[i - 1]) {
+        tick_once(&overflowed[i]);
+      }
+      WriteIO16(static_cast<uint32_t>(0x04000100u + i * 4u), t.counter);
+      continue;
+    }
+
+    const uint32_t prescaler = kPrescalerLut[cnt_h & 0x3u];
+    t.prescaler_accum += cycles;
+    while (t.prescaler_accum >= prescaler) {
+      t.prescaler_accum -= prescaler;
+      tick_once(&overflowed[i]);
     }
     WriteIO16(static_cast<uint32_t>(0x04000100u + i * 4u), t.counter);
   }
