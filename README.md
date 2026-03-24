@@ -56,7 +56,7 @@ make linux_test
 - PPU:
   - VCOUNT / DISPSTAT の更新
   - VBlank/HBlank/VCOUNT 一致フラグ更新 + DISPSTAT IRQ 条件評価
-  - Mode0 BG0 (4bpp text BG) の最小描画
+  - Mode0 Text BG (BG0-BG3) の優先度付き合成描画
   - BG Mode3 の VRAM 直描画をフレームバッファへ反映
   - Mode4 (8bpp bitmap + page flip) の描画
   - OAM スプライト（非 affine の最小実装）合成

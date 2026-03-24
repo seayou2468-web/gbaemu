@@ -156,23 +156,8 @@ void GBACore::RenderSprites() {
 }
 
 void GBACore::RenderMode0Frame() {
-  // Minimal Mode0 BG0 text renderer (4bpp, no affine/OBJ/windows/blend yet).
+  // Mode0 text BG renderer (BG0-BG3 compositing with priority).
   const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const uint16_t bg0cnt = ReadIO16(0x04000008u);
-  const bool bg0_enable = (dispcnt & (1u << 8)) != 0;
-  if (!bg0_enable) {
-    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFF000000u);
-    return;
-  }
-
-  const uint32_t char_base = ((bg0cnt >> 2) & 0x3u) * 16u * 1024u;
-  const uint32_t screen_base = ((bg0cnt >> 8) & 0x1Fu) * 2u * 1024u;
-  const bool color_256 = (bg0cnt & (1u << 7)) != 0;
-  const uint32_t screen_size = (bg0cnt >> 14) & 0x3u;  // 0..3
-  const int map_w = (screen_size & 1u) ? 64 : 32;
-  const int map_h = (screen_size & 2u) ? 64 : 32;
-  const uint16_t hofs = ReadIO16(0x04000010u);
-  const uint16_t vofs = ReadIO16(0x04000012u);
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
     const size_t off = static_cast<size_t>((idx & 0x1FFu) * 2u);
@@ -186,41 +171,76 @@ void GBACore::RenderMode0Frame() {
            (static_cast<uint32_t>(g) << 8) | b;
   };
 
+  auto sample_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
+    *out_idx = 0;
+    *out_opaque = false;
+    const uint16_t bgcnt = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2));
+    const uint32_t char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
+    const uint32_t screen_base = ((bgcnt >> 8) & 0x1Fu) * 2u * 1024u;
+    const bool color_256 = (bgcnt & (1u << 7)) != 0;
+    const uint32_t screen_size = (bgcnt >> 14) & 0x3u;  // 0..3
+    const int map_w = (screen_size & 1u) ? 64 : 32;
+    const int map_h = (screen_size & 2u) ? 64 : 32;
+    const uint16_t hofs = ReadIO16(static_cast<uint32_t>(0x04000010u + bg * 4));
+    const uint16_t vofs = ReadIO16(static_cast<uint32_t>(0x04000012u + bg * 4));
+
+    const int sx = (x + hofs) & (map_w * 8 - 1);
+    const int sy = (y + vofs) & (map_h * 8 - 1);
+    const int tile_x = sx / 8;
+    const int tile_y = sy / 8;
+    const int pixel_x = sx & 7;
+    const int pixel_y = sy & 7;
+
+    const uint32_t map_index = static_cast<uint32_t>(tile_y * map_w + tile_x);
+    const size_t se_off = static_cast<size_t>(screen_base + map_index * 2u);
+    if (se_off + 1 >= vram_.size()) return;
+    const uint16_t se = static_cast<uint16_t>(vram_[se_off]) |
+                        static_cast<uint16_t>(vram_[se_off + 1] << 8);
+    const uint16_t tile_id = se & 0x03FFu;
+    const bool hflip = (se & (1u << 10)) != 0;
+    const bool vflip = (se & (1u << 11)) != 0;
+    const uint16_t palbank = static_cast<uint16_t>((se >> 12) & 0xFu);
+
+    const int tx = hflip ? (7 - pixel_x) : pixel_x;
+    const int ty = vflip ? (7 - pixel_y) : pixel_y;
+    if (color_256) {
+      const size_t chr_off = static_cast<size_t>(char_base + tile_id * 64u + ty * 8u + tx);
+      const uint16_t idx = (chr_off < vram_.size()) ? vram_[chr_off] : 0;
+      if ((idx & 0xFFu) == 0u) return;
+      *out_idx = idx;
+      *out_opaque = true;
+      return;
+    }
+    const size_t chr_off = static_cast<size_t>(char_base + tile_id * 32u + ty * 4u + tx / 2);
+    const uint8_t packed = (chr_off < vram_.size()) ? vram_[chr_off] : 0;
+    const uint8_t nibble = (tx & 1) ? (packed >> 4) : (packed & 0x0F);
+    if (nibble == 0) return;
+    *out_idx = static_cast<uint16_t>(palbank * 16u + nibble);
+    *out_opaque = true;
+  };
+
   bool found_nonzero_texel = false;
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
-      const int sx = (x + hofs) & (map_w * 8 - 1);
-      const int sy = (y + vofs) & (map_h * 8 - 1);
-      const int tile_x = sx / 8;
-      const int tile_y = sy / 8;
-      const int pixel_x = sx & 7;
-      const int pixel_y = sy & 7;
-
-      const uint32_t map_index = static_cast<uint32_t>(tile_y * map_w + tile_x);
-      const size_t se_off = static_cast<size_t>(screen_base + map_index * 2u);
-      if (se_off + 1 >= vram_.size()) continue;
-      const uint16_t se = static_cast<uint16_t>(vram_[se_off]) |
-                          static_cast<uint16_t>(vram_[se_off + 1] << 8);
-      const uint16_t tile_id = se & 0x03FFu;
-      const bool hflip = (se & (1u << 10)) != 0;
-      const bool vflip = (se & (1u << 11)) != 0;
-      const uint16_t palbank = static_cast<uint16_t>((se >> 12) & 0xFu);
-
-      const int tx = hflip ? (7 - pixel_x) : pixel_x;
-      const int ty = vflip ? (7 - pixel_y) : pixel_y;
-      uint16_t color_index = 0;
-
-      if (color_256) {
-        const size_t chr_off = static_cast<size_t>(char_base + tile_id * 64u + ty * 8u + tx);
-        color_index = (chr_off < vram_.size()) ? vram_[chr_off] : 0;
-      } else {
-        const size_t chr_off = static_cast<size_t>(char_base + tile_id * 32u + ty * 4u + tx / 2);
-        const uint8_t packed = (chr_off < vram_.size()) ? vram_[chr_off] : 0;
-        const uint8_t nibble = (tx & 1) ? (packed >> 4) : (packed & 0x0F);
-        color_index = static_cast<uint16_t>(palbank * 16u + nibble);
+      uint16_t best_idx = 0;
+      int best_prio = 4;
+      bool have_bg = false;
+      for (int bg = 0; bg < 4; ++bg) {
+        if ((dispcnt & (1u << (8 + bg))) == 0) continue;
+        const uint16_t bgcnt = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2));
+        const int prio = bgcnt & 0x3u;
+        uint16_t idx = 0;
+        bool opaque = false;
+        sample_bg(bg, x, y, &idx, &opaque);
+        if (!opaque) continue;
+        if (!have_bg || prio < best_prio) {
+          best_prio = prio;
+          best_idx = idx;
+          have_bg = true;
+        }
       }
-      if (color_index != 0) found_nonzero_texel = true;
-      frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(color_index);
+      if (have_bg) found_nonzero_texel = true;
+      frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
     }
   }
 
