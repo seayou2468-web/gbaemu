@@ -279,6 +279,13 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   return true;
 }
 
+uint8_t GBACore::DebugRead8(uint32_t addr) const { return Read8(addr); }
+uint16_t GBACore::DebugRead16(uint32_t addr) const { return Read16(addr); }
+uint32_t GBACore::DebugRead32(uint32_t addr) const { return Read32(addr); }
+void GBACore::DebugWrite8(uint32_t addr, uint8_t value) { Write8(addr, value); }
+void GBACore::DebugWrite16(uint32_t addr, uint16_t value) { Write16(addr, value); }
+void GBACore::DebugWrite32(uint32_t addr, uint32_t value) { Write32(addr, value); }
+
 void GBACore::ResetBackupControllerState() {
   flash_mode_unlocked_ = false;
   flash_command_ = 0;
@@ -302,6 +309,13 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
   // SRAM/unknown/eeprom fallback: raw byte write model.
   if (backup_type_ != BackupType::kFlash64K) {
     sram_[off] = value;
+    return;
+  }
+
+  if (flash_program_mode_) {
+    // NOR flash programming behavior: only 1->0 transitions.
+    sram_[off] = static_cast<uint8_t>(sram_[off] & value);
+    flash_program_mode_ = false;
     return;
   }
 
@@ -381,13 +395,6 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
                 sram_.begin() + static_cast<std::ptrdiff_t>(sector_end), 0xFF);
     }
     ResetBackupControllerState();
-    return;
-  }
-
-  if (flash_program_mode_) {
-    // NOR flash programming behavior: only 1->0 transitions.
-    sram_[off] = static_cast<uint8_t>(sram_[off] & value);
-    flash_program_mode_ = false;
     return;
   }
 

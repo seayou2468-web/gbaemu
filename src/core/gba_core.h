@@ -74,6 +74,14 @@ class GBACore {
   std::vector<uint8_t> SaveStateBlob() const;
   bool LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error);
 
+  // Debug/testing bus accessors (tooling/front-end diagnostics only).
+  uint8_t DebugRead8(uint32_t addr) const;
+  uint16_t DebugRead16(uint32_t addr) const;
+  uint32_t DebugRead32(uint32_t addr) const;
+  void DebugWrite8(uint32_t addr, uint8_t value);
+  void DebugWrite16(uint32_t addr, uint16_t value);
+  void DebugWrite32(uint32_t addr, uint32_t value);
+
  private:
   static constexpr uint32_t kCyclesPerFrame = 280896;
   static constexpr uint32_t kCyclesPerScanline = 1232;

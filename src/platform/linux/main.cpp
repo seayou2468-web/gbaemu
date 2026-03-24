@@ -12,6 +12,86 @@
 
 namespace fs = std::filesystem;
 
+std::vector<uint8_t> MakeMinimalRomWithSaveTag(const std::string& tag) {
+  std::vector<uint8_t> rom(0x400, 0);
+  rom[0xB2] = 0x96;  // required fixed value
+  for (size_t i = 0; i < tag.size() && (0xC0 + i) < rom.size(); ++i) {
+    rom[0xC0 + i] = static_cast<uint8_t>(tag[i]);
+  }
+  return rom;
+}
+
+bool FlashUnlock(gba::GBACore* core) {
+  if (!core) return false;
+  core->DebugWrite8(0x0E005555u, 0xAAu);
+  core->DebugWrite8(0x0E002AAAu, 0x55u);
+  return true;
+}
+
+int RunBackupControllerSelfTest() {
+  int fail = 0;
+
+  {
+    gba::GBACore flash;
+    std::string error;
+    std::vector<uint8_t> rom = MakeMinimalRomWithSaveTag("FLASH512_V131");
+    if (!flash.LoadROM(rom, &error)) {
+      std::cerr << "[FAIL] backup_selftest flash load: " << error << "\n";
+      return 10;
+    }
+
+    // Enter flash ID mode.
+    FlashUnlock(&flash);
+    flash.DebugWrite8(0x0E005555u, 0x90u);
+    const uint8_t id0 = flash.DebugRead8(0x0E000000u);
+    const uint8_t id1 = flash.DebugRead8(0x0E000001u);
+    const bool id_ok = (id0 == 0xBFu) && (id1 == 0xD4u);
+    std::cout << "[SELFTEST] flash id: " << std::hex << static_cast<int>(id0)
+              << " " << static_cast<int>(id1) << std::dec
+              << " pass=" << id_ok << "\n";
+    if (!id_ok) ++fail;
+
+    // Exit ID mode.
+    FlashUnlock(&flash);
+    flash.DebugWrite8(0x0E005555u, 0xF0u);
+
+    // Program byte via A0 sequence.
+    FlashUnlock(&flash);
+    flash.DebugWrite8(0x0E005555u, 0xA0u);
+    flash.DebugWrite8(0x0E000123u, 0x3Cu);
+    const bool program_ok = flash.DebugRead8(0x0E000123u) == 0x3Cu;
+    std::cout << "[SELFTEST] flash program pass=" << program_ok << "\n";
+    if (!program_ok) ++fail;
+
+    // Sector erase sequence.
+    FlashUnlock(&flash);
+    flash.DebugWrite8(0x0E005555u, 0x80u);
+    FlashUnlock(&flash);
+    flash.DebugWrite8(0x0E000000u + 0x123u, 0x30u);
+    const bool erase_ok = flash.DebugRead8(0x0E000123u) == 0xFFu;
+    std::cout << "[SELFTEST] flash sector erase pass=" << erase_ok << "\n";
+    if (!erase_ok) ++fail;
+  }
+
+  {
+    gba::GBACore sram;
+    std::string error;
+    std::vector<uint8_t> rom = MakeMinimalRomWithSaveTag("SRAM_V113");
+    if (!sram.LoadROM(rom, &error)) {
+      std::cerr << "[FAIL] backup_selftest sram load: " << error << "\n";
+      return 11;
+    }
+
+    sram.DebugWrite8(0x0E000011u, 0x77u);
+    const bool sram_ok = sram.DebugRead8(0x0E000011u) == 0x77u;
+    std::cout << "[SELFTEST] sram rw pass=" << sram_ok << "\n";
+    if (!sram_ok) ++fail;
+  }
+
+  std::cout << "BackupControllerSelfTest Summary: fail=" << fail << "\n";
+  return fail == 0 ? 0 : 12;
+}
+
 int RunBatchTest(const std::string& rom_dir) {
   if (!fs::exists(rom_dir)) {
     std::cerr << "ROM directory not found: " << rom_dir << "\n";
@@ -816,6 +896,10 @@ int RunInteractiveSession(const std::string& rom_path, int max_frames) {
 }
 
 int main(int argc, char** argv) {
+  if (argc >= 2 && std::string(argv[1]) == "--selftest-backup") {
+    return RunBackupControllerSelfTest();
+  }
+
   if (argc >= 3 && std::string(argv[1]) == "--command-coverage-mainline") {
     return RunInputCommandCoverageMainline(argv[2]);
   }
