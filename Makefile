@@ -1,7 +1,7 @@
 CXX ?= g++
 CXXFLAGS ?= -std=c++20 -O2 -Wall -Wextra -pedantic
 
-CORE_SRCS = src/core/gba_core.cpp src/core/rom_loader.cpp
+CORE_SRCS = src/core/gba_core.cpp src/core/gba_core_cpu.cpp src/core/gba_core_memory.cpp src/core/gba_core_ppu.cpp src/core/rom_loader.cpp
 LINUX_SRCS = src/platform/linux/main.cpp $(CORE_SRCS)
 
 .PHONY: all linux_test gameplay_test mainline_test playthrough_test instruction_audit_test command_coverage_test run_rom_demo interactive_demo clean

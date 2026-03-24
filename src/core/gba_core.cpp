@@ -5,8 +5,6 @@
 
 namespace gba {
 namespace {
-constexpr uint32_t kCyclesPerFrame = 280896;  // 16.78MHz / 59.73Hz
-
 constexpr uint8_t kNintendoLogo[156] = {
     0x24,0xFF,0xAE,0x51,0x69,0x9A,0xA2,0x21,0x3D,0x84,0x82,0x0A,0x84,0xE4,0x09,0xAD,
     0x11,0x24,0x8B,0x98,0xC0,0x81,0x7F,0x21,0xA3,0x52,0xBE,0x19,0x93,0x09,0xCE,0x20,
@@ -20,11 +18,6 @@ constexpr uint8_t kNintendoLogo[156] = {
     0xD6,0x25,0xE4,0x8B,0x38,0x0A,0xAC,0x72,0x21,0xD4,0xF8,0x07,
 };
 
-uint8_t ClampToByte(int value) {
-  if (value < 0) return 0;
-  if (value > 255) return 255;
-  return static_cast<uint8_t>(value);
-}
 }  // namespace
 
 bool GBACore::LoadROM(const std::vector<uint8_t>& rom, std::string* error) {
@@ -68,6 +61,47 @@ bool GBACore::LoadROM(const std::vector<uint8_t>& rom, std::string* error) {
   return true;
 }
 
+bool GBACore::LoadBIOS(const std::vector<uint8_t>& bios, std::string* error) {
+  if (bios.size() < bios_.size()) {
+    if (error) *error = "BIOS too small (needs 16KB).";
+    return false;
+  }
+  std::copy_n(bios.begin(), bios_.size(), bios_.begin());
+  bios_loaded_ = true;
+  return true;
+}
+
+void GBACore::LoadBuiltInBIOS() {
+  std::fill(bios_.begin(), bios_.end(), 0);
+  // Very small built-in BIOS stub:
+  // - vector table entries branch to 0x100
+  // - SWI vector returns immediately
+  auto write32le = [&](size_t off, uint32_t v) {
+    if (off + 3 >= bios_.size()) return;
+    bios_[off] = static_cast<uint8_t>(v & 0xFF);
+    bios_[off + 1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+    bios_[off + 2] = static_cast<uint8_t>((v >> 16) & 0xFF);
+    bios_[off + 3] = static_cast<uint8_t>((v >> 24) & 0xFF);
+  };
+
+  // ARM B 0x100 from vectors (cond=1110, opcode=1010, imm24)
+  auto make_branch = [](uint32_t from, uint32_t to) -> uint32_t {
+    int32_t delta = static_cast<int32_t>(to) - static_cast<int32_t>(from + 8u);
+    int32_t imm24 = (delta >> 2) & 0x00FFFFFF;
+    return 0xEA000000u | static_cast<uint32_t>(imm24);
+  };
+  for (size_t vec = 0; vec <= 0x1C; vec += 4) {
+    write32le(vec, make_branch(static_cast<uint32_t>(vec), 0x100u));
+  }
+  // SWI vector at 0x08: MOVS PC, LR
+  write32le(0x08, 0xE1B0F00Eu);
+  // IRQ vector at 0x18: SUBS PC, LR, #4
+  write32le(0x18, 0xE25EF004u);
+  // Reset handler @0x100: branch to cartridge space 0x08000000
+  write32le(0x100, make_branch(0x100u, 0x08000000u));
+  bios_loaded_ = true;
+}
+
 void GBACore::Reset() {
   frame_count_ = 0;
   executed_cycles_ = 0;
@@ -75,20 +109,149 @@ void GBACore::Reset() {
   previous_keys_mask_ = 0;
   std::fill(ewram_.begin(), ewram_.end(), 0);
   std::fill(iwram_.begin(), iwram_.end(), 0);
+  std::fill(io_regs_.begin(), io_regs_.end(), 0);
+  std::fill(palette_ram_.begin(), palette_ram_.end(), 0);
+  std::fill(vram_.begin(), vram_.end(), 0);
+  std::fill(oam_.begin(), oam_.end(), 0);
+  std::fill(sram_.begin(), sram_.end(), 0xFF);
+  timers_ = {};
+  ppu_cycle_accum_ = 0;
+  audio_mix_level_ = 0;
   cpu_ = CpuState{};
   cpu_.regs[15] = 0x08000000u;  // ROM entry area.
+  // DISPCNT default: mode 0, forced blank off.
+  WriteIO16(0x04000000u, 0x0000u);
+  // VCOUNT
+  WriteIO16(0x04000006u, 0x0000u);
+  // KEYINPUT: all released (active low)
+  WriteIO16(0x04000130u, 0x03FFu);
+  // IE/IF/IME
+  WriteIO16(0x04000200u, 0x0000u);
+  WriteIO16(0x04000202u, 0x0000u);
+  WriteIO16(0x04000208u, 0x0001u);
+  SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
   frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
   RenderDebugFrame();
+}
+
+void GBACore::LoadSaveRAM(const std::vector<uint8_t>& data) {
+  const size_t copy_size = std::min(data.size(), sram_.size());
+  std::copy_n(data.begin(), copy_size, sram_.begin());
+  if (copy_size < sram_.size()) {
+    std::fill(sram_.begin() + static_cast<std::ptrdiff_t>(copy_size), sram_.end(), 0xFF);
+  }
+}
+
+std::vector<uint8_t> GBACore::SaveStateBlob() const {
+  auto append_u32 = [](std::vector<uint8_t>* out, uint32_t v) {
+    out->push_back(static_cast<uint8_t>(v & 0xFF));
+    out->push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    out->push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+    out->push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+  };
+  auto append_u64 = [&](std::vector<uint8_t>* out, uint64_t v) {
+    append_u32(out, static_cast<uint32_t>(v & 0xFFFFFFFFu));
+    append_u32(out, static_cast<uint32_t>(v >> 32));
+  };
+  std::vector<uint8_t> blob;
+  blob.reserve(512 * 1024);
+  blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
+  append_u32(&blob, 1u);  // version
+  append_u64(&blob, frame_count_);
+  append_u64(&blob, executed_cycles_);
+  append_u32(&blob, cpu_.cpsr);
+  append_u32(&blob, ppu_cycle_accum_);
+  append_u32(&blob, audio_mix_level_);
+  append_u32(&blob, keys_pressed_mask_);
+  append_u32(&blob, previous_keys_mask_);
+  for (uint32_t r : cpu_.regs) append_u32(&blob, r);
+  blob.insert(blob.end(), ewram_.begin(), ewram_.end());
+  blob.insert(blob.end(), iwram_.begin(), iwram_.end());
+  blob.insert(blob.end(), io_regs_.begin(), io_regs_.end());
+  blob.insert(blob.end(), palette_ram_.begin(), palette_ram_.end());
+  blob.insert(blob.end(), vram_.begin(), vram_.end());
+  blob.insert(blob.end(), oam_.begin(), oam_.end());
+  blob.insert(blob.end(), sram_.begin(), sram_.end());
+  return blob;
+}
+
+bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error) {
+  auto read_u32 = [&](size_t* off, uint32_t* out) -> bool {
+    if (*off + 4 > blob.size()) return false;
+    *out = static_cast<uint32_t>(blob[*off]) |
+           (static_cast<uint32_t>(blob[*off + 1]) << 8) |
+           (static_cast<uint32_t>(blob[*off + 2]) << 16) |
+           (static_cast<uint32_t>(blob[*off + 3]) << 24);
+    *off += 4;
+    return true;
+  };
+  auto read_u64 = [&](size_t* off, uint64_t* out) -> bool {
+    uint32_t lo = 0, hi = 0;
+    if (!read_u32(off, &lo) || !read_u32(off, &hi)) return false;
+    *out = static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
+    return true;
+  };
+
+  size_t off = 0;
+  if (blob.size() < 8 || blob[0] != 'G' || blob[1] != 'B' || blob[2] != 'A' || blob[3] != 'S') {
+    if (error) *error = "Invalid savestate magic.";
+    return false;
+  }
+  off = 4;
+  uint32_t version = 0;
+  if (!read_u32(&off, &version) || version != 1u) {
+    if (error) *error = "Unsupported savestate version.";
+    return false;
+  }
+  uint32_t tmp32 = 0;
+  if (!read_u64(&off, &frame_count_) ||
+      !read_u64(&off, &executed_cycles_) ||
+      !read_u32(&off, &cpu_.cpsr) ||
+      !read_u32(&off, &ppu_cycle_accum_) ||
+      !read_u32(&off, &tmp32)) {
+    if (error) *error = "Savestate header truncated.";
+    return false;
+  }
+  audio_mix_level_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
+  if (!read_u32(&off, &tmp32)) return false;
+  keys_pressed_mask_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
+  if (!read_u32(&off, &tmp32)) return false;
+  previous_keys_mask_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
+  for (uint32_t& r : cpu_.regs) {
+    if (!read_u32(&off, &r)) return false;
+  }
+  auto read_block = [&](auto& arr) -> bool {
+    if (off + arr.size() > blob.size()) return false;
+    std::copy_n(blob.begin() + static_cast<std::ptrdiff_t>(off), arr.size(), arr.begin());
+    off += arr.size();
+    return true;
+  };
+  if (!read_block(ewram_) || !read_block(iwram_) || !read_block(io_regs_) ||
+      !read_block(palette_ram_) || !read_block(vram_) || !read_block(oam_) || !read_block(sram_)) {
+    if (error) *error = "Savestate payload truncated.";
+    return false;
+  }
+  loaded_ = true;
+  SyncKeyInputRegister();
+  RenderDebugFrame();
+  return true;
 }
 
 void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   executed_cycles_ += cycles;
   RunCpuSlice(cycles);
+  StepTimers(cycles);
+  StepDma();
+  StepApu(cycles);
+  StepPpu(cycles);
 }
 
-void GBACore::SetKeys(uint16_t keys_pressed_mask) { keys_pressed_mask_ = keys_pressed_mask; }
+void GBACore::SetKeys(uint16_t keys_pressed_mask) {
+  keys_pressed_mask_ = keys_pressed_mask;
+  SyncKeyInputRegister();
+}
 
 void GBACore::StepFrame() {
   if (!loaded_) return;
@@ -174,403 +337,5 @@ void GBACore::UpdateGameplayFromInput() {
   previous_keys_mask_ = keys_pressed_mask_;
 }
 
-void GBACore::RenderDebugFrame() {
-  if (frame_buffer_.empty()) {
-    frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
-  }
-
-  uint32_t seed = 0;
-  for (size_t i = 0; i < std::min<size_t>(rom_.size(), 256); ++i) {
-    seed = (seed * 33u) ^ rom_[i];
-  }
-  seed ^= static_cast<uint32_t>(frame_count_ * 2654435761u);
-
-  for (int y = 0; y < kScreenHeight; ++y) {
-    for (int x = 0; x < kScreenWidth; ++x) {
-      const uint8_t r = static_cast<uint8_t>((x + seed) & 0xFF);
-      const uint8_t g = static_cast<uint8_t>((y + (seed >> 8)) & 0xFF);
-      const uint8_t b = static_cast<uint8_t>(((x ^ y) + (seed >> 16)) & 0xFF);
-      frame_buffer_[y * kScreenWidth + x] = 0xFF000000U | (r << 16) | (g << 8) | b;
-    }
-  }
-
-  for (int dy = -2; dy <= 2; ++dy) {
-    for (int dx = -2; dx <= 2; ++dx) {
-      const int px = gameplay_state_.player_x + dx;
-      const int py = gameplay_state_.player_y + dy;
-      if (px < 0 || py < 0 || px >= kScreenWidth || py >= kScreenHeight) continue;
-      const uint8_t base = ClampToByte(80 + static_cast<int>(gameplay_state_.score % 175));
-      frame_buffer_[py * kScreenWidth + px] =
-          0xFF000000U | (255u << 16) | (base << 8) | static_cast<uint32_t>(255u - base);
-    }
-  }
-}
-
-uint64_t GBACore::ComputeFrameHash() const {
-  uint64_t hash = 1469598103934665603ULL;
-  constexpr uint64_t kPrime = 1099511628211ULL;
-
-  for (uint32_t px : frame_buffer_) {
-    hash ^= px;
-    hash *= kPrime;
-  }
-  hash ^= static_cast<uint64_t>(gameplay_state_.player_x) << 1;
-  hash ^= static_cast<uint64_t>(gameplay_state_.player_y) << 9;
-  hash ^= static_cast<uint64_t>(gameplay_state_.score) << 17;
-  return hash;
-}
-
-bool GBACore::ValidateFrameBuffer(std::string* error) const {
-  const size_t expected_size = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
-  if (frame_buffer_.size() != expected_size) {
-    if (error) *error = "Invalid framebuffer size.";
-    return false;
-  }
-
-  uint32_t first_row_hash = 0;
-  bool first_row_hash_set = false;
-  bool found_distinct_row = false;
-
-  for (int y = 0; y < kScreenHeight; ++y) {
-    uint32_t row_hash = 2166136261u;
-    for (int x = 0; x < kScreenWidth; ++x) {
-      const uint32_t px = frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x];
-      if ((px & 0xFF000000u) != 0xFF000000u) {
-        if (error) *error = "Found pixel with invalid alpha channel.";
-        return false;
-      }
-      row_hash ^= px;
-      row_hash *= 16777619u;
-    }
-
-    if (!first_row_hash_set) {
-      first_row_hash = row_hash;
-      first_row_hash_set = true;
-    } else if (row_hash != first_row_hash) {
-      found_distinct_row = true;
-    }
-  }
-
-  if (!found_distinct_row) {
-    if (error) *error = "Framebuffer rows are unexpectedly identical.";
-    return false;
-  }
-  return true;
-}
-
-uint32_t GBACore::Read32(uint32_t addr) const {
-  // 0x02000000-0x0203FFFF: EWRAM
-  if (addr >= 0x02000000u) {
-    const uint32_t off32 = addr - 0x02000000u;
-    if (off32 <= ewram_.size() - 4) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(ewram_[off]) |
-             (static_cast<uint32_t>(ewram_[off + 1]) << 8) |
-             (static_cast<uint32_t>(ewram_[off + 2]) << 16) |
-             (static_cast<uint32_t>(ewram_[off + 3]) << 24);
-    }
-  }
-  // 0x03000000-0x03007FFF: IWRAM
-  if (addr >= 0x03000000u) {
-    const uint32_t off32 = addr - 0x03000000u;
-    if (off32 <= iwram_.size() - 4) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(iwram_[off]) |
-             (static_cast<uint32_t>(iwram_[off + 1]) << 8) |
-             (static_cast<uint32_t>(iwram_[off + 2]) << 16) |
-             (static_cast<uint32_t>(iwram_[off + 3]) << 24);
-    }
-  }
-  // 0x08000000- : ROM
-  if (addr >= 0x08000000u) {
-    const size_t off = static_cast<size_t>(addr - 0x08000000u);
-    if (off + 3 < rom_.size()) {
-      return static_cast<uint32_t>(rom_[off]) |
-             (static_cast<uint32_t>(rom_[off + 1]) << 8) |
-             (static_cast<uint32_t>(rom_[off + 2]) << 16) |
-             (static_cast<uint32_t>(rom_[off + 3]) << 24);
-    }
-  }
-  return 0;
-}
-
-uint16_t GBACore::Read16(uint32_t addr) const {
-  if (addr >= 0x02000000u) {
-    const uint32_t off32 = addr - 0x02000000u;
-    if (off32 <= ewram_.size() - 2) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(ewram_[off]) |
-             static_cast<uint16_t>(ewram_[off + 1] << 8);
-    }
-  }
-  if (addr >= 0x03000000u) {
-    const uint32_t off32 = addr - 0x03000000u;
-    if (off32 <= iwram_.size() - 2) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(iwram_[off]) |
-             static_cast<uint16_t>(iwram_[off + 1] << 8);
-    }
-  }
-  if (addr >= 0x08000000u) {
-    const size_t off = static_cast<size_t>(addr - 0x08000000u);
-    if (off + 1 < rom_.size()) {
-      return static_cast<uint16_t>(rom_[off]) |
-             static_cast<uint16_t>(rom_[off + 1] << 8);
-    }
-  }
-  return 0;
-}
-
-void GBACore::Write32(uint32_t addr, uint32_t value) {
-  if (addr >= 0x02000000u) {
-    const uint32_t off32 = addr - 0x02000000u;
-    if (off32 <= ewram_.size() - 4) {
-      const size_t off = static_cast<size_t>(off32);
-      ewram_[off] = static_cast<uint8_t>(value & 0xFF);
-      ewram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-      ewram_[off + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
-      ewram_[off + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
-      return;
-    }
-  }
-  if (addr >= 0x03000000u) {
-    const uint32_t off32 = addr - 0x03000000u;
-    if (off32 <= iwram_.size() - 4) {
-      const size_t off = static_cast<size_t>(off32);
-      iwram_[off] = static_cast<uint8_t>(value & 0xFF);
-      iwram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-      iwram_[off + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
-      iwram_[off + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
-    }
-  }
-}
-
-uint32_t GBACore::RotateRight(uint32_t value, unsigned bits) const {
-  bits &= 31u;
-  if (bits == 0) return value;
-  return (value >> bits) | (value << (32u - bits));
-}
-
-uint32_t GBACore::ExpandArmImmediate(uint32_t imm12) const {
-  const uint32_t imm8 = imm12 & 0xFFu;
-  const uint32_t rotate = ((imm12 >> 8) & 0xFu) * 2u;
-  return RotateRight(imm8, rotate);
-}
-
-bool GBACore::CheckCondition(uint32_t cond) const {
-  const bool n = (cpu_.cpsr & (1u << 31)) != 0;
-  const bool z = (cpu_.cpsr & (1u << 30)) != 0;
-  const bool c = (cpu_.cpsr & (1u << 29)) != 0;
-  const bool v = (cpu_.cpsr & (1u << 28)) != 0;
-
-  switch (cond & 0xFu) {
-    case 0x0: return z;                // EQ
-    case 0x1: return !z;               // NE
-    case 0x2: return c;                // CS/HS
-    case 0x3: return !c;               // CC/LO
-    case 0x4: return n;                // MI
-    case 0x5: return !n;               // PL
-    case 0x6: return v;                // VS
-    case 0x7: return !v;               // VC
-    case 0x8: return c && !z;          // HI
-    case 0x9: return !c || z;          // LS
-    case 0xA: return n == v;           // GE
-    case 0xB: return n != v;           // LT
-    case 0xC: return !z && (n == v);   // GT
-    case 0xD: return z || (n != v);    // LE
-    case 0xE: return true;             // AL
-    default: return false;             // NV
-  }
-}
-
-void GBACore::SetNZFlags(uint32_t value) {
-  cpu_.cpsr = (cpu_.cpsr & ~((1u << 31) | (1u << 30))) |
-              ((value & 0x80000000u) ? (1u << 31) : 0u) |
-              ((value == 0) ? (1u << 30) : 0u);
-}
-
-void GBACore::SetAddFlags(uint32_t lhs, uint32_t rhs, uint64_t result64) {
-  const uint32_t result32 = static_cast<uint32_t>(result64);
-  SetNZFlags(result32);
-  const bool carry = (result64 >> 32) != 0;
-  const bool overflow = ((~(lhs ^ rhs) & (lhs ^ result32)) & 0x80000000u) != 0;
-  cpu_.cpsr = (cpu_.cpsr & ~((1u << 29) | (1u << 28))) |
-              (carry ? (1u << 29) : 0u) |
-              (overflow ? (1u << 28) : 0u);
-}
-
-void GBACore::SetSubFlags(uint32_t lhs, uint32_t rhs, uint64_t result64) {
-  const uint32_t result32 = static_cast<uint32_t>(result64);
-  SetNZFlags(result32);
-  const bool carry = lhs >= rhs;  // no borrow
-  const bool overflow = (((lhs ^ rhs) & (lhs ^ result32)) & 0x80000000u) != 0;
-  cpu_.cpsr = (cpu_.cpsr & ~((1u << 29) | (1u << 28))) |
-              (carry ? (1u << 29) : 0u) |
-              (overflow ? (1u << 28) : 0u);
-}
-
-void GBACore::ExecuteArmInstruction(uint32_t opcode) {
-  const uint32_t cond = (opcode >> 28) & 0xFu;
-  if (!CheckCondition(cond)) {
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // BX Rm
-  if ((opcode & 0x0FFFFFF0u) == 0x012FFF10u) {
-    const uint32_t rm = opcode & 0xFu;
-    const uint32_t target = cpu_.regs[rm];
-    if (target & 1u) {
-      cpu_.cpsr |= (1u << 5);  // Thumb bit.
-      cpu_.regs[15] = target & ~1u;
-    } else {
-      cpu_.cpsr &= ~(1u << 5);
-      cpu_.regs[15] = target & ~3u;
-    }
-    return;
-  }
-
-  // Branch
-  if ((opcode & 0x0E000000u) == 0x0A000000u) {
-    int32_t offset = static_cast<int32_t>(opcode & 0x00FFFFFFu);
-    if (offset & 0x00800000u) offset |= ~0x00FFFFFF;
-    offset <<= 2;
-    cpu_.regs[15] = cpu_.regs[15] + 8u + static_cast<uint32_t>(offset);
-    return;
-  }
-
-  // LDR/STR immediate
-  if ((opcode & 0x0C000000u) == 0x04000000u) {
-    const uint32_t rn = (opcode >> 16) & 0xFu;
-    const uint32_t rd = (opcode >> 12) & 0xFu;
-    const bool load = (opcode & (1u << 20)) != 0;
-    const bool up = (opcode & (1u << 23)) != 0;
-    const uint32_t imm = opcode & 0xFFFu;
-    uint32_t addr = cpu_.regs[rn];
-    addr = up ? (addr + imm) : (addr - imm);
-    if (load) {
-      cpu_.regs[rd] = Read32(addr);
-    } else {
-      Write32(addr, cpu_.regs[rd]);
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // Data processing (minimal subset: AND/EOR/SUB/ADD/ORR/MOV/CMP)
-  if ((opcode & 0x0C000000u) == 0x00000000u) {
-    const bool imm = (opcode & (1u << 25)) != 0;
-    const bool set_flags = (opcode & (1u << 20)) != 0;
-    const uint32_t op = (opcode >> 21) & 0xFu;
-    const uint32_t rn = (opcode >> 16) & 0xFu;
-    const uint32_t rd = (opcode >> 12) & 0xFu;
-    uint32_t operand2 = 0;
-    if (imm) {
-      operand2 = ExpandArmImmediate(opcode & 0xFFFu);
-    } else {
-      const uint32_t rm = opcode & 0xFu;
-      operand2 = cpu_.regs[rm];
-    }
-
-    switch (op) {
-      case 0x0: { // AND
-        const uint32_t r = cpu_.regs[rn] & operand2;
-        cpu_.regs[rd] = r;
-        if (set_flags) SetNZFlags(r);
-        break;
-      }
-      case 0x1: { // EOR
-        const uint32_t r = cpu_.regs[rn] ^ operand2;
-        cpu_.regs[rd] = r;
-        if (set_flags) SetNZFlags(r);
-        break;
-      }
-      case 0x2: { // SUB
-        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rn]) - static_cast<uint64_t>(operand2);
-        cpu_.regs[rd] = static_cast<uint32_t>(r64);
-        if (set_flags) SetSubFlags(cpu_.regs[rn], operand2, r64);
-        break;
-      }
-      case 0x4: { // ADD
-        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rn]) + static_cast<uint64_t>(operand2);
-        cpu_.regs[rd] = static_cast<uint32_t>(r64);
-        if (set_flags) SetAddFlags(cpu_.regs[rn], operand2, r64);
-        break;
-      }
-      case 0xA: { // CMP
-        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rn]) - static_cast<uint64_t>(operand2);
-        SetSubFlags(cpu_.regs[rn], operand2, r64);
-        break;
-      }
-      case 0xC: { // ORR
-        const uint32_t r = cpu_.regs[rn] | operand2;
-        cpu_.regs[rd] = r;
-        if (set_flags) SetNZFlags(r);
-        break;
-      }
-      case 0xD: { // MOV
-        cpu_.regs[rd] = operand2;
-        if (set_flags) SetNZFlags(operand2);
-        break;
-      }
-      default: break;  // NOP for unsupported ALU ops.
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // SWI / unknown => advance PC (graceful NOP in this minimal core)
-  cpu_.regs[15] += 4;
-}
-
-void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
-  // MOV/CMP/ADD/SUB immediate (001xx)
-  if ((opcode & 0xE000u) == 0x2000u) {
-    const uint16_t op = (opcode >> 11) & 0x3u;
-    const uint16_t rd = (opcode >> 8) & 0x7u;
-    const uint32_t imm8 = opcode & 0xFFu;
-    switch (op) {
-      case 0: cpu_.regs[rd] = imm8; break;                 // MOV
-      case 1: (void)(cpu_.regs[rd] - imm8); break;         // CMP (flags omitted)
-      case 2: cpu_.regs[rd] += imm8; break;                // ADD
-      case 3: cpu_.regs[rd] -= imm8; break;                // SUB
-    }
-    cpu_.regs[15] += 2;
-    return;
-  }
-
-  // Unconditional branch (11100)
-  if ((opcode & 0xF800u) == 0xE000u) {
-    int32_t offset = static_cast<int32_t>(opcode & 0x07FFu);
-    if (offset & 0x400) offset |= ~0x7FF;
-    offset <<= 1;
-    cpu_.regs[15] = cpu_.regs[15] + 4u + static_cast<uint32_t>(offset);
-    return;
-  }
-
-  // Fallback NOP-like advance.
-  cpu_.regs[15] += 2;
-}
-
-void GBACore::RunCpuSlice(uint32_t cycles) {
-  if (cpu_.halted) return;
-  // Minimal budget: roughly 1 ARM instruction per 4 cycles.
-  const uint32_t instruction_budget = std::max<uint32_t>(1, cycles / 4u);
-  for (uint32_t i = 0; i < instruction_budget; ++i) {
-    const uint32_t pc = cpu_.regs[15];
-    if (cpu_.cpsr & (1u << 5)) {
-      const uint16_t opcode = Read16(pc);
-      ExecuteThumbInstruction(opcode);
-    } else {
-      const uint32_t opcode = Read32(pc);
-      ExecuteArmInstruction(opcode);
-    }
-    // Keep PC sane when branch jumps outside mapped ranges.
-    if (cpu_.regs[15] < 0x02000000u || cpu_.regs[15] > 0x09FFFFFFu) {
-      const uint32_t mask = (cpu_.cpsr & (1u << 5)) ? 0x1FFFFFEu : 0x1FFFFFCu;
-      cpu_.regs[15] = 0x08000000u + static_cast<uint32_t>((cpu_.regs[15] & mask) % std::max<size_t>(4, rom_.size()));
-    }
-  }
-}
 
 }  // namespace gba

@@ -50,6 +50,8 @@ class GBACore {
   static constexpr int kScreenWidth = 240;
   static constexpr int kScreenHeight = 160;
 
+  bool LoadBIOS(const std::vector<uint8_t>& bios, std::string* error);
+  void LoadBuiltInBIOS();
   bool LoadROM(const std::vector<uint8_t>& rom, std::string* error);
   void Reset();
   void RunCycles(uint32_t cycles);
@@ -67,16 +69,46 @@ class GBACore {
 
   uint64_t ComputeFrameHash() const;
   bool ValidateFrameBuffer(std::string* error) const;
+  const std::array<uint8_t, 64 * 1024>& GetSaveRAM() const { return sram_; }
+  void LoadSaveRAM(const std::vector<uint8_t>& data);
+  std::vector<uint8_t> SaveStateBlob() const;
+  bool LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error);
 
  private:
+  static constexpr uint32_t kCyclesPerFrame = 280896;
+  static constexpr uint32_t kCyclesPerScanline = 1232;
+  static constexpr uint32_t kVisibleScanlines = 160;
+  static constexpr uint32_t kTotalScanlines = 228;
+
   uint8_t ComputeComplementCheck() const;
   bool ValidateNintendoLogo() const;
   void UpdateGameplayFromInput();
   void RenderDebugFrame();
+  void RenderMode0Frame();
+  void RenderMode3Frame();
+  void RenderMode4Frame();
+  void RenderSprites();
+  void StepPpu(uint32_t cycles);
+  void StepTimers(uint32_t cycles);
+  void StepDma();
+  void StepApu(uint32_t cycles);
+  void SyncKeyInputRegister();
+  void RaiseInterrupt(uint16_t mask);
+  void EnterException(uint32_t vector_addr, uint32_t new_mode, bool disable_irq, bool thumb_state);
+  void ServiceInterruptIfNeeded();
+
   uint32_t Read32(uint32_t addr) const;
   uint16_t Read16(uint32_t addr) const;
+  uint8_t Read8(uint32_t addr) const;
   void Write32(uint32_t addr, uint32_t value);
+  void Write16(uint32_t addr, uint16_t value);
+  void Write8(uint32_t addr, uint8_t value);
+  uint16_t ReadIO16(uint32_t addr) const;
+  void WriteIO16(uint32_t addr, uint16_t value);
   uint32_t RotateRight(uint32_t value, unsigned bits) const;
+  uint32_t ApplyShift(uint32_t value, uint32_t shift_type, uint32_t shift_amount, bool* carry_out) const;
+  bool GetFlagC() const;
+  void SetFlagC(bool carry);
   uint32_t ExpandArmImmediate(uint32_t imm12) const;
   bool CheckCondition(uint32_t cond) const;
   void SetNZFlags(uint32_t value);
@@ -93,10 +125,28 @@ class GBACore {
   };
 
   std::vector<uint8_t> rom_;
+  std::array<uint8_t, 16 * 1024> bios_{};
+  bool bios_loaded_ = false;
   std::array<uint8_t, 256 * 1024> ewram_{};
   std::array<uint8_t, 32 * 1024> iwram_{};
+  std::array<uint8_t, 1024> io_regs_{};
+  std::array<uint8_t, 1024> palette_ram_{};
+  std::array<uint8_t, 96 * 1024> vram_{};
+  std::array<uint8_t, 1024> oam_{};
+  std::array<uint8_t, 64 * 1024> sram_{};
   RomInfo rom_info_{};
   std::vector<uint32_t> frame_buffer_;
+  uint32_t ppu_cycle_accum_ = 0;
+  uint16_t audio_mix_level_ = 0;
+
+  struct TimerState {
+    uint16_t reload = 0;
+    uint16_t control = 0;
+    uint16_t counter = 0;
+    uint32_t prescaler_accum = 0;
+  };
+  std::array<TimerState, 4> timers_{};
+
   CpuState cpu_{};
   GameplayState gameplay_state_{};
   uint64_t frame_count_ = 0;
