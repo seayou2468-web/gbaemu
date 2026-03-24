@@ -1,0 +1,9 @@
+gbaエミュを作る時の参考になるサイト。
+
+https://problemkaputt.de/gbatek.htm
+
+
+https://www.copetti.org/writings/consoles/game-boy-advance/
+
+
+
