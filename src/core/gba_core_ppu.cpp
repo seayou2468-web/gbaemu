@@ -11,6 +11,11 @@ uint8_t ClampToByteLocal(int value) {
 }
 
 constexpr int kBackdropPriority = 4;
+constexpr uint8_t kLayerBg0 = 0;
+constexpr uint8_t kLayerBg1 = 1;
+constexpr uint8_t kLayerBg2 = 2;
+constexpr uint8_t kLayerBg3 = 3;
+constexpr uint8_t kLayerBackdrop = 4;
 
 std::vector<uint8_t>& BgPriorityBuffer() {
   static std::vector<uint8_t> buffer;
@@ -33,6 +38,21 @@ std::vector<uint8_t>& ObjWindowMaskBuffer() {
 std::vector<uint8_t>& ObjDrawnMaskBuffer() {
   static std::vector<uint8_t> buffer;
   return buffer;
+}
+
+std::vector<uint8_t>& BgLayerBuffer() {
+  static std::vector<uint8_t> buffer;
+  return buffer;
+}
+
+void EnsureBgLayerBufferSize() {
+  auto& buffer = BgLayerBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, kLayerBackdrop);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), kLayerBackdrop);
+  }
 }
 
 void EnsureObjDrawnMaskBufferSize() {
@@ -137,6 +157,8 @@ bool IsObjVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
 void GBACore::RenderMode3Frame() {
   // Mode 3: 240x160 direct color (BGR555) in VRAM.
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -176,6 +198,7 @@ void GBACore::RenderMode3Frame() {
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const int64_t tex_x_fp =
@@ -187,24 +210,29 @@ void GBACore::RenderMode3Frame() {
       if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const size_t off = static_cast<size_t>((sy * kScreenWidth + sx) * 2);
       if (off + 1 >= vram_.size()) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
                               static_cast<uint16_t>(vram_[off + 1] << 8);
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
       bg_priority[fb_off] = bg2_priority;
+      bg_layer[fb_off] = kLayerBg2;
     }
   }
 }
 
 void GBACore::RenderMode4Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   EnsureObjDrawnMaskBufferSize();
   auto& obj_drawn = ObjDrawnMaskBuffer();
@@ -258,6 +286,7 @@ void GBACore::RenderMode4Frame() {
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const int64_t tex_x_fp =
@@ -269,18 +298,22 @@ void GBACore::RenderMode4Frame() {
       if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const size_t off = page_base + static_cast<size_t>(sy * kScreenWidth + sx);
       const uint8_t index = (off < vram_.size()) ? vram_[off] : 0;
       frame_buffer_[fb_off] = palette_color(index);
       bg_priority[fb_off] = bg2_priority;
+      bg_layer[fb_off] = kLayerBg2;
     }
   }
 }
 
 void GBACore::RenderMode5Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -336,6 +369,7 @@ void GBACore::RenderMode5Frame() {
                               static_cast<uint16_t>(vram_[off + 1] << 8);
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
       bg_priority[fb_off] = bg2_priority;
+      bg_layer[fb_off] = kLayerBg2;
     }
   }
 }
@@ -495,6 +529,7 @@ void GBACore::RenderSprites() {
   auto& bg_priority = BgPriorityBuffer();
   EnsureObjDrawnMaskBufferSize();
   auto& obj_drawn = ObjDrawnMaskBuffer();
+  auto& bg_layer = BgLayerBuffer();
 
   static constexpr int kObjDim[3][4][2] = {
       {{8, 8}, {16, 16}, {32, 32}, {64, 64}},     // square
@@ -654,7 +689,9 @@ void GBACore::RenderSprites() {
           } else if (bg_priority[fb_off] == kBackdropPriority) {
             second_target_ok = (bldcnt & (1u << (8 + 5))) != 0;  // BD as 2nd target
           } else {
-            second_target_ok = (bldcnt & 0x0F00u) != 0;  // any BG as 2nd target
+            const uint8_t layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
+            const uint16_t layer_mask = static_cast<uint16_t>(1u << (8u + std::min<uint8_t>(layer, 5u)));
+            second_target_ok = (bldcnt & layer_mask) != 0;
           }
           if (!(effects_enabled && obj_is_1st_target && any_2nd_target && second_target_ok)) {
             frame_buffer_[fb_off] = obj_px;
@@ -687,6 +724,8 @@ void GBACore::RenderSprites() {
 
 void GBACore::RenderMode0Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -774,6 +813,7 @@ void GBACore::RenderMode0Frame() {
       uint16_t best_idx = 0;
       int best_prio = 4;
       bool have_bg = false;
+      uint8_t best_bg_layer = kLayerBackdrop;
       for (int bg = 0; bg < 4; ++bg) {
         if ((dispcnt & (1u << (8 + bg))) == 0) continue;
         if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) {
@@ -789,17 +829,21 @@ void GBACore::RenderMode0Frame() {
           best_prio = prio;
           best_idx = idx;
           have_bg = true;
+          best_bg_layer = static_cast<uint8_t>(bg);
         }
       }
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
       bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
+      bg_layer[static_cast<size_t>(y) * kScreenWidth + x] = have_bg ? best_bg_layer : kLayerBackdrop;
     }
   }
 }
 
 void GBACore::RenderMode1Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -943,6 +987,7 @@ void GBACore::RenderMode1Frame() {
       uint16_t best_idx = 0;
       int best_prio = 4;
       bool have_bg = false;
+      uint8_t best_bg_layer = kLayerBackdrop;
 
       if ((dispcnt & (1u << 8)) != 0 &&
           IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 0, x, y)) {
@@ -954,6 +999,7 @@ void GBACore::RenderMode1Frame() {
           best_idx = idx;
           best_prio = prio;
           have_bg = true;
+          best_bg_layer = kLayerBg0;
         }
       }
       if ((dispcnt & (1u << 9)) != 0 &&
@@ -967,6 +1013,7 @@ void GBACore::RenderMode1Frame() {
             best_idx = idx;
             best_prio = prio;
             have_bg = true;
+            best_bg_layer = kLayerBg1;
           }
         }
       }
@@ -981,18 +1028,22 @@ void GBACore::RenderMode1Frame() {
             best_idx = idx;
             best_prio = prio;
             have_bg = true;
+            best_bg_layer = kLayerBg2;
           }
         }
       }
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
       bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
+      bg_layer[static_cast<size_t>(y) * kScreenWidth + x] = have_bg ? best_bg_layer : kLayerBackdrop;
     }
   }
 }
 
 void GBACore::RenderMode2Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -1081,6 +1132,7 @@ void GBACore::RenderMode2Frame() {
       uint16_t best_idx = 0;
       int best_prio = 4;
       bool have_bg = false;
+      uint8_t best_bg_layer = kLayerBackdrop;
 
       if ((dispcnt & (1u << 10)) != 0 &&
           IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
@@ -1092,6 +1144,7 @@ void GBACore::RenderMode2Frame() {
           best_idx = idx;
           best_prio = prio;
           have_bg = true;
+          best_bg_layer = kLayerBg2;
         }
       }
       if ((dispcnt & (1u << 11)) != 0 &&
@@ -1105,6 +1158,7 @@ void GBACore::RenderMode2Frame() {
             best_idx = idx;
             best_prio = prio;
             have_bg = true;
+            best_bg_layer = kLayerBg3;
           }
         }
       }
@@ -1112,6 +1166,7 @@ void GBACore::RenderMode2Frame() {
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
       bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
+      bg_layer[static_cast<size_t>(y) * kScreenWidth + x] = have_bg ? best_bg_layer : kLayerBackdrop;
     }
   }
 }
