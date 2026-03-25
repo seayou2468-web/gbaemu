@@ -96,6 +96,7 @@ class GBACore {
   void RenderDebugFrame();
   void RenderMode0Frame();
   void RenderMode1Frame();
+  void RenderMode2Frame();
   void RenderMode3Frame();
   void RenderMode4Frame();
   void RenderMode5Frame();
