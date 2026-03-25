@@ -63,8 +63,15 @@ void GBACore::RenderMode5Frame() {
   const size_t page_base = page1 ? 0xA000u : 0u;
   constexpr int kMode5Width = 160;
   constexpr int kMode5Height = 128;
+  const uint16_t backdrop_bgr = static_cast<uint16_t>(palette_ram_[0]) |
+                                static_cast<uint16_t>(palette_ram_[1] << 8);
+  const uint8_t bg_r = static_cast<uint8_t>(((backdrop_bgr >> 0) & 0x1Fu) * 255u / 31u);
+  const uint8_t bg_g = static_cast<uint8_t>(((backdrop_bgr >> 5) & 0x1Fu) * 255u / 31u);
+  const uint8_t bg_b = static_cast<uint8_t>(((backdrop_bgr >> 10) & 0x1Fu) * 255u / 31u);
+  const uint32_t backdrop = 0xFF000000u | (static_cast<uint32_t>(bg_r) << 16) |
+                            (static_cast<uint32_t>(bg_g) << 8) | bg_b;
 
-  std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFF000000u);
+  std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
 
   for (int y = 0; y < kMode5Height; ++y) {
     for (int x = 0; x < kMode5Width; ++x) {
@@ -980,9 +987,14 @@ void GBACore::RenderDebugFrame() {
     ApplyColorEffects();
     return;
   }
-  // Unimplemented BG modes should remain deterministic and faithful.
-  // Return a blank frame instead of synthetic debug patterns.
-  std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFF000000U);
+  const uint16_t backdrop_bgr = static_cast<uint16_t>(palette_ram_[0]) |
+                                static_cast<uint16_t>(palette_ram_[1] << 8);
+  const uint8_t bg_r = static_cast<uint8_t>(((backdrop_bgr >> 0) & 0x1Fu) * 255u / 31u);
+  const uint8_t bg_g = static_cast<uint8_t>(((backdrop_bgr >> 5) & 0x1Fu) * 255u / 31u);
+  const uint8_t bg_b = static_cast<uint8_t>(((backdrop_bgr >> 10) & 0x1Fu) * 255u / 31u);
+  const uint32_t backdrop = 0xFF000000u | (static_cast<uint32_t>(bg_r) << 16) |
+                            (static_cast<uint32_t>(bg_g) << 8) | bg_b;
+  std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
 }
 
 uint64_t GBACore::ComputeFrameHash() const {
