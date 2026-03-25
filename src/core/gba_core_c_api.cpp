@@ -1,6 +1,7 @@
 #include "gba_core_c_api.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <vector>
 
