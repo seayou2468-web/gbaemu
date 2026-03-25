@@ -110,7 +110,8 @@
     }
 
     NSMutableData *data = [NSMutableData dataWithLength:pixels * sizeof(uint32_t)];
-    if (!GBA_CopyFrameBufferRGBA(_handle, data.mutableBytes, pixels)) {
+    uint32_t *pixelBuffer = static_cast<uint32_t *>(data.mutableBytes);
+    if (!GBA_CopyFrameBufferRGBA(_handle, pixelBuffer, pixels)) {
         return nil;
     }
     return data;
