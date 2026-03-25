@@ -164,6 +164,9 @@ void GBACore::Reset() {
   apu_len_ch2_ = 0;
   apu_len_ch3_ = 0;
   apu_len_ch4_ = 0;
+  apu_ch1_sweep_freq_ = 0;
+  apu_ch1_sweep_timer_ = 0;
+  apu_ch1_sweep_enabled_ = false;
   apu_ch1_active_ = false;
   apu_ch2_active_ = false;
   apu_ch3_active_ = false;
@@ -354,6 +357,9 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   apu_env_timer_ch1_ = apu_env_timer_ch2_ = apu_env_timer_ch4_ = 0;
   apu_len_ch1_ = apu_len_ch2_ = apu_len_ch4_ = 0;
   apu_len_ch3_ = 0;
+  apu_ch1_sweep_freq_ = 0;
+  apu_ch1_sweep_timer_ = 0;
+  apu_ch1_sweep_enabled_ = false;
   apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
   if (version >= 6u) {
     if (!read_u32(&off, &bios_latch_)) return false;

@@ -201,6 +201,9 @@ class GBACore {
   uint8_t apu_len_ch2_ = 0;
   uint16_t apu_len_ch3_ = 0;
   uint8_t apu_len_ch4_ = 0;
+  uint16_t apu_ch1_sweep_freq_ = 0;
+  uint8_t apu_ch1_sweep_timer_ = 0;
+  bool apu_ch1_sweep_enabled_ = false;
   bool apu_ch1_active_ = false;
   bool apu_ch2_active_ = false;
   bool apu_ch3_active_ = false;

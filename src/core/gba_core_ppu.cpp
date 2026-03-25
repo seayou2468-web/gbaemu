@@ -363,6 +363,7 @@ void GBACore::BuildObjWindowMask() {
     if (x >= 240) x -= 512;
 
     const bool color_256 = (attr0 & (1u << 13)) != 0;
+    const bool mosaic = (attr0 & (1u << 12)) != 0;
     const bool hflip = (attr1 & (1u << 12)) != 0;
     const bool vflip = (attr1 & (1u << 13)) != 0;
     const uint16_t tile_id = attr2 & 0x03FFu;
@@ -515,6 +516,7 @@ void GBACore::RenderSprites() {
     if (x >= 240) x -= 512;
 
     const bool color_256 = (attr0 & (1u << 13)) != 0;
+    const bool mosaic = (attr0 & (1u << 12)) != 0;
     const bool hflip = (attr1 & (1u << 12)) != 0;
     const bool vflip = (attr1 & (1u << 13)) != 0;
     const uint8_t obj_priority = static_cast<uint8_t>((attr2 >> 10) & 0x3u);
@@ -555,11 +557,20 @@ void GBACore::RenderSprites() {
 
         int tx = 0;
         int ty = 0;
+        int sample_px = px;
+        int sample_py = py;
+        if (mosaic) {
+          const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
+          const int mos_h = static_cast<int>(((mosaic_reg >> 8) & 0xFu) + 1);
+          const int mos_v = static_cast<int>(((mosaic_reg >> 12) & 0xFu) + 1);
+          sample_px = (px / mos_h) * mos_h;
+          sample_py = (py / mos_v) * mos_v;
+        }
         if (affine) {
           const int cx = draw_w / 2;
           const int cy = draw_h / 2;
-          const int dx = px - cx;
-          const int dy = py - cy;
+          const int dx = sample_px - cx;
+          const int dy = sample_py - cy;
           const int src_cx = src_w / 2;
           const int src_cy = src_h / 2;
           tx = src_cx + static_cast<int>((static_cast<int32_t>(pa) * dx +
@@ -570,8 +581,8 @@ void GBACore::RenderSprites() {
                                          8);
           if (tx < 0 || ty < 0 || tx >= src_w || ty >= src_h) continue;
         } else {
-          tx = hflip ? (src_w - 1 - px) : px;
-          ty = vflip ? (src_h - 1 - py) : py;
+          tx = hflip ? (src_w - 1 - sample_px) : sample_px;
+          ty = vflip ? (src_h - 1 - sample_py) : sample_py;
         }
 
         uint16_t color_index = 0;
@@ -1274,6 +1285,11 @@ void GBACore::StepApu(uint32_t cycles) {
     apu_len_ch1_ = static_cast<uint8_t>(64u - (Read8(0x04000062u) & 0x3Fu));
     apu_env_ch1_ = static_cast<uint8_t>((Read8(0x04000063u) >> 4) & 0xFu);
     apu_env_timer_ch1_ = static_cast<uint8_t>(Read8(0x04000063u) & 0x7u);
+    apu_ch1_sweep_freq_ = static_cast<uint16_t>((Read8(0x04000064u)) |
+                                                ((Read8(0x04000065u) & 0x7u) << 8));
+    const uint8_t nr10 = Read8(0x04000060u);
+    apu_ch1_sweep_timer_ = static_cast<uint8_t>((nr10 >> 4) & 0x7u);
+    apu_ch1_sweep_enabled_ = (nr10 & 0x7u) != 0 || apu_ch1_sweep_timer_ != 0;
   }
   if (consume_trigger(0x0400006Du)) {
     apu_ch2_active_ = true;
@@ -1298,6 +1314,7 @@ void GBACore::StepApu(uint32_t cycles) {
     apu_frame_seq_cycles_ -= 32768u;
     apu_frame_seq_step_ = static_cast<uint8_t>((apu_frame_seq_step_ + 1u) & 7u);
     const bool length_tick = (apu_frame_seq_step_ % 2u) == 0u;
+    const bool sweep_tick = (apu_frame_seq_step_ == 2u || apu_frame_seq_step_ == 6u);
     const bool envelope_tick = apu_frame_seq_step_ == 7u;
 
     if (length_tick) {
@@ -1323,6 +1340,33 @@ void GBACore::StepApu(uint32_t cycles) {
       if (apu_ch1_active_) step_env(&apu_env_ch1_, &apu_env_timer_ch1_, Read8(0x04000063u));
       if (apu_ch2_active_) step_env(&apu_env_ch2_, &apu_env_timer_ch2_, Read8(0x04000069u));
       if (apu_ch4_active_) step_env(&apu_env_ch4_, &apu_env_timer_ch4_, Read8(0x04000077u));
+    }
+    if (sweep_tick && apu_ch1_active_ && apu_ch1_sweep_enabled_) {
+      const uint8_t nr10 = Read8(0x04000060u);
+      uint8_t sweep_period = static_cast<uint8_t>((nr10 >> 4) & 0x7u);
+      if (sweep_period == 0) sweep_period = 8;
+      if (apu_ch1_sweep_timer_ == 0) apu_ch1_sweep_timer_ = sweep_period;
+      if (--apu_ch1_sweep_timer_ == 0) {
+        apu_ch1_sweep_timer_ = sweep_period;
+        const uint8_t shift = nr10 & 0x7u;
+        if (shift != 0u) {
+          const uint16_t delta = static_cast<uint16_t>(apu_ch1_sweep_freq_ >> shift);
+          uint16_t next = apu_ch1_sweep_freq_;
+          if (nr10 & 0x8u) {
+            next = static_cast<uint16_t>(apu_ch1_sweep_freq_ - delta);
+          } else {
+            next = static_cast<uint16_t>(apu_ch1_sweep_freq_ + delta);
+          }
+          if (next > 2047u) {
+            apu_ch1_active_ = false;
+          } else {
+            apu_ch1_sweep_freq_ = next;
+            Write8(0x04000064u, static_cast<uint8_t>(next & 0xFFu));
+            const uint8_t nr14_hi = Read8(0x04000065u);
+            Write8(0x04000065u, static_cast<uint8_t>((nr14_hi & ~0x7u) | ((next >> 8) & 0x7u)));
+          }
+        }
+      }
     }
   }
 
