@@ -278,6 +278,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
       iwram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
       iwram_[off + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
       iwram_[off + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+      return;
     }
   }
   if (addr >= 0x04000000u) {
@@ -318,19 +319,21 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
       oam_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
       oam_[off + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
       oam_[off + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+      return;
     }
-  }
-  if (addr >= 0x0E000000u) {
-    WriteBackup8(addr, static_cast<uint8_t>(value & 0xFFu));
-    WriteBackup8(addr + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
-    WriteBackup8(addr + 2, static_cast<uint8_t>((value >> 16) & 0xFFu));
-    WriteBackup8(addr + 3, static_cast<uint8_t>((value >> 24) & 0xFFu));
   }
   if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u && addr <= 0x0DFFFFFFu) {
     WriteBackup8(addr, static_cast<uint8_t>(value & 0x1u));
     WriteBackup8(addr + 1u, static_cast<uint8_t>((value >> 8) & 0x1u));
     WriteBackup8(addr + 2u, static_cast<uint8_t>((value >> 16) & 0x1u));
     WriteBackup8(addr + 3u, static_cast<uint8_t>((value >> 24) & 0x1u));
+    return;
+  }
+  if (addr >= 0x0E000000u) {
+    WriteBackup8(addr, static_cast<uint8_t>(value & 0xFFu));
+    WriteBackup8(addr + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
+    WriteBackup8(addr + 2, static_cast<uint8_t>((value >> 16) & 0xFFu));
+    WriteBackup8(addr + 3, static_cast<uint8_t>((value >> 24) & 0xFFu));
     return;
   }
 }
@@ -351,6 +354,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
       const size_t off = static_cast<size_t>(off32);
       iwram_[off] = static_cast<uint8_t>(value & 0xFF);
       iwram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+      return;
     }
   }
   if (addr >= 0x04000000u) {
@@ -384,6 +388,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
       const size_t off = static_cast<size_t>(off32);
       oam_[off] = static_cast<uint8_t>(value & 0xFF);
       oam_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+      return;
     }
   }
   if (addr >= 0x0E000000u) {
@@ -410,6 +415,7 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
     if (off32 < iwram_.size()) {
       iwram_[static_cast<size_t>(off32)] = value;
+      return;
     }
   }
   if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
