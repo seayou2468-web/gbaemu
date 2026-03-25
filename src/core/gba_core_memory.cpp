@@ -5,6 +5,12 @@ namespace {
 inline uint32_t MirrorOffset(uint32_t addr, uint32_t base, uint32_t mask) {
   return (addr - base) & mask;
 }
+
+inline uint32_t VramOffset(uint32_t addr) {
+  uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x1FFFFu);
+  if (off32 >= 0x18000u) off32 -= 0x8000u;
+  return off32;
+}
 }  // namespace
 
 uint32_t GBACore::Read32(uint32_t addr) const {
@@ -67,7 +73,7 @@ uint32_t GBACore::Read32(uint32_t addr) const {
   }
   // 0x06000000-0x06017FFF: VRAM
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x17FFFu);
+    const uint32_t off32 = VramOffset(addr);
     if (off32 <= vram_.size() - 4) {
       const size_t off = static_cast<size_t>(off32);
       return static_cast<uint32_t>(vram_[off]) |
@@ -176,7 +182,7 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     }
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x17FFFu);
+    const uint32_t off32 = VramOffset(addr);
     if (off32 <= vram_.size() - 2) {
       const size_t off = static_cast<size_t>(off32);
       return static_cast<uint16_t>(vram_[off]) |
@@ -241,7 +247,7 @@ uint8_t GBACore::Read8(uint32_t addr) const {
     if (off32 < palette_ram_.size()) return palette_ram_[static_cast<size_t>(off32)];
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x17FFFu);
+    const uint32_t off32 = VramOffset(addr);
     if (off32 < vram_.size()) return vram_[static_cast<size_t>(off32)];
   }
   if (addr >= 0x07000000u && addr <= 0x07FFFFFFu) {
@@ -301,7 +307,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
     }
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x17FFFu);
+    const uint32_t off32 = VramOffset(addr);
     if (off32 <= vram_.size() - 4) {
       const size_t off = static_cast<size_t>(off32);
       vram_[off] = static_cast<uint8_t>(value & 0xFF);
@@ -374,7 +380,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
     }
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x17FFFu);
+    const uint32_t off32 = VramOffset(addr);
     if (off32 <= vram_.size() - 2) {
       const size_t off = static_cast<size_t>(off32);
       vram_[off] = static_cast<uint8_t>(value & 0xFF);
@@ -428,7 +434,7 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     }
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr & ~1u, 0x06000000u, 0x17FFFu);
+    const uint32_t off32 = VramOffset(addr & ~1u);
     if (off32 + 1u < vram_.size()) {
       const size_t off = static_cast<size_t>(off32);
       vram_[off] = value;

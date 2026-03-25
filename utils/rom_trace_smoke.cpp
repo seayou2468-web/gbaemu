@@ -1,8 +1,10 @@
 #include "src/core/gba_core.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -23,13 +25,17 @@ size_t CountVramNonZero(const gba::GBACore& core) {
 }  // namespace
 
 int main() {
-  const std::vector<std::string> roms = {
-      "utils/testroms/test8.gba",  "utils/testroms/test9.gba",
-      "utils/testroms/test10.gba", "utils/testroms/test11.gba",
-      "utils/testroms/test12.gba", "utils/testroms/test13.gba",
-      "utils/testroms/test14.gba", "utils/testroms/test15.gba",
-      "utils/testroms/test16.gba", "utils/testroms/test17.gba",
-  };
+  std::vector<std::string> roms;
+  for (const auto& entry : std::filesystem::directory_iterator("utils/testroms")) {
+    if (!entry.is_regular_file()) continue;
+    if (entry.path().extension() != ".gba") continue;
+    roms.push_back(entry.path().string());
+  }
+  std::sort(roms.begin(), roms.end());
+  if (roms.empty()) {
+    std::printf("utils/testroms: load_error=no_roms\n");
+    return 1;
+  }
 
   for (const auto& path : roms) {
     const std::vector<uint8_t> rom = LoadFile(path);
@@ -46,13 +52,19 @@ int main() {
       continue;
     }
 
-    for (int i = 0; i < 12; ++i) core.StepFrame();
+    for (int i = 0; i < 60; ++i) core.StepFrame();
+    core.DebugWrite16(0x06000000u, 0x1357u);
+    core.DebugWrite16(0x06018000u, 0x2468u);
+    const uint16_t vram_0000 = core.DebugRead16(0x06000000u);
+    const uint16_t vram_10000 = core.DebugRead16(0x06010000u);
+    const uint16_t vram_18000 = core.DebugRead16(0x06018000u);
+    const bool vram_mirror_ok = (vram_0000 == 0x1357u) && (vram_10000 == 0x2468u) && (vram_18000 == 0x2468u);
     const uint16_t dispcnt = core.DebugRead16(0x04000000u);
     const size_t vram_nonzero = CountVramNonZero(core);
     const auto hash = static_cast<unsigned long long>(core.ComputeFrameHash());
-    std::printf("%s: pc=%08X cpsr=%08X mode=%u dispcnt=%04X vram_nonzero=%zu hash=%llu warning=%s\n",
+    std::printf("%s: pc=%08X cpsr=%08X mode=%u dispcnt=%04X vram_nonzero=%zu hash=%llu vram_mirror=%s warning=%s\n",
                 path.c_str(), core.DebugGetPC(), core.DebugGetCPSR(), dispcnt & 0x7u, dispcnt,
-                vram_nonzero, hash, warning.c_str());
+                vram_nonzero, hash, vram_mirror_ok ? "ok" : "ng", warning.c_str());
   }
 
   return 0;

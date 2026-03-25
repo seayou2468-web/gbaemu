@@ -87,6 +87,9 @@ class GBACore {
   uint32_t DebugGetPC() const { return cpu_.regs[15]; }
   uint32_t DebugGetCPSR() const { return cpu_.cpsr; }
   uint32_t DebugGetReg(size_t index) const { return cpu_.regs[index & 0xFu]; }
+  uint32_t DebugGetLastExceptionVector() const { return debug_last_exception_vector_; }
+  uint32_t DebugGetLastExceptionPc() const { return debug_last_exception_pc_; }
+  uint32_t DebugGetLastExceptionCpsr() const { return debug_last_exception_cpsr_; }
 
  private:
   static constexpr uint32_t kCyclesPerFrame = 280896;
@@ -227,6 +230,8 @@ class GBACore {
     uint32_t prescaler_accum = 0;
   };
   std::array<TimerState, 4> timers_{};
+  bool dma_was_in_vblank_ = false;
+  bool dma_was_in_hblank_ = false;
 
   CpuState cpu_{};
   GameplayState gameplay_state_{};
@@ -241,6 +246,11 @@ class GBACore {
   bool flash_id_mode_ = false;
   bool flash_program_mode_ = false;
   bool flash_bank_switch_mode_ = false;
+  bool swi_intrwait_active_ = false;
+  uint16_t swi_intrwait_mask_ = 0;
+  uint32_t debug_last_exception_vector_ = 0;
+  uint32_t debug_last_exception_pc_ = 0;
+  uint32_t debug_last_exception_cpsr_ = 0;
   uint8_t flash_bank_ = 0;
   std::array<uint8_t, 64 * 1024> flash_bank1_{};
   mutable std::vector<uint8_t> eeprom_cmd_bits_{};

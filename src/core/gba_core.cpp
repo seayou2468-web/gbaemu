@@ -150,6 +150,8 @@ void GBACore::Reset() {
   std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
   ResetBackupControllerState();
   timers_ = {};
+  dma_was_in_vblank_ = false;
+  dma_was_in_hblank_ = false;
   ppu_cycle_accum_ = 0;
   audio_mix_level_ = 0;
   fifo_a_.clear();
@@ -180,6 +182,8 @@ void GBACore::Reset() {
   apu_ch3_active_ = false;
   apu_ch4_active_ = false;
   apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
+  swi_intrwait_active_ = false;
+  swi_intrwait_mask_ = 0;
   bios_latch_ = 0;
   cpu_ = CpuState{};
   cpu_.active_mode = cpu_.cpsr & 0x1Fu;
@@ -617,6 +621,9 @@ void GBACore::ResetBackupControllerState() {
   flash_id_mode_ = false;
   flash_program_mode_ = false;
   flash_bank_switch_mode_ = false;
+  debug_last_exception_vector_ = 0;
+  debug_last_exception_pc_ = 0;
+  debug_last_exception_cpsr_ = 0;
   flash_bank_ = 0;
   eeprom_cmd_bits_.clear();
   eeprom_read_bits_.clear();
@@ -842,11 +849,17 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
 void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   executed_cycles_ += cycles;
-  RunCpuSlice(cycles);
-  StepTimers(cycles);
-  StepDma();
-  StepApu(cycles);
-  StepPpu(cycles);
+  uint32_t remaining = cycles;
+  constexpr uint32_t kSchedulerSliceCycles = 64;
+  while (remaining > 0) {
+    const uint32_t slice = std::min<uint32_t>(remaining, kSchedulerSliceCycles);
+    RunCpuSlice(slice);
+    StepTimers(slice);
+    StepApu(slice);
+    StepPpu(slice);
+    StepDma();
+    remaining -= slice;
+  }
 }
 
 void GBACore::SetKeys(uint16_t keys_pressed_mask) {

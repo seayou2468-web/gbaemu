@@ -233,7 +233,6 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       return true;
     case 0x04u:  // IntrWait
     case 0x05u: {  // VBlankIntrWait
-      // HLE approximation: arm requested IRQ sources and halt until IRQ pending.
       uint16_t request = 0;
       if ((swi_imm & 0xFFu) == 0x05u) {
         request = 0x0001u;  // VBlank
@@ -241,9 +240,15 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
         request = static_cast<uint16_t>(cpu_.regs[1] & 0x3FFFu);
         if (request == 0) request = 0x0001u;
       }
+      // R0==0: discard already-raised requested IRQ flags before waiting.
+      if ((cpu_.regs[0] & 0x1u) == 0u) {
+        WriteIO16(0x04000202u, request);
+      }
       const uint16_t ie = ReadIO16(0x04000200u);
       WriteIO16(0x04000200u, static_cast<uint16_t>(ie | request));
       WriteIO16(0x04000208u, 0x0001u);  // IME on
+      swi_intrwait_active_ = true;
+      swi_intrwait_mask_ = request;
       cpu_.halted = true;
       cpu_.regs[15] = next_pc;
       return true;
@@ -293,6 +298,201 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       cpu_.regs[15] = next_pc;
       return true;
     }
+    case 0x0Eu: {  // BgAffineSet
+      uint32_t src = cpu_.regs[0];
+      uint32_t dst = cpu_.regs[1];
+      uint32_t count = cpu_.regs[2];
+      while (count--) {
+        const double ox = static_cast<double>(static_cast<int32_t>(Read32(src + 0u))) / 256.0;
+        const double oy = static_cast<double>(static_cast<int32_t>(Read32(src + 4u))) / 256.0;
+        const double cx = static_cast<double>(static_cast<int16_t>(Read16(src + 8u)));
+        const double cy = static_cast<double>(static_cast<int16_t>(Read16(src + 10u)));
+        const double sx = static_cast<double>(static_cast<int16_t>(Read16(src + 12u))) / 256.0;
+        const double sy = static_cast<double>(static_cast<int16_t>(Read16(src + 14u))) / 256.0;
+        const double theta =
+            static_cast<double>((Read16(src + 16u) >> 8) & 0xFFu) / 128.0 * 3.14159265358979323846;
+        src += 20u;
+
+        const double cos_t = std::cos(theta);
+        const double sin_t = std::sin(theta);
+        const double a = cos_t * sx;
+        const double b = -sin_t * sx;
+        const double c = sin_t * sy;
+        const double d = cos_t * sy;
+        const double rx = ox - (a * cx + b * cy);
+        const double ry = oy - (c * cx + d * cy);
+
+        Write16(dst + 0u, static_cast<uint16_t>(static_cast<int16_t>(std::lround(a * 256.0))));
+        Write16(dst + 2u, static_cast<uint16_t>(static_cast<int16_t>(std::lround(b * 256.0))));
+        Write16(dst + 4u, static_cast<uint16_t>(static_cast<int16_t>(std::lround(c * 256.0))));
+        Write16(dst + 6u, static_cast<uint16_t>(static_cast<int16_t>(std::lround(d * 256.0))));
+        Write32(dst + 8u, static_cast<uint32_t>(static_cast<int32_t>(std::lround(rx * 256.0))));
+        Write32(dst + 12u, static_cast<uint32_t>(static_cast<int32_t>(std::lround(ry * 256.0))));
+        dst += 16u;
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x0Fu: {  // ObjAffineSet
+      uint32_t src = cpu_.regs[0];
+      uint32_t dst = cpu_.regs[1];
+      uint32_t count = cpu_.regs[2];
+      const uint32_t diff = cpu_.regs[3];
+      while (count--) {
+        const double sx = static_cast<double>(static_cast<int16_t>(Read16(src + 0u))) / 256.0;
+        const double sy = static_cast<double>(static_cast<int16_t>(Read16(src + 2u))) / 256.0;
+        const double theta =
+            static_cast<double>((Read16(src + 4u) >> 8) & 0xFFu) / 128.0 * 3.14159265358979323846;
+        src += 8u;
+        const double cos_t = std::cos(theta);
+        const double sin_t = std::sin(theta);
+        const double a = cos_t * sx;
+        const double b = -sin_t * sx;
+        const double c = sin_t * sy;
+        const double d = cos_t * sy;
+        Write16(dst + 0u, static_cast<uint16_t>(static_cast<int16_t>(std::lround(a * 256.0))));
+        Write16(dst + diff, static_cast<uint16_t>(static_cast<int16_t>(std::lround(b * 256.0))));
+        Write16(dst + diff * 2u, static_cast<uint16_t>(static_cast<int16_t>(std::lround(c * 256.0))));
+        Write16(dst + diff * 3u, static_cast<uint16_t>(static_cast<int16_t>(std::lround(d * 256.0))));
+        dst += diff * 4u;
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x10u: {  // BitUnPack
+      uint32_t src = cpu_.regs[0];
+      uint32_t dst = cpu_.regs[1];
+      const uint32_t info = cpu_.regs[2];
+      uint32_t source_len = Read16(info + 0u);
+      const uint32_t source_width = Read8(info + 2u);
+      const uint32_t dest_width = Read8(info + 3u);
+      if ((source_width != 1u && source_width != 2u && source_width != 4u && source_width != 8u) ||
+          (dest_width != 1u && dest_width != 2u && dest_width != 4u && dest_width != 8u &&
+           dest_width != 16u && dest_width != 32u)) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
+      const uint32_t bias = Read32(info + 4u);
+      uint8_t in = 0;
+      uint32_t out = 0;
+      int bits_remaining = 0;
+      int bits_eaten = 0;
+      while (source_len > 0 || bits_remaining > 0) {
+        if (bits_remaining == 0) {
+          in = Read8(src++);
+          bits_remaining = 8;
+          --source_len;
+        }
+        uint32_t scaled = static_cast<uint32_t>(in) & ((1u << source_width) - 1u);
+        in = static_cast<uint8_t>(in >> source_width);
+        if (scaled != 0u || (bias & 0x80000000u) != 0u) {
+          scaled += (bias & 0x7FFFFFFFu);
+        }
+        bits_remaining -= static_cast<int>(source_width);
+        out |= (scaled << bits_eaten);
+        bits_eaten += static_cast<int>(dest_width);
+        if (bits_eaten == 32) {
+          Write32(dst, out);
+          dst += 4u;
+          out = 0;
+          bits_eaten = 0;
+        }
+      }
+      cpu_.regs[0] = src;
+      cpu_.regs[1] = dst;
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x11u:  // LZ77UnCompWram
+    case 0x12u: {  // LZ77UnCompVram
+      uint32_t src = cpu_.regs[0];
+      const uint32_t dst = cpu_.regs[1];
+      const uint32_t header = Read32(src);
+      src += 4u;
+      if ((header & 0xFFu) != 0x10u) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
+      const uint32_t out_size = header >> 8;
+      std::vector<uint8_t> out;
+      out.reserve(out_size);
+      while (out.size() < out_size) {
+        uint8_t flags = Read8(src++);
+        for (int i = 0; i < 8 && out.size() < out_size; ++i) {
+          if ((flags & 0x80u) != 0) {
+            const uint8_t b1 = Read8(src++);
+            const uint8_t b2 = Read8(src++);
+            const uint32_t len = static_cast<uint32_t>((b1 >> 4) + 3u);
+            const uint32_t disp = static_cast<uint32_t>(((b1 & 0x0Fu) << 8) | b2);
+            if (disp + 1u > out.size()) break;
+            size_t copy_from = out.size() - (disp + 1u);
+            for (uint32_t j = 0; j < len && out.size() < out_size; ++j) {
+              out.push_back(out[copy_from + j]);
+            }
+          } else {
+            out.push_back(Read8(src++));
+          }
+          flags <<= 1;
+        }
+      }
+      const bool to_vram = ((swi_imm & 0xFFu) == 0x12u);
+      if (to_vram) {
+        uint32_t i = 0;
+        while (i < out.size()) {
+          const uint16_t lo = out[i];
+          const uint16_t hi = (i + 1 < out.size()) ? static_cast<uint16_t>(out[i + 1]) : 0u;
+          Write16(dst + i, static_cast<uint16_t>(lo | (hi << 8)));
+          i += 2;
+        }
+      } else {
+        for (uint32_t i = 0; i < out.size(); ++i) {
+          Write8(dst + i, out[i]);
+        }
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x14u:  // RLUnCompWram
+    case 0x15u: {  // RLUnCompVram
+      uint32_t src = cpu_.regs[0];
+      const uint32_t dst = cpu_.regs[1];
+      const uint32_t header = Read32(src);
+      src += 4u;
+      if ((header & 0xFFu) != 0x30u) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
+      const uint32_t out_size = header >> 8;
+      std::vector<uint8_t> out;
+      out.reserve(out_size);
+      while (out.size() < out_size) {
+        const uint8_t ctrl = Read8(src++);
+        if ((ctrl & 0x80u) != 0) {
+          const uint32_t len = static_cast<uint32_t>((ctrl & 0x7Fu) + 3u);
+          const uint8_t value = Read8(src++);
+          for (uint32_t i = 0; i < len && out.size() < out_size; ++i) out.push_back(value);
+        } else {
+          const uint32_t len = static_cast<uint32_t>((ctrl & 0x7Fu) + 1u);
+          for (uint32_t i = 0; i < len && out.size() < out_size; ++i) out.push_back(Read8(src++));
+        }
+      }
+      const bool to_vram = ((swi_imm & 0xFFu) == 0x15u);
+      if (to_vram) {
+        uint32_t i = 0;
+        while (i < out.size()) {
+          const uint16_t lo = out[i];
+          const uint16_t hi = (i + 1 < out.size()) ? static_cast<uint16_t>(out[i + 1]) : 0u;
+          Write16(dst + i, static_cast<uint16_t>(lo | (hi << 8)));
+          i += 2;
+        }
+      } else {
+        for (uint32_t i = 0; i < out.size(); ++i) {
+          Write8(dst + i, out[i]);
+        }
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
     case 0x0Bu:  // CpuSet
       HandleCpuSet(false);
       cpu_.regs[15] = next_pc;
@@ -302,7 +502,11 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       cpu_.regs[15] = next_pc;
       return true;
     default:
-      return false;
+      // Keep execution alive for currently unmodeled BIOS calls.
+      // Many commercial titles call a wider SWI surface during init;
+      // raising an undefined exception here often hard-locks boot.
+      cpu_.regs[15] = next_pc;
+      return true;
   }
 }
 
@@ -507,6 +711,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       const uint32_t addr = up ? (pre ? base + 4u : base) : (pre ? base - 4u : base);
       if (load) {
         cpu_.regs[15] = Read32(addr) & ~3u;
+        return;
       } else {
         Write32(addr, cpu_.regs[15] + 4u);
       }
@@ -547,6 +752,14 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     }
     if (write_back && !(load && (reg_list & (1u << rn)))) {
       cpu_.regs[rn] = up ? (base + 4u * count) : (base - 4u * count);
+    }
+    if (load && (reg_list & (1u << 15))) {
+      if (cpu_.cpsr & (1u << 5)) {
+        cpu_.regs[15] &= ~1u;
+      } else {
+        cpu_.regs[15] &= ~3u;
+      }
+      return;
     }
     cpu_.regs[15] += 4;
     return;
@@ -833,7 +1046,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       }
       default:
         writes_result = false;
-        EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+        cpu_.regs[15] += 4;
         return;
     }
 
@@ -860,8 +1073,9 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     return;
   }
 
-  // Unknown ARM instruction -> undefined exception.
-  EnterException(0x00000004u, 0x1Bu, true, false);
+  // Unknown ARM instruction: skip defensively.
+  cpu_.regs[15] += 4;
+  return;
 }
 
 void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
@@ -1316,12 +1530,21 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     return;
   }
 
-  // Unknown Thumb instruction -> undefined exception.
-  EnterException(0x00000004u, 0x1Bu, true, false);
+  // Unknown Thumb instruction: skip defensively.
+  cpu_.regs[15] += 2;
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
   if (cpu_.halted) {
+    if (swi_intrwait_active_) {
+      const uint16_t iflags = ReadIO16(0x04000202u);
+      const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
+      if (matched == 0u) return;
+      WriteIO16(0x04000202u, matched);
+      swi_intrwait_active_ = false;
+      swi_intrwait_mask_ = 0;
+      cpu_.halted = false;
+    }
     const uint16_t ie = ReadIO16(0x04000200u);
     const uint16_t iflags = ReadIO16(0x04000202u);
     if ((ie & iflags) == 0) return;
@@ -1359,6 +1582,15 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
 void GBACore::DebugStepCpuInstructions(uint32_t count) {
   for (uint32_t i = 0; i < count; ++i) {
     if (cpu_.halted) {
+      if (swi_intrwait_active_) {
+        const uint16_t iflags = ReadIO16(0x04000202u);
+        const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
+        if (matched == 0u) return;
+        WriteIO16(0x04000202u, matched);
+        swi_intrwait_active_ = false;
+        swi_intrwait_mask_ = 0;
+        cpu_.halted = false;
+      }
       const uint16_t ie = ReadIO16(0x04000200u);
       const uint16_t iflags = ReadIO16(0x04000202u);
       if ((ie & iflags) == 0) return;

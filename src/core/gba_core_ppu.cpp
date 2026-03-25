@@ -1279,6 +1279,10 @@ void GBACore::StepDma() {
   const uint16_t dispstat = ReadIO16(0x04000004u);
   const bool in_vblank = (dispstat & 0x0001u) != 0;
   const bool in_hblank = (dispstat & 0x0002u) != 0;
+  const bool vblank_rising = in_vblank && !dma_was_in_vblank_;
+  const bool hblank_rising = in_hblank && !dma_was_in_hblank_;
+  dma_was_in_vblank_ = in_vblank;
+  dma_was_in_hblank_ = in_hblank;
   for (int ch = 0; ch < 4; ++ch) {
     const uint32_t base = static_cast<uint32_t>(0x040000B0u + ch * 12u);
     const uint32_t src = Read32(base + 0u);
@@ -1288,10 +1292,10 @@ void GBACore::StepDma() {
     if ((cnt_h & 0x8000u) == 0) continue;
     const uint16_t start_timing = static_cast<uint16_t>((cnt_h >> 12) & 0x3u);
     bool fire_now = false;
-    if (start_timing == 0u) fire_now = true;                  // Immediate
-    if (start_timing == 1u && in_vblank) fire_now = true;     // VBlank
-    if (start_timing == 2u && in_hblank) fire_now = true;     // HBlank
-    if (start_timing == 3u && ch == 3) fire_now = true;       // Video capture/special fallback
+    if (start_timing == 0u) fire_now = true;                      // Immediate
+    if (start_timing == 1u && vblank_rising) fire_now = true;     // VBlank edge
+    if (start_timing == 2u && hblank_rising) fire_now = true;     // HBlank edge
+    if (start_timing == 3u) continue;                              // Special timing not modeled yet.
     if (!fire_now) continue;
 
     const bool word32 = (cnt_h & (1u << 10)) != 0;
@@ -1625,9 +1629,18 @@ void GBACore::RaiseInterrupt(uint16_t mask) {
 
 void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode, bool disable_irq, bool thumb_state) {
   const uint32_t old_cpsr = cpu_.cpsr;
+  debug_last_exception_vector_ = vector_addr;
+  debug_last_exception_pc_ = cpu_.regs[15];
+  debug_last_exception_cpsr_ = old_cpsr;
+  const bool old_thumb = (old_cpsr & (1u << 5)) != 0;
+  uint32_t lr_adjust = old_thumb ? 2u : 4u;
+  // IRQ/FIQ return uses SUBS PC,LR,#4; LR must be biased accordingly.
+  if (vector_addr == 0x00000018u || vector_addr == 0x0000001Cu) {
+    lr_adjust = 4u;
+  }
   SwitchCpuMode(new_mode & 0x1Fu);
   if (HasSpsr(GetCpuMode())) cpu_.spsr[GetCpuMode()] = old_cpsr;
-  cpu_.regs[14] = cpu_.regs[15] + ((old_cpsr & (1u << 5)) ? 2u : 4u);
+  cpu_.regs[14] = cpu_.regs[15] + lr_adjust;
   cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | (new_mode & 0x1Fu);
   cpu_.active_mode = new_mode & 0x1Fu;
   if (disable_irq) cpu_.cpsr |= (1u << 7);
@@ -1648,7 +1661,6 @@ void GBACore::ServiceInterruptIfNeeded() {
   const uint16_t iflags = ReadIO16(0x04000202u);
   const uint16_t pending = static_cast<uint16_t>(ie & iflags);
   if (pending == 0) return;
-  WriteIO16(0x04000202u, pending);
   EnterException(0x00000018u, 0x12u, true, false);  // IRQ mode
 }
 
