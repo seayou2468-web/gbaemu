@@ -184,7 +184,6 @@ void GBACore::RenderSprites() {
 }
 
 void GBACore::RenderMode0Frame() {
-  // Mode0 text BG renderer (BG0-BG3 compositing with priority).
   const uint16_t dispcnt = ReadIO16(0x04000000u);
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
@@ -199,14 +198,14 @@ void GBACore::RenderMode0Frame() {
            (static_cast<uint32_t>(g) << 8) | b;
   };
 
-  auto sample_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
+  auto sample_text_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
     *out_idx = 0;
     *out_opaque = false;
     const uint16_t bgcnt = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2));
     const uint32_t char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
     const uint32_t screen_base = ((bgcnt >> 8) & 0x1Fu) * 2u * 1024u;
     const bool color_256 = (bgcnt & (1u << 7)) != 0;
-    const uint32_t screen_size = (bgcnt >> 14) & 0x3u;  // 0..3
+    const uint32_t screen_size = (bgcnt >> 14) & 0x3u;
     const int map_w = (screen_size & 1u) ? 64 : 32;
     const int map_h = (screen_size & 2u) ? 64 : 32;
     const uint16_t hofs = ReadIO16(static_cast<uint32_t>(0x04000010u + bg * 4));
@@ -225,12 +224,13 @@ void GBACore::RenderMode0Frame() {
     const int local_y = tile_y & 31;
     int screenblock = 0;
     switch (screen_size) {
-      case 0: screenblock = 0; break;                           // 32x32
-      case 1: screenblock = sc_x; break;                        // 64x32
-      case 2: screenblock = sc_y; break;                        // 32x64
-      case 3: screenblock = sc_y * 2 + sc_x; break;             // 64x64
+      case 0: screenblock = 0; break;
+      case 1: screenblock = sc_x; break;
+      case 2: screenblock = sc_y; break;
+      case 3: screenblock = sc_y * 2 + sc_x; break;
       default: screenblock = 0; break;
     }
+
     const size_t se_off = static_cast<size_t>(screen_base + screenblock * 0x800u +
                                               (local_y * 32 + local_x) * 2u);
     if (se_off + 1 >= vram_.size()) return;
@@ -270,12 +270,192 @@ void GBACore::RenderMode0Frame() {
         const int prio = bgcnt & 0x3u;
         uint16_t idx = 0;
         bool opaque = false;
-        sample_bg(bg, x, y, &idx, &opaque);
+        sample_text_bg(bg, x, y, &idx, &opaque);
         if (!opaque) continue;
         if (!have_bg || prio < best_prio) {
           best_prio = prio;
           best_idx = idx;
           have_bg = true;
+        }
+      }
+      frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
+    }
+  }
+}
+
+void GBACore::RenderMode1Frame() {
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+
+  auto palette_color = [&](uint16_t idx) -> uint32_t {
+    const size_t off = static_cast<size_t>((idx & 0x1FFu) * 2u);
+    if (off + 1 >= palette_ram_.size()) return 0xFF000000u;
+    const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
+                         static_cast<uint16_t>(palette_ram_[off + 1] << 8);
+    const uint8_t r = static_cast<uint8_t>(((bgr >> 0) & 0x1Fu) * 255u / 31u);
+    const uint8_t g = static_cast<uint8_t>(((bgr >> 5) & 0x1Fu) * 255u / 31u);
+    const uint8_t b = static_cast<uint8_t>(((bgr >> 10) & 0x1Fu) * 255u / 31u);
+    return 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+           (static_cast<uint32_t>(g) << 8) | b;
+  };
+
+  auto sample_text_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
+    *out_idx = 0;
+    *out_opaque = false;
+    const uint16_t bgcnt = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2));
+    const uint32_t char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
+    const uint32_t screen_base = ((bgcnt >> 8) & 0x1Fu) * 2u * 1024u;
+    const bool color_256 = (bgcnt & (1u << 7)) != 0;
+    const uint32_t screen_size = (bgcnt >> 14) & 0x3u;
+    const int map_w = (screen_size & 1u) ? 64 : 32;
+    const int map_h = (screen_size & 2u) ? 64 : 32;
+    const uint16_t hofs = ReadIO16(static_cast<uint32_t>(0x04000010u + bg * 4));
+    const uint16_t vofs = ReadIO16(static_cast<uint32_t>(0x04000012u + bg * 4));
+
+    const int sx = (x + hofs) & (map_w * 8 - 1);
+    const int sy = (y + vofs) & (map_h * 8 - 1);
+    const int tile_x = sx / 8;
+    const int tile_y = sy / 8;
+    const int pixel_x = sx & 7;
+    const int pixel_y = sy & 7;
+
+    const int sc_x = tile_x / 32;
+    const int sc_y = tile_y / 32;
+    const int local_x = tile_x & 31;
+    const int local_y = tile_y & 31;
+    int screenblock = 0;
+    switch (screen_size) {
+      case 0: screenblock = 0; break;
+      case 1: screenblock = sc_x; break;
+      case 2: screenblock = sc_y; break;
+      case 3: screenblock = sc_y * 2 + sc_x; break;
+      default: screenblock = 0; break;
+    }
+    const size_t se_off = static_cast<size_t>(screen_base + screenblock * 0x800u +
+                                              (local_y * 32 + local_x) * 2u);
+    if (se_off + 1 >= vram_.size()) return;
+    const uint16_t se = static_cast<uint16_t>(vram_[se_off]) |
+                        static_cast<uint16_t>(vram_[se_off + 1] << 8);
+    const uint16_t tile_id = se & 0x03FFu;
+    const bool hflip = (se & (1u << 10)) != 0;
+    const bool vflip = (se & (1u << 11)) != 0;
+    const uint16_t palbank = static_cast<uint16_t>((se >> 12) & 0xFu);
+    const int tx = hflip ? (7 - pixel_x) : pixel_x;
+    const int ty = vflip ? (7 - pixel_y) : pixel_y;
+
+    if (color_256) {
+      const size_t chr_off = static_cast<size_t>(char_base + tile_id * 64u + ty * 8u + tx);
+      const uint16_t idx = (chr_off < vram_.size()) ? vram_[chr_off] : 0;
+      if ((idx & 0xFFu) == 0u) return;
+      *out_idx = idx;
+      *out_opaque = true;
+      return;
+    }
+    const size_t chr_off = static_cast<size_t>(char_base + tile_id * 32u + ty * 4u + tx / 2);
+    const uint8_t packed = (chr_off < vram_.size()) ? vram_[chr_off] : 0;
+    const uint8_t nibble = (tx & 1) ? (packed >> 4) : (packed & 0x0F);
+    if (nibble == 0) return;
+    *out_idx = static_cast<uint16_t>(palbank * 16u + nibble);
+    *out_opaque = true;
+  };
+
+  auto sample_affine_bg2 = [&](int x, int y, uint16_t* out_idx, bool* out_opaque) {
+    *out_idx = 0;
+    *out_opaque = false;
+    const uint16_t bgcnt = ReadIO16(0x0400000Cu);
+    const uint32_t char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
+    const uint32_t screen_base = ((bgcnt >> 8) & 0x1Fu) * 2u * 1024u;
+    const bool wrap = (bgcnt & (1u << 13)) != 0;
+    const uint32_t screen_size = (bgcnt >> 14) & 0x3u;
+    const int size_px = 128 << screen_size;
+    const int tiles_per_row = size_px / 8;
+
+    const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
+    const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
+    const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
+    const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
+
+    auto read_s32_le = [&](uint32_t addr) -> int32_t {
+      const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
+                         (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
+                         (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
+                         (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
+      int32_t s = static_cast<int32_t>(v);
+      if ((s & 0x08000000) != 0) s |= static_cast<int32_t>(0xF0000000);
+      return s;
+    };
+    const int32_t bg2x = read_s32_le(0x04000028u);
+    const int32_t bg2y = read_s32_le(0x0400002Cu);
+
+    int64_t ref_x = static_cast<int64_t>(bg2x) + static_cast<int64_t>(pa) * x + static_cast<int64_t>(pb) * y;
+    int64_t ref_y = static_cast<int64_t>(bg2y) + static_cast<int64_t>(pc) * x + static_cast<int64_t>(pd) * y;
+    int tx = static_cast<int>(ref_x >> 8);
+    int ty = static_cast<int>(ref_y >> 8);
+
+    if (wrap) {
+      tx %= size_px;
+      ty %= size_px;
+      if (tx < 0) tx += size_px;
+      if (ty < 0) ty += size_px;
+    } else if (tx < 0 || ty < 0 || tx >= size_px || ty >= size_px) {
+      return;
+    }
+
+    const int tile_x = tx / 8;
+    const int tile_y = ty / 8;
+    const int pixel_x = tx & 7;
+    const int pixel_y = ty & 7;
+    const size_t map_off = static_cast<size_t>(screen_base + tile_y * tiles_per_row + tile_x);
+    if (map_off >= vram_.size()) return;
+    const uint16_t tile_id = vram_[map_off];
+    const size_t chr_off = static_cast<size_t>(char_base + tile_id * 64u + pixel_y * 8u + pixel_x);
+    if (chr_off >= vram_.size()) return;
+    const uint16_t idx = vram_[chr_off];
+    if ((idx & 0xFFu) == 0u) return;
+    *out_idx = idx;
+    *out_opaque = true;
+  };
+
+  for (int y = 0; y < kScreenHeight; ++y) {
+    for (int x = 0; x < kScreenWidth; ++x) {
+      uint16_t best_idx = 0;
+      int best_prio = 4;
+      bool have_bg = false;
+
+      if ((dispcnt & (1u << 8)) != 0) {
+        uint16_t idx = 0;
+        bool opaque = false;
+        sample_text_bg(0, x, y, &idx, &opaque);
+        if (opaque) {
+          const int prio = ReadIO16(0x04000008u) & 0x3u;
+          best_idx = idx;
+          best_prio = prio;
+          have_bg = true;
+        }
+      }
+      if ((dispcnt & (1u << 9)) != 0) {
+        uint16_t idx = 0;
+        bool opaque = false;
+        sample_text_bg(1, x, y, &idx, &opaque);
+        if (opaque) {
+          const int prio = ReadIO16(0x0400000Au) & 0x3u;
+          if (!have_bg || prio < best_prio) {
+            best_idx = idx;
+            best_prio = prio;
+            have_bg = true;
+          }
+        }
+      }
+      if ((dispcnt & (1u << 10)) != 0) {
+        uint16_t idx = 0;
+        bool opaque = false;
+        sample_affine_bg2(x, y, &idx, &opaque);
+        if (opaque) {
+          const int prio = ReadIO16(0x0400000Cu) & 0x3u;
+          if (!have_bg || prio < best_prio) {
+            best_idx = idx;
+            best_prio = prio;
+            have_bg = true;
+          }
         }
       }
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
@@ -652,11 +832,16 @@ void GBACore::RenderDebugFrame() {
     ApplyColorEffects();
     return;
   }
-  if (bg_mode == 1u || bg_mode == 2u) {
-    // Temporary compatibility path:
-    // Mode1/2 include affine backgrounds, but reusing text BG sampling keeps
-    // many titles from showing a fully black frame while affine is unimplemented.
-    RenderMode0Frame();
+  if (bg_mode == 1u) {
+    RenderMode1Frame();
+    RenderSprites();
+    ApplyColorEffects();
+    return;
+  }
+  if (bg_mode == 2u) {
+    // Mode2 affine BG path is not fully implemented yet.
+    // Reuse mode1 path (BG2) as a compatibility fallback for now.
+    RenderMode1Frame();
     RenderSprites();
     ApplyColorEffects();
     return;

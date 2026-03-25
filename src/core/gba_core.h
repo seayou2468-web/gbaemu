@@ -95,6 +95,7 @@ class GBACore {
   void UpdateGameplayFromInput();
   void RenderDebugFrame();
   void RenderMode0Frame();
+  void RenderMode1Frame();
   void RenderMode3Frame();
   void RenderMode4Frame();
   void RenderMode5Frame();
