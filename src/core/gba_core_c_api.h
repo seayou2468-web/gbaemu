@@ -19,6 +19,7 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* bios_path);
 void GBA_LoadBuiltInBIOS(GBACoreHandle* handle);
 void GBA_Reset(GBACoreHandle* handle);
 void GBA_StepFrame(GBACoreHandle* handle);
+void GBA_SetKeys(GBACoreHandle* handle, uint16_t keys_pressed_mask);
 size_t GBA_GetFrameBufferSize(const GBACoreHandle* handle);
 bool GBA_CopyFrameBufferRGBA(const GBACoreHandle* handle, uint32_t* out_pixels, size_t pixel_count);
 

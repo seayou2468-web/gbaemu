@@ -20,6 +20,9 @@
 @property (nonatomic, strong) NSMutableString *logBuffer;
 @property (nonatomic, assign) BOOL romLoaded;
 @property (nonatomic, assign) BOOL selectingBIOS;
+@property (nonatomic, assign) NSInteger startupSuppressFrames;
+@property (nonatomic, assign) NSInteger startupStableFrames;
+@property (nonatomic, assign) BOOL startupSettled;
 @end
 
 @implementation ViewController
@@ -132,6 +135,25 @@
     [self.logView scrollRangeToVisible:bottom];
 }
 
+- (BOOL)isFrameLikelyUniform:(NSData *)frameData {
+    if (frameData.length < sizeof(uint32_t) * 2) {
+        return YES;
+    }
+    const uint32_t *pixels = (const uint32_t *)frameData.bytes;
+    const NSUInteger count = frameData.length / sizeof(uint32_t);
+    const uint32_t first = pixels[0];
+    NSUInteger diffCount = 0;
+    for (NSUInteger i = 1; i < count; i++) {
+        if (pixels[i] != first) {
+            diffCount++;
+            if (diffCount > 64) {
+                return NO;
+            }
+        }
+    }
+    return YES;
+}
+
 - (void)selectBIOS {
     self.selectingBIOS = YES;
     [self presentDocumentPicker];
@@ -161,13 +183,19 @@
         return;
     }
 
+    BOOL scoped = [url startAccessingSecurityScopedResource];
     NSError *error = nil;
     BOOL loaded = NO;
     if (self.selectingBIOS) {
         loaded = [self.engine loadBIOSAtPath:url.path error:&error];
         if (loaded) {
             self.biosStatusLabel.text = [NSString stringWithFormat:@"BIOS: %@", url.lastPathComponent ?: @"(不明)"];
-            self.statusLabel.text = @"BIOSを読み込みました";
+            if (self.romLoaded) {
+                [self.engine reset];
+                [self.engine stepFrame];
+                [self renderCurrentFrame];
+            }
+            self.statusLabel.text = self.romLoaded ? @"BIOSを読み込み、再初期化しました" : @"BIOSを読み込みました";
             [self appendLog:[NSString stringWithFormat:@"BIOS load ok: %@", url.lastPathComponent ?: @"(unknown)"]];
         } else {
             self.biosStatusLabel.text = @"BIOS: 読み込み失敗（内蔵BIOS継続）";
@@ -180,12 +208,49 @@
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
             [self.engine reset];
-            // Some titles do not present a visible frame immediately after reset.
+            // Auto-pulse START for a couple of frames to pass "press start"
+            // waits commonly used in bundled test ROMs.
+            [self.engine setKeysPressedMask:0x0008];
             [self.engine stepFrame];
             [self.engine stepFrame];
+            [self.engine setKeysPressedMask:0x0000];
+            // Many commercial titles need dozens of frames after reset/BIOS init
+            // before first visible draw. Warm up the core once on load.
+            for (NSInteger i = 0; i < 90; i++) {
+                [self.engine stepFrame];
+            }
+            // If frame is still uniform/blank-like, try a short key-probe sequence
+            // to pass simple title/input waits in ROM startup flows.
+            NSData *probeFrame = [self.engine copyCurrentFrameData];
+            if ([self isFrameLikelyUniform:probeFrame]) {
+                [self appendLog:@"起動補助: 画面が均一のため入力プローブ実施"];
+                const uint16_t keyCandidates[] = {0x0008, 0x0001, 0x0002, 0x0004}; // START/A/B/SELECT
+                const NSUInteger keyCount = sizeof(keyCandidates) / sizeof(keyCandidates[0]);
+                for (NSUInteger k = 0; k < keyCount; k++) {
+                    [self.engine setKeysPressedMask:keyCandidates[k]];
+                    for (NSInteger i = 0; i < 6; i++) {
+                        [self.engine stepFrame];
+                    }
+                    [self.engine setKeysPressedMask:0x0000];
+                    for (NSInteger i = 0; i < 24; i++) {
+                        [self.engine stepFrame];
+                    }
+                    probeFrame = [self.engine copyCurrentFrameData];
+                    if (![self isFrameLikelyUniform:probeFrame]) {
+                        [self appendLog:[NSString stringWithFormat:@"起動補助: 入力プローブで進行 (%u)", keyCandidates[k]]];
+                        break;
+                    }
+                }
+            }
             [self renderCurrentFrame];
-            self.statusLabel.text = @"ROMを読み込みました";
-            [self appendLog:[NSString stringWithFormat:@"ROM load ok: %@", url.lastPathComponent ?: @"(unknown)"]];
+            NSString *coreMessage = [self.engine lastErrorMessage];
+            if (coreMessage.length > 0 && ![coreMessage isEqualToString:@"(no error)"]) {
+                self.statusLabel.text = [NSString stringWithFormat:@"ROM読み込み完了（注意: %@）", coreMessage];
+                [self appendLog:[NSString stringWithFormat:@"ROM load ok with warning: %@ (%@)", url.lastPathComponent ?: @"(unknown)", coreMessage]];
+            } else {
+                self.statusLabel.text = @"ROMを読み込みました";
+                [self appendLog:[NSString stringWithFormat:@"ROM load ok: %@", url.lastPathComponent ?: @"(unknown)"]];
+            }
         } else {
             self.romLoaded = NO;
             self.romStatusLabel.text = @"ROM: 読み込み失敗";
@@ -195,6 +260,9 @@
         }
     }
 
+    if (scoped) {
+        [url stopAccessingSecurityScopedResource];
+    }
     [self refreshPlayState];
 }
 
@@ -212,6 +280,9 @@
         return;
     }
 
+    self.startupSuppressFrames = 45; // 約0.75秒分を抑制して起動直後の点滅を吸収
+    self.startupStableFrames = 0;
+    self.startupSettled = NO;
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(handleDisplayLink:)];
     [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.statusLabel.text = @"再生中";
@@ -222,12 +293,35 @@
 - (void)handleDisplayLink:(CADisplayLink *)link {
     (void)link;
     [self.engine stepFrame];
-    [self renderCurrentFrame];
+    NSData *frameData = [self.engine copyCurrentFrameData];
+    if (frameData.length == 0) {
+        return;
+    }
+    if (!self.startupSettled) {
+        if (![self isFrameLikelyUniform:frameData]) {
+            self.startupStableFrames += 1;
+        } else {
+            self.startupStableFrames = 0;
+        }
+        if (self.startupSuppressFrames > 0) {
+            self.startupSuppressFrames -= 1;
+        }
+        if (self.startupStableFrames >= 3 || self.startupSuppressFrames <= 0) {
+            self.startupSettled = YES;
+            [self appendLog:@"再生起動: 初期点滅抑制を解除"];
+        } else {
+            return;
+        }
+    }
+    [self presentFrameData:frameData];
 }
 
 - (void)stopPlayback {
     [self.displayLink invalidate];
     self.displayLink = nil;
+    self.startupSettled = NO;
+    self.startupStableFrames = 0;
+    self.startupSuppressFrames = 0;
     [self.playPauseButton setTitle:@"再生" forState:UIControlStateNormal];
 }
 
@@ -250,6 +344,10 @@
             return;
         }
     }
+    [self presentFrameData:frameData];
+}
+
+- (void)presentFrameData:(NSData *)frameData {
     self.lastFrameData = frameData;
 
     const size_t width = (size_t)GBAEngine.screenWidth;

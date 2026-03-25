@@ -101,6 +101,12 @@
     }
 }
 
+- (void)setKeysPressedMask:(uint16_t)keysPressedMask {
+    if (_handle != NULL) {
+        GBA_SetKeys(_handle, keysPressedMask);
+    }
+}
+
 - (NSData * _Nullable)copyCurrentFrameData {
     if (_handle == NULL) {
         return nil;

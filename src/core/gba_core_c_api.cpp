@@ -92,6 +92,13 @@ void GBA_StepFrame(GBACoreHandle* handle) {
   handle->core.StepFrame();
 }
 
+void GBA_SetKeys(GBACoreHandle* handle, uint16_t keys_pressed_mask) {
+  if (handle == nullptr) {
+    return;
+  }
+  handle->core.SetKeys(keys_pressed_mask);
+}
+
 size_t GBA_GetFrameBufferSize(const GBACoreHandle* handle) {
   if (handle == nullptr) {
     return 0;

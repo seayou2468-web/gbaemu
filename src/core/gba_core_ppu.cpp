@@ -11,6 +11,11 @@ uint8_t ClampToByteLocal(int value) {
 }
 
 constexpr int kBackdropPriority = 4;
+constexpr uint8_t kLayerBg0 = 0;
+constexpr uint8_t kLayerBg1 = 1;
+constexpr uint8_t kLayerBg2 = 2;
+constexpr uint8_t kLayerBg3 = 3;
+constexpr uint8_t kLayerBackdrop = 4;
 
 std::vector<uint8_t>& BgPriorityBuffer() {
   static std::vector<uint8_t> buffer;
@@ -22,6 +27,51 @@ void EnsureBgPriorityBufferSize() {
   const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
   if (buffer.size() != required) {
     buffer.assign(required, static_cast<uint8_t>(kBackdropPriority));
+  }
+}
+
+std::vector<uint8_t>& ObjWindowMaskBuffer() {
+  static std::vector<uint8_t> buffer;
+  return buffer;
+}
+
+std::vector<uint8_t>& ObjDrawnMaskBuffer() {
+  static std::vector<uint8_t> buffer;
+  return buffer;
+}
+
+std::vector<uint8_t>& BgLayerBuffer() {
+  static std::vector<uint8_t> buffer;
+  return buffer;
+}
+
+void EnsureBgLayerBufferSize() {
+  auto& buffer = BgLayerBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, kLayerBackdrop);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), kLayerBackdrop);
+  }
+}
+
+void EnsureObjDrawnMaskBufferSize() {
+  auto& buffer = ObjDrawnMaskBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0u);
+  }
+}
+
+void EnsureObjWindowMaskBufferSize() {
+  auto& buffer = ObjWindowMaskBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0u);
   }
 }
 
@@ -41,71 +91,82 @@ uint16_t ReadBackdropBgr(const std::array<uint8_t, 1024>& palette_ram) {
          static_cast<uint16_t>(palette_ram[1] << 8);
 }
 
-bool IsWithinWindowAxis(int p, int start, int end) {
-  // On GBA, equal start/end is commonly treated as full range by software
-  // relying on window registers as pass-through defaults.
-  if (start == end) return true;
-  if (start < end) return p >= start && p < end;
-  return p >= start || p < end;
+bool IsWithinWindowAxis(int p, int start, int end, int axis_max) {
+  const int s = std::clamp(start, 0, axis_max);
+  int e = std::clamp(end, 0, axis_max);
+  // GBATEK: X1>X2/Y1>Y2 are treated as X2/Y2=max; and X1=X2=0 (Y1=Y2=0)
+  // disables that window axis.
+  if (s == 0 && e == 0) return false;
+  if (s > e) e = axis_max;
+  return p >= s && p < e;
+}
+
+uint8_t ResolveWindowControl(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                         uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                         const std::vector<uint8_t>& obj_window_mask,
+                         int x, int y) {
+  const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
+  const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
+  const bool objwin_enabled = (dispcnt & (1u << 15)) != 0;
+  if (!win0_enabled && !win1_enabled && !objwin_enabled) return 0x3Fu;
+
+  const int win0_l = std::min<int>(240, (win0h >> 8) & 0xFFu);
+  const int win0_r = std::min<int>(240, win0h & 0xFFu);
+  const int win0_t = std::min<int>(160, (win0v >> 8) & 0xFFu);
+  const int win0_b = std::min<int>(160, win0v & 0xFFu);
+  const int win1_l = std::min<int>(240, (win1h >> 8) & 0xFFu);
+  const int win1_r = std::min<int>(240, win1h & 0xFFu);
+  const int win1_t = std::min<int>(160, (win1v >> 8) & 0xFFu);
+  const int win1_b = std::min<int>(160, win1v & 0xFFu);
+
+  const bool in_win0 = win0_enabled && IsWithinWindowAxis(x, win0_l, win0_r, 240) &&
+                       IsWithinWindowAxis(y, win0_t, win0_b, 160);
+  const bool in_win1 = win1_enabled && IsWithinWindowAxis(x, win1_l, win1_r, 240) &&
+                       IsWithinWindowAxis(y, win1_t, win1_b, 160);
+
+  uint8_t control = static_cast<uint8_t>(winout & 0xFFu);  // outside window
+  if (in_win0) control = static_cast<uint8_t>(winin & 0xFFu);
+  else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
+  else if (objwin_enabled) {
+    const size_t off = static_cast<size_t>(y) * GBACore::kScreenWidth + x;
+    if (off < obj_window_mask.size() && obj_window_mask[off] != 0) {
+      control = static_cast<uint8_t>((winout >> 8) & 0x3Fu);
+    }
+  }
+  return control;
+}
+
+bool IsBgVisibleByWindow(uint8_t control, int bg) {
+  return (control & (1u << bg)) != 0;
 }
 
 bool IsBgVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
                          uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
                          int bg, int x, int y) {
-  const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
-  const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
-  if (!win0_enabled && !win1_enabled) return true;
-
-  const int win0_l = std::min<int>(240, (win0h >> 8) & 0xFFu);
-  const int win0_r = std::min<int>(240, win0h & 0xFFu);
-  const int win0_t = std::min<int>(160, (win0v >> 8) & 0xFFu);
-  const int win0_b = std::min<int>(160, win0v & 0xFFu);
-  const int win1_l = std::min<int>(240, (win1h >> 8) & 0xFFu);
-  const int win1_r = std::min<int>(240, win1h & 0xFFu);
-  const int win1_t = std::min<int>(160, (win1v >> 8) & 0xFFu);
-  const int win1_b = std::min<int>(160, win1v & 0xFFu);
-
-  const bool in_win0 = win0_enabled && IsWithinWindowAxis(x, win0_l, win0_r) &&
-                       IsWithinWindowAxis(y, win0_t, win0_b);
-  const bool in_win1 = win1_enabled && IsWithinWindowAxis(x, win1_l, win1_r) &&
-                       IsWithinWindowAxis(y, win1_t, win1_b);
-
-  uint8_t control = static_cast<uint8_t>(winout & 0xFFu);  // outside window
-  if (in_win0) control = static_cast<uint8_t>(winin & 0xFFu);
-  else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
-  return (control & (1u << bg)) != 0;
+  const uint8_t control =
+      ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
+  return IsBgVisibleByWindow(control, bg);
 }
 
 bool IsObjVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
                           uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
                           int x, int y) {
-  const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
-  const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
-  if (!win0_enabled && !win1_enabled) return true;
-
-  const int win0_l = std::min<int>(240, (win0h >> 8) & 0xFFu);
-  const int win0_r = std::min<int>(240, win0h & 0xFFu);
-  const int win0_t = std::min<int>(160, (win0v >> 8) & 0xFFu);
-  const int win0_b = std::min<int>(160, win0v & 0xFFu);
-  const int win1_l = std::min<int>(240, (win1h >> 8) & 0xFFu);
-  const int win1_r = std::min<int>(240, win1h & 0xFFu);
-  const int win1_t = std::min<int>(160, (win1v >> 8) & 0xFFu);
-  const int win1_b = std::min<int>(160, win1v & 0xFFu);
-
-  const bool in_win0 = win0_enabled && IsWithinWindowAxis(x, win0_l, win0_r) &&
-                       IsWithinWindowAxis(y, win0_t, win0_b);
-  const bool in_win1 = win1_enabled && IsWithinWindowAxis(x, win1_l, win1_r) &&
-                       IsWithinWindowAxis(y, win1_t, win1_b);
-
-  uint8_t control = static_cast<uint8_t>(winout & 0xFFu);
-  if (in_win0) control = static_cast<uint8_t>(winin & 0xFFu);
-  else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
+  const uint8_t control = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v,
+                                               ObjWindowMaskBuffer(), x, y);
   return (control & (1u << 4)) != 0;
+}
+
+uint16_t LayerToBlendMask(uint8_t layer, bool top_is_obj) {
+  if (top_is_obj) return static_cast<uint16_t>(1u << 4);   // OBJ
+  if (layer <= kLayerBg3) return static_cast<uint16_t>(1u << layer);  // BG0..BG3
+  return static_cast<uint16_t>(1u << 5);  // Backdrop
 }
 }  // namespace
 void GBACore::RenderMode3Frame() {
   // Mode 3: 240x160 direct color (BGR555) in VRAM.
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -136,6 +197,7 @@ void GBACore::RenderMode3Frame() {
   if (!bg2_enabled) {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
     std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
+    std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
     return;
   }
 
@@ -145,6 +207,7 @@ void GBACore::RenderMode3Frame() {
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const int64_t tex_x_fp =
@@ -156,25 +219,32 @@ void GBACore::RenderMode3Frame() {
       if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const size_t off = static_cast<size_t>((sy * kScreenWidth + sx) * 2);
       if (off + 1 >= vram_.size()) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
                               static_cast<uint16_t>(vram_[off + 1] << 8);
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
       bg_priority[fb_off] = bg2_priority;
+      bg_layer[fb_off] = kLayerBg2;
     }
   }
 }
 
 void GBACore::RenderMode4Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
+  EnsureObjDrawnMaskBufferSize();
+  auto& obj_drawn = ObjDrawnMaskBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
   const uint16_t winout = ReadIO16(0x0400004Au);
@@ -216,6 +286,7 @@ void GBACore::RenderMode4Frame() {
   if (!bg2_enabled) {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
     std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
+    std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
     return;
   }
 
@@ -225,6 +296,7 @@ void GBACore::RenderMode4Frame() {
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const int64_t tex_x_fp =
@@ -236,18 +308,22 @@ void GBACore::RenderMode4Frame() {
       if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        bg_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const size_t off = page_base + static_cast<size_t>(sy * kScreenWidth + sx);
       const uint8_t index = (off < vram_.size()) ? vram_[off] : 0;
       frame_buffer_[fb_off] = palette_color(index);
       bg_priority[fb_off] = bg2_priority;
+      bg_layer[fb_off] = kLayerBg2;
     }
   }
 }
 
 void GBACore::RenderMode5Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -281,6 +357,7 @@ void GBACore::RenderMode5Frame() {
 
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
   std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
+  std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
 
   if (!bg2_enabled) return;
 
@@ -303,6 +380,142 @@ void GBACore::RenderMode5Frame() {
                               static_cast<uint16_t>(vram_[off + 1] << 8);
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
       bg_priority[fb_off] = bg2_priority;
+      bg_layer[fb_off] = kLayerBg2;
+    }
+  }
+}
+
+void GBACore::BuildObjWindowMask() {
+  EnsureObjWindowMaskBufferSize();
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  if ((dispcnt & (1u << 15)) == 0 || (dispcnt & (1u << 12)) == 0) return;
+
+  static constexpr int kObjDim[3][4][2] = {
+      {{8, 8}, {16, 16}, {32, 32}, {64, 64}},
+      {{16, 8}, {32, 8}, {32, 16}, {64, 32}},
+      {{8, 16}, {8, 32}, {16, 32}, {32, 64}},
+  };
+  const bool obj_1d = (dispcnt & (1u << 6)) != 0;
+  auto& mask = ObjWindowMaskBuffer();
+
+  for (int obj = 127; obj >= 0; --obj) {
+    const size_t off = static_cast<size_t>(obj * 8);
+    if (off + 5 >= oam_.size()) continue;
+    const uint16_t attr0 = static_cast<uint16_t>(oam_[off]) |
+                           static_cast<uint16_t>(oam_[off + 1] << 8);
+    const uint16_t attr1 = static_cast<uint16_t>(oam_[off + 2]) |
+                           static_cast<uint16_t>(oam_[off + 3] << 8);
+    const uint16_t attr2 = static_cast<uint16_t>(oam_[off + 4]) |
+                           static_cast<uint16_t>(oam_[off + 5] << 8);
+    if (((attr0 >> 8) & 0x3u) != 2u) continue;  // OBJ window
+
+    const bool affine = (attr0 & (1u << 8)) != 0;
+    const bool double_size = affine && ((attr0 & (1u << 9)) != 0);
+    const int shape = (attr0 >> 14) & 0x3;
+    const int size = (attr1 >> 14) & 0x3;
+    if (shape >= 3) continue;
+    const int src_w = kObjDim[shape][size][0];
+    const int src_h = kObjDim[shape][size][1];
+    const int draw_w = double_size ? (src_w * 2) : src_w;
+    const int draw_h = double_size ? (src_h * 2) : src_h;
+
+    int y = attr0 & 0xFF;
+    int x = attr1 & 0x1FF;
+    if (y >= 160) y -= 256;
+    if (x >= 240) x -= 512;
+
+    const bool color_256 = (attr0 & (1u << 13)) != 0;
+    const bool mosaic = (attr0 & (1u << 12)) != 0;
+    const bool hflip = (attr1 & (1u << 12)) != 0;
+    const bool vflip = (attr1 & (1u << 13)) != 0;
+    const uint16_t tile_id = attr2 & 0x03FFu;
+    const uint16_t palbank = static_cast<uint16_t>((attr2 >> 12) & 0xFu);
+    const size_t obj_chr_base = 0x10000u;
+
+    int16_t pa = 0, pb = 0, pc = 0, pd = 0;
+    if (affine) {
+      const uint16_t affine_idx = static_cast<uint16_t>((attr1 >> 9) & 0x1Fu);
+      const size_t pa_off = static_cast<size_t>(affine_idx) * 0x20u + 0x06u;
+      const size_t pb_off = static_cast<size_t>(affine_idx) * 0x20u + 0x0Eu;
+      const size_t pc_off = static_cast<size_t>(affine_idx) * 0x20u + 0x16u;
+      const size_t pd_off = static_cast<size_t>(affine_idx) * 0x20u + 0x1Eu;
+      if (pd_off + 1 >= oam_.size()) continue;
+      pa = static_cast<int16_t>(static_cast<uint16_t>(oam_[pa_off]) |
+                                static_cast<uint16_t>(oam_[pa_off + 1] << 8));
+      pb = static_cast<int16_t>(static_cast<uint16_t>(oam_[pb_off]) |
+                                static_cast<uint16_t>(oam_[pb_off + 1] << 8));
+      pc = static_cast<int16_t>(static_cast<uint16_t>(oam_[pc_off]) |
+                                static_cast<uint16_t>(oam_[pc_off + 1] << 8));
+      pd = static_cast<int16_t>(static_cast<uint16_t>(oam_[pd_off]) |
+                                static_cast<uint16_t>(oam_[pd_off + 1] << 8));
+    }
+
+    for (int py = 0; py < draw_h; ++py) {
+      const int sy = y + py;
+      if (sy < 0 || sy >= kScreenHeight) continue;
+      for (int px = 0; px < draw_w; ++px) {
+        const int sx = x + px;
+        if (sx < 0 || sx >= kScreenWidth) continue;
+        int tx = 0, ty = 0;
+        int sample_px = px;
+        int sample_py = py;
+        if (mosaic) {
+          const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
+          const int mos_h = static_cast<int>(((mosaic_reg >> 8) & 0xFu) + 1);
+          const int mos_v = static_cast<int>(((mosaic_reg >> 12) & 0xFu) + 1);
+          sample_px = (px / mos_h) * mos_h;
+          sample_py = (py / mos_v) * mos_v;
+        }
+        if (affine) {
+          const int cx = draw_w / 2;
+          const int cy = draw_h / 2;
+          const int dx = sample_px - cx;
+          const int dy = sample_py - cy;
+          const int src_cx = src_w / 2;
+          const int src_cy = src_h / 2;
+          tx = src_cx + static_cast<int>((static_cast<int32_t>(pa) * dx +
+                                          static_cast<int32_t>(pb) * dy) >>
+                                         8);
+          ty = src_cy + static_cast<int>((static_cast<int32_t>(pc) * dx +
+                                          static_cast<int32_t>(pd) * dy) >>
+                                         8);
+          if (tx < 0 || ty < 0 || tx >= src_w || ty >= src_h) continue;
+        } else {
+          tx = hflip ? (src_w - 1 - sample_px) : sample_px;
+          ty = vflip ? (src_h - 1 - sample_py) : sample_py;
+        }
+
+        uint16_t color_index = 0;
+        if (color_256) {
+          const int tile_x = tx / 8;
+          const int tile_y = ty / 8;
+          const int in_x = tx & 7;
+          const int in_y = ty & 7;
+          const int tile_stride = obj_1d ? (src_w / 8) : 32;
+          const size_t chr_off = obj_chr_base +
+                                 static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 64 +
+                                                     in_y * 8 + in_x);
+          if (chr_off >= vram_.size()) continue;
+          color_index = vram_[chr_off];
+        } else {
+          const int tile_x = tx / 8;
+          const int tile_y = ty / 8;
+          const int in_x = tx & 7;
+          const int in_y = ty & 7;
+          const int tile_stride = obj_1d ? (src_w / 8) : 32;
+          const size_t chr_off = obj_chr_base +
+                                 static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 32 +
+                                                     in_y * 4 + in_x / 2);
+          if (chr_off >= vram_.size()) continue;
+          const uint8_t packed = vram_[chr_off];
+          const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
+          if (nib == 0u) continue;
+          color_index = static_cast<uint16_t>(palbank * 16u + nib);
+        }
+        if (color_256 && color_index == 0u) continue;
+        const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
+        mask[fb_off] = 1u;
+      }
     }
   }
 }
@@ -316,9 +529,18 @@ void GBACore::RenderSprites() {
   const uint16_t win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u);
   const uint16_t win1v = ReadIO16(0x04000046u);
+  const uint16_t bldcnt = ReadIO16(0x04000050u);
+  const uint16_t bldalpha = ReadIO16(0x04000052u);
+  const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
+  const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
+  const bool obj_is_1st_target = (bldcnt & (1u << 4)) != 0;
+  const bool any_2nd_target = ((bldcnt >> 8) & 0x3Fu) != 0;
 
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
+  EnsureObjDrawnMaskBufferSize();
+  auto& obj_drawn = ObjDrawnMaskBuffer();
+  auto& bg_layer = BgLayerBuffer();
 
   static constexpr int kObjDim[3][4][2] = {
       {{8, 8}, {16, 16}, {32, 32}, {64, 64}},     // square
@@ -350,7 +572,7 @@ void GBACore::RenderSprites() {
                            static_cast<uint16_t>(oam_[off + 5] << 8);
 
     const uint16_t obj_mode = (attr0 >> 8) & 0x3u;
-    if (obj_mode == 2u) continue;  // OBJ window unsupported
+    if (obj_mode == 2u) continue;  // OBJ-window sprites are consumed by BuildObjWindowMask().
     const bool affine = (attr0 & (1u << 8)) != 0;
     const bool double_size = affine && ((attr0 & (1u << 9)) != 0);
 
@@ -368,6 +590,7 @@ void GBACore::RenderSprites() {
     if (x >= 240) x -= 512;
 
     const bool color_256 = (attr0 & (1u << 13)) != 0;
+    const bool mosaic = (attr0 & (1u << 12)) != 0;
     const bool hflip = (attr1 & (1u << 12)) != 0;
     const bool vflip = (attr1 & (1u << 13)) != 0;
     const uint8_t obj_priority = static_cast<uint8_t>((attr2 >> 10) & 0x3u);
@@ -408,11 +631,20 @@ void GBACore::RenderSprites() {
 
         int tx = 0;
         int ty = 0;
+        int sample_px = px;
+        int sample_py = py;
+        if (mosaic) {
+          const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
+          const int mos_h = static_cast<int>(((mosaic_reg >> 8) & 0xFu) + 1);
+          const int mos_v = static_cast<int>(((mosaic_reg >> 12) & 0xFu) + 1);
+          sample_px = (px / mos_h) * mos_h;
+          sample_py = (py / mos_v) * mos_v;
+        }
         if (affine) {
           const int cx = draw_w / 2;
           const int cy = draw_h / 2;
-          const int dx = px - cx;
-          const int dy = py - cy;
+          const int dx = sample_px - cx;
+          const int dy = sample_py - cy;
           const int src_cx = src_w / 2;
           const int src_cy = src_h / 2;
           tx = src_cx + static_cast<int>((static_cast<int32_t>(pa) * dx +
@@ -423,8 +655,8 @@ void GBACore::RenderSprites() {
                                          8);
           if (tx < 0 || ty < 0 || tx >= src_w || ty >= src_h) continue;
         } else {
-          tx = hflip ? (src_w - 1 - px) : px;
-          ty = vflip ? (src_h - 1 - py) : py;
+          tx = hflip ? (src_w - 1 - sample_px) : sample_px;
+          ty = vflip ? (src_h - 1 - sample_py) : sample_py;
         }
 
         uint16_t color_index = 0;
@@ -457,8 +689,45 @@ void GBACore::RenderSprites() {
         if (color_256 && color_index == 0u) continue;  // transparent
         const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
         if (obj_priority > bg_priority[fb_off]) continue;
-        frame_buffer_[fb_off] = palette_color(color_index);
+        uint32_t obj_px = palette_color(color_index);
+        if (obj_mode == 1u) {
+          const uint8_t window_control = ResolveWindowControl(
+              dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), sx, sy);
+          const bool effects_enabled = (window_control & (1u << 5)) != 0;
+          bool second_target_ok = false;
+          if (obj_drawn[fb_off] != 0u) {
+            second_target_ok = (bldcnt & (1u << (8 + 4))) != 0;  // OBJ as 2nd target
+          } else if (bg_priority[fb_off] == kBackdropPriority) {
+            second_target_ok = (bldcnt & (1u << (8 + 5))) != 0;  // BD as 2nd target
+          } else {
+            const uint8_t layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
+            const uint16_t layer_mask = static_cast<uint16_t>(1u << (8u + std::min<uint8_t>(layer, 5u)));
+            second_target_ok = (bldcnt & layer_mask) != 0;
+          }
+          if (!(effects_enabled && obj_is_1st_target && any_2nd_target && second_target_ok)) {
+            frame_buffer_[fb_off] = obj_px;
+            bg_priority[fb_off] = obj_priority;
+            obj_drawn[fb_off] = 1u;
+            continue;
+          }
+          // Semi-transparent OBJ: approximate hardware blend using current
+          // framebuffer pixel as 2nd target.
+          const uint32_t under = frame_buffer_[fb_off];
+          const uint8_t sr = static_cast<uint8_t>((obj_px >> 16) & 0xFFu);
+          const uint8_t sg = static_cast<uint8_t>((obj_px >> 8) & 0xFFu);
+          const uint8_t sb = static_cast<uint8_t>(obj_px & 0xFFu);
+          const uint8_t ur = static_cast<uint8_t>((under >> 16) & 0xFFu);
+          const uint8_t ug = static_cast<uint8_t>((under >> 8) & 0xFFu);
+          const uint8_t ub = static_cast<uint8_t>(under & 0xFFu);
+          const uint8_t rr = ClampToByteLocal(static_cast<int>((sr * eva + ur * evb) / 16u));
+          const uint8_t rg = ClampToByteLocal(static_cast<int>((sg * eva + ug * evb) / 16u));
+          const uint8_t rb = ClampToByteLocal(static_cast<int>((sb * eva + ub * evb) / 16u));
+          obj_px = 0xFF000000u | (static_cast<uint32_t>(rr) << 16) |
+                   (static_cast<uint32_t>(rg) << 8) | rb;
+        }
+        frame_buffer_[fb_off] = obj_px;
         bg_priority[fb_off] = obj_priority;
+        obj_drawn[fb_off] = 1u;
       }
     }
   }
@@ -466,6 +735,8 @@ void GBACore::RenderSprites() {
 
 void GBACore::RenderMode0Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -553,6 +824,7 @@ void GBACore::RenderMode0Frame() {
       uint16_t best_idx = 0;
       int best_prio = 4;
       bool have_bg = false;
+      uint8_t best_bg_layer = kLayerBackdrop;
       for (int bg = 0; bg < 4; ++bg) {
         if ((dispcnt & (1u << (8 + bg))) == 0) continue;
         if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) {
@@ -568,17 +840,21 @@ void GBACore::RenderMode0Frame() {
           best_prio = prio;
           best_idx = idx;
           have_bg = true;
+          best_bg_layer = static_cast<uint8_t>(bg);
         }
       }
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
       bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
+      bg_layer[static_cast<size_t>(y) * kScreenWidth + x] = have_bg ? best_bg_layer : kLayerBackdrop;
     }
   }
 }
 
 void GBACore::RenderMode1Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -722,6 +998,7 @@ void GBACore::RenderMode1Frame() {
       uint16_t best_idx = 0;
       int best_prio = 4;
       bool have_bg = false;
+      uint8_t best_bg_layer = kLayerBackdrop;
 
       if ((dispcnt & (1u << 8)) != 0 &&
           IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 0, x, y)) {
@@ -733,6 +1010,7 @@ void GBACore::RenderMode1Frame() {
           best_idx = idx;
           best_prio = prio;
           have_bg = true;
+          best_bg_layer = kLayerBg0;
         }
       }
       if ((dispcnt & (1u << 9)) != 0 &&
@@ -746,6 +1024,7 @@ void GBACore::RenderMode1Frame() {
             best_idx = idx;
             best_prio = prio;
             have_bg = true;
+            best_bg_layer = kLayerBg1;
           }
         }
       }
@@ -760,18 +1039,22 @@ void GBACore::RenderMode1Frame() {
             best_idx = idx;
             best_prio = prio;
             have_bg = true;
+            best_bg_layer = kLayerBg2;
           }
         }
       }
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
       bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
+      bg_layer[static_cast<size_t>(y) * kScreenWidth + x] = have_bg ? best_bg_layer : kLayerBackdrop;
     }
   }
 }
 
 void GBACore::RenderMode2Frame() {
   EnsureBgPriorityBufferSize();
+  EnsureBgLayerBufferSize();
+  auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -860,6 +1143,7 @@ void GBACore::RenderMode2Frame() {
       uint16_t best_idx = 0;
       int best_prio = 4;
       bool have_bg = false;
+      uint8_t best_bg_layer = kLayerBackdrop;
 
       if ((dispcnt & (1u << 10)) != 0 &&
           IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
@@ -871,6 +1155,7 @@ void GBACore::RenderMode2Frame() {
           best_idx = idx;
           best_prio = prio;
           have_bg = true;
+          best_bg_layer = kLayerBg2;
         }
       }
       if ((dispcnt & (1u << 11)) != 0 &&
@@ -884,6 +1169,7 @@ void GBACore::RenderMode2Frame() {
             best_idx = idx;
             best_prio = prio;
             have_bg = true;
+            best_bg_layer = kLayerBg3;
           }
         }
       }
@@ -891,6 +1177,7 @@ void GBACore::RenderMode2Frame() {
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
       bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
+      bg_layer[static_cast<size_t>(y) * kScreenWidth + x] = have_bg ? best_bg_layer : kLayerBackdrop;
     }
   }
 }
@@ -1086,7 +1373,121 @@ void GBACore::StepApu(uint32_t cycles) {
   const uint16_t master = (soundcnt_x & 0x0080u) ? 1u : 0u;
   if (!master) {
     audio_mix_level_ = 0;
+    apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
     return;
+  }
+
+  // Handle trigger edges (bit7 write events latched by register shadow).
+  const bool trig_ch1 = ((Read8(0x04000065u) & 0x80u) != 0) && !apu_prev_trig_ch1_;
+  const bool trig_ch2 = ((Read8(0x0400006Du) & 0x80u) != 0) && !apu_prev_trig_ch2_;
+  const bool trig_ch3 = ((Read8(0x04000075u) & 0x80u) != 0) && !apu_prev_trig_ch3_;
+  const bool trig_ch4 = ((Read8(0x0400007Du) & 0x80u) != 0) && !apu_prev_trig_ch4_;
+  apu_prev_trig_ch1_ = (Read8(0x04000065u) & 0x80u) != 0;
+  apu_prev_trig_ch2_ = (Read8(0x0400006Du) & 0x80u) != 0;
+  apu_prev_trig_ch3_ = (Read8(0x04000075u) & 0x80u) != 0;
+  apu_prev_trig_ch4_ = (Read8(0x0400007Du) & 0x80u) != 0;
+
+  if (trig_ch1) {
+    apu_ch1_active_ = true;
+    apu_len_ch1_ = static_cast<uint8_t>(64u - (Read8(0x04000062u) & 0x3Fu));
+    apu_env_ch1_ = static_cast<uint8_t>((Read8(0x04000063u) >> 4) & 0xFu);
+    apu_env_timer_ch1_ = static_cast<uint8_t>(Read8(0x04000063u) & 0x7u);
+    apu_ch1_sweep_freq_ = static_cast<uint16_t>((Read8(0x04000064u)) |
+                                                ((Read8(0x04000065u) & 0x7u) << 8));
+    const uint8_t nr10 = Read8(0x04000060u);
+    apu_ch1_sweep_timer_ = static_cast<uint8_t>((nr10 >> 4) & 0x7u);
+    apu_ch1_sweep_enabled_ = (nr10 & 0x7u) != 0 || apu_ch1_sweep_timer_ != 0;
+    const uint8_t shift = nr10 & 0x7u;
+    if (apu_ch1_sweep_enabled_ && shift != 0u && (nr10 & 0x8u) == 0) {
+      const uint16_t delta = static_cast<uint16_t>(apu_ch1_sweep_freq_ >> shift);
+      if (apu_ch1_sweep_freq_ + delta > 2047u) {
+        apu_ch1_active_ = false;
+      }
+    }
+  }
+  if (trig_ch2) {
+    apu_ch2_active_ = true;
+    apu_len_ch2_ = static_cast<uint8_t>(64u - (Read8(0x04000068u) & 0x3Fu));
+    apu_env_ch2_ = static_cast<uint8_t>((Read8(0x04000069u) >> 4) & 0xFu);
+    apu_env_timer_ch2_ = static_cast<uint8_t>(Read8(0x04000069u) & 0x7u);
+  }
+  if (trig_ch3) {
+    apu_ch3_active_ = true;
+    apu_len_ch3_ = static_cast<uint16_t>(256u - Read8(0x04000071u));
+  }
+  if (trig_ch4) {
+    apu_ch4_active_ = true;
+    apu_len_ch4_ = static_cast<uint8_t>(64u - (Read8(0x04000079u) & 0x3Fu));
+    apu_env_ch4_ = static_cast<uint8_t>((Read8(0x04000077u) >> 4) & 0xFu);
+    apu_env_timer_ch4_ = static_cast<uint8_t>(Read8(0x04000077u) & 0x7u);
+  }
+
+  // 512Hz frame sequencer (16777216 / 512 = 32768 cycles).
+  apu_frame_seq_cycles_ += cycles;
+  while (apu_frame_seq_cycles_ >= 32768u) {
+    apu_frame_seq_cycles_ -= 32768u;
+    apu_frame_seq_step_ = static_cast<uint8_t>((apu_frame_seq_step_ + 1u) & 7u);
+    const bool length_tick = (apu_frame_seq_step_ % 2u) == 0u;
+    const bool sweep_tick = (apu_frame_seq_step_ == 2u || apu_frame_seq_step_ == 6u);
+    const bool envelope_tick = apu_frame_seq_step_ == 7u;
+
+    if (length_tick) {
+      if ((Read8(0x04000065u) & 0x40u) && apu_ch1_active_ && apu_len_ch1_ > 0 && --apu_len_ch1_ == 0) apu_ch1_active_ = false;
+      if ((Read8(0x0400006Du) & 0x40u) && apu_ch2_active_ && apu_len_ch2_ > 0 && --apu_len_ch2_ == 0) apu_ch2_active_ = false;
+      if ((Read8(0x04000075u) & 0x40u) && apu_ch3_active_ && apu_len_ch3_ > 0 && --apu_len_ch3_ == 0) apu_ch3_active_ = false;
+      if ((Read8(0x0400007Du) & 0x40u) && apu_ch4_active_ && apu_len_ch4_ > 0 && --apu_len_ch4_ == 0) apu_ch4_active_ = false;
+    }
+    if (envelope_tick) {
+      auto step_env = [](uint8_t* vol, uint8_t* timer, uint8_t reg) {
+        const uint8_t period = reg & 0x7u;
+        if (period == 0) return;
+        if (*timer == 0) *timer = period;
+        if (--(*timer) != 0) return;
+        *timer = period;
+        const bool inc = (reg & 0x8u) != 0;
+        if (inc) {
+          if (*vol < 15u) ++(*vol);
+        } else {
+          if (*vol > 0u) --(*vol);
+        }
+      };
+      if (apu_ch1_active_) step_env(&apu_env_ch1_, &apu_env_timer_ch1_, Read8(0x04000063u));
+      if (apu_ch2_active_) step_env(&apu_env_ch2_, &apu_env_timer_ch2_, Read8(0x04000069u));
+      if (apu_ch4_active_) step_env(&apu_env_ch4_, &apu_env_timer_ch4_, Read8(0x04000077u));
+    }
+    if (sweep_tick && apu_ch1_active_ && apu_ch1_sweep_enabled_) {
+      const uint8_t nr10 = Read8(0x04000060u);
+      uint8_t sweep_period = static_cast<uint8_t>((nr10 >> 4) & 0x7u);
+      if (sweep_period == 0) sweep_period = 8;
+      if (apu_ch1_sweep_timer_ == 0) apu_ch1_sweep_timer_ = sweep_period;
+      if (--apu_ch1_sweep_timer_ == 0) {
+        apu_ch1_sweep_timer_ = sweep_period;
+        const uint8_t shift = nr10 & 0x7u;
+        if (shift != 0u) {
+          const uint16_t delta = static_cast<uint16_t>(apu_ch1_sweep_freq_ >> shift);
+          uint16_t next = apu_ch1_sweep_freq_;
+          if (nr10 & 0x8u) {
+            next = static_cast<uint16_t>(apu_ch1_sweep_freq_ - delta);
+          } else {
+            next = static_cast<uint16_t>(apu_ch1_sweep_freq_ + delta);
+          }
+          if (next > 2047u) {
+            apu_ch1_active_ = false;
+          } else {
+            apu_ch1_sweep_freq_ = next;
+            Write8(0x04000064u, static_cast<uint8_t>(next & 0xFFu));
+            const uint8_t nr14_hi = Read8(0x04000065u);
+            Write8(0x04000065u, static_cast<uint8_t>((nr14_hi & ~0x7u) | ((next >> 8) & 0x7u)));
+            if ((nr10 & 0x8u) == 0) {
+              const uint16_t next_delta = static_cast<uint16_t>(next >> shift);
+              if (next + next_delta > 2047u) {
+                apu_ch1_active_ = false;
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   auto duty_high_steps = [](uint16_t duty) -> int {
@@ -1107,22 +1508,29 @@ void GBACore::StepApu(uint32_t cycles) {
     return (step < high) ? 48 : -48;
   };
 
-  int psg_mix = 0;
-  if (soundcnt_x & 0x0001u) {  // CH1
+  int ch1 = 0;
+  int ch2 = 0;
+  int ch3 = 0;
+  int ch4 = 0;
+  if ((soundcnt_x & 0x0001u) && apu_ch1_active_) {  // CH1
     const uint16_t nr11 = ReadIO16(0x04000062u);
+    const uint16_t nr12 = ReadIO16(0x04000063u);
     const uint16_t nr13 = ReadIO16(0x04000064u);
     const uint16_t nr14 = ReadIO16(0x04000065u);
     const uint16_t freq = static_cast<uint16_t>(nr13 | ((nr14 & 0x7u) << 8));
-    psg_mix += square_sample(&apu_phase_sq1_, freq, nr11);
+    const int env_vol = std::max<int>(0, std::min<int>(15, apu_env_ch1_));
+    ch1 = (square_sample(&apu_phase_sq1_, freq, nr11) * env_vol) / 15;
   }
-  if (soundcnt_x & 0x0002u) {  // CH2
+  if ((soundcnt_x & 0x0002u) && apu_ch2_active_) {  // CH2
     const uint16_t nr21 = ReadIO16(0x04000068u);
+    const uint16_t nr22 = ReadIO16(0x04000069u);
     const uint16_t nr23 = ReadIO16(0x0400006Cu);
     const uint16_t nr24 = ReadIO16(0x0400006Du);
     const uint16_t freq = static_cast<uint16_t>(nr23 | ((nr24 & 0x7u) << 8));
-    psg_mix += square_sample(&apu_phase_sq2_, freq, nr21);
+    const int env_vol = std::max<int>(0, std::min<int>(15, apu_env_ch2_));
+    ch2 = (square_sample(&apu_phase_sq2_, freq, nr21) * env_vol) / 15;
   }
-  if (soundcnt_x & 0x0004u) {  // CH3 wave
+  if ((soundcnt_x & 0x0004u) && apu_ch3_active_) {  // CH3 wave
     const uint16_t nr30 = ReadIO16(0x04000070u);
     const uint16_t nr32 = ReadIO16(0x04000072u);
     if (nr30 & 0x0080u) {
@@ -1131,37 +1539,61 @@ void GBACore::StepApu(uint32_t cycles) {
       const uint16_t n = static_cast<uint16_t>(nr33 | ((nr34 & 0x7u) << 8));
       const uint32_t hz = (2048u > n) ? (65536u / std::max<uint16_t>(1u, static_cast<uint16_t>(2048u - n))) : 0u;
       apu_phase_wave_ += hz * std::max<uint32_t>(1u, cycles);
-      const uint32_t sample_idx = (apu_phase_wave_ / 2048u) & 31u;
-      const size_t wave_off = static_cast<size_t>(sample_idx / 2u);
-      const uint8_t packed = (wave_off < 16u) ? io_regs_[0x90 + wave_off] : 0;
+      const bool two_bank_mode = (nr30 & (1u << 5)) != 0;
+      const bool bank_select = (nr30 & (1u << 6)) != 0;
+      const uint32_t sample_idx = (apu_phase_wave_ / 2048u) & (two_bank_mode ? 15u : 31u);
+      const size_t bank_base = two_bank_mode ? (bank_select ? 16u : 0u) : 0u;
+      const size_t wave_off = bank_base + static_cast<size_t>(sample_idx / 2u);
+      const uint8_t packed = (wave_off < 32u) ? io_regs_[0x90 + wave_off] : 0;
       uint8_t sample4 = (sample_idx & 1u) ? (packed & 0x0Fu) : (packed >> 4);
       const uint16_t vol_code = (nr32 >> 5) & 0x3u;
       if (vol_code == 0) sample4 = 0;
       else if (vol_code == 2) sample4 >>= 1;
       else if (vol_code == 3) sample4 >>= 2;
-      psg_mix += static_cast<int>(sample4) * 8 - 60;
+      ch3 = static_cast<int>(sample4) * 8 - 60;
     }
   }
-  if (soundcnt_x & 0x0008u) {  // CH4 noise
+  if ((soundcnt_x & 0x0008u) && apu_ch4_active_) {  // CH4 noise
+    const uint16_t nr42 = ReadIO16(0x04000077u);
     const uint16_t nr43 = ReadIO16(0x04000078u);
     const uint32_t div = (nr43 & 0x7u) == 0 ? 8u : (nr43 & 0x7u) * 16u;
     const uint32_t shift = (nr43 >> 4) & 0xFu;
     const uint32_t period = div << shift;
+    const bool narrow_7bit = (nr43 & (1u << 3)) != 0;
     for (uint32_t i = 0; i < std::max<uint32_t>(1u, cycles / std::max<uint32_t>(1u, period)); ++i) {
       const uint16_t x = static_cast<uint16_t>((apu_noise_lfsr_ ^ (apu_noise_lfsr_ >> 1)) & 1u);
       apu_noise_lfsr_ = static_cast<uint16_t>((apu_noise_lfsr_ >> 1) | (x << 14));
+      if (narrow_7bit) {
+        apu_noise_lfsr_ = static_cast<uint16_t>((apu_noise_lfsr_ & ~0x40u) | (x << 6));
+      }
     }
-    psg_mix += (apu_noise_lfsr_ & 1u) ? 28 : -28;
+    const int env_vol = std::max<int>(0, std::min<int>(15, apu_env_ch4_));
+    ch4 = ((apu_noise_lfsr_ & 1u) ? 28 : -28) * env_vol / 15;
   }
+
+  const bool right_ch1 = (soundcnt_l & (1u << 0)) != 0;
+  const bool right_ch2 = (soundcnt_l & (1u << 1)) != 0;
+  const bool right_ch3 = (soundcnt_l & (1u << 2)) != 0;
+  const bool right_ch4 = (soundcnt_l & (1u << 3)) != 0;
+  const bool left_ch1 = (soundcnt_l & (1u << 4)) != 0;
+  const bool left_ch2 = (soundcnt_l & (1u << 5)) != 0;
+  const bool left_ch3 = (soundcnt_l & (1u << 6)) != 0;
+  const bool left_ch4 = (soundcnt_l & (1u << 7)) != 0;
+  const int right_sum = (right_ch1 ? ch1 : 0) + (right_ch2 ? ch2 : 0) +
+                        (right_ch3 ? ch3 : 0) + (right_ch4 ? ch4 : 0);
+  const int left_sum = (left_ch1 ? ch1 : 0) + (left_ch2 ? ch2 : 0) +
+                       (left_ch3 ? ch3 : 0) + (left_ch4 ? ch4 : 0);
 
   const int left_vol = (soundcnt_l >> 4) & 0x7;
   const int right_vol = soundcnt_l & 0x7;
-  psg_mix = (psg_mix * (left_vol + right_vol + 1)) / 4;
+  const int psg_master = (soundcnt_h & 0x0003u) == 0 ? 1 : ((soundcnt_h & 0x0003u) == 1 ? 2 : 4);
+  int psg_mix = ((left_sum * left_vol) + (right_sum * right_vol)) / 8;
+  psg_mix = (psg_mix * psg_master) / 4;
 
   const int fifo_a_gain = (soundcnt_h & (1u << 2)) ? 2 : 1;
   const int fifo_b_gain = (soundcnt_h & (1u << 3)) ? 2 : 1;
   const int fifo_mix = fifo_a_last_sample_ * fifo_a_gain + fifo_b_last_sample_ * fifo_b_gain;
-  const int mixed = psg_mix + fifo_mix + static_cast<int>(cycles / 128u);
+  const int mixed = psg_mix + fifo_mix;
   audio_mix_level_ = static_cast<uint16_t>(ClampToByteLocal(mixed) & 0xFFu);
 }
 
@@ -1221,6 +1653,13 @@ void GBACore::ServiceInterruptIfNeeded() {
 }
 
 void GBACore::ApplyColorEffects() {
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
   const uint16_t bldcnt = ReadIO16(0x04000050u);
   const uint16_t bldalpha = ReadIO16(0x04000052u);
   const uint16_t bldy = ReadIO16(0x04000054u);
@@ -1228,26 +1667,48 @@ void GBACore::ApplyColorEffects() {
   if (mode == 0u) return;
 
   const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
+  const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
   const uint32_t evy = std::min<uint32_t>(16u, bldy & 0x1Fu);
-  for (uint32_t& px : frame_buffer_) {
-    uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
-    uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
-    uint8_t b = static_cast<uint8_t>(px & 0xFFu);
-    if (mode == 1u) {  // alpha blend (approximate against backdrop black)
-      r = ClampToByteLocal(static_cast<int>((r * eva) / 16u));
-      g = ClampToByteLocal(static_cast<int>((g * eva) / 16u));
-      b = ClampToByteLocal(static_cast<int>((b * eva) / 16u));
-    } else if (mode == 2u) {  // brighten
-      r = ClampToByteLocal(static_cast<int>(r + ((255 - r) * evy) / 16u));
-      g = ClampToByteLocal(static_cast<int>(g + ((255 - g) * evy) / 16u));
-      b = ClampToByteLocal(static_cast<int>(b + ((255 - b) * evy) / 16u));
-    } else if (mode == 3u) {  // darken
-      r = ClampToByteLocal(static_cast<int>(r - (r * evy) / 16u));
-      g = ClampToByteLocal(static_cast<int>(g - (g * evy) / 16u));
-      b = ClampToByteLocal(static_cast<int>(b - (b * evy) / 16u));
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+  const uint8_t back_r = static_cast<uint8_t>((backdrop >> 16) & 0xFFu);
+  const uint8_t back_g = static_cast<uint8_t>((backdrop >> 8) & 0xFFu);
+  const uint8_t back_b = static_cast<uint8_t>(backdrop & 0xFFu);
+  auto& bg_layer = BgLayerBuffer();
+  auto& obj_drawn = ObjDrawnMaskBuffer();
+  for (int y = 0; y < kScreenHeight; ++y) {
+    for (int x = 0; x < kScreenWidth; ++x) {
+      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      const uint8_t window_control =
+          ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
+      if ((window_control & (1u << 5)) == 0) continue;  // color effects masked by window
+      const bool top_is_obj = (fb_off < obj_drawn.size()) && (obj_drawn[fb_off] != 0u);
+      const uint8_t top_layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
+      const uint16_t top_mask = LayerToBlendMask(top_layer, top_is_obj);
+      if ((bldcnt & top_mask) == 0) continue;  // top pixel is not 1st target
+
+      uint32_t& px = frame_buffer_[fb_off];
+      uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
+      uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
+      uint8_t b = static_cast<uint8_t>(px & 0xFFu);
+      if (mode == 1u) {
+        // Alpha blend requires 2nd target. Keep approximation conservative:
+        // blend only when backdrop is explicitly selected as 2nd target.
+        if ((bldcnt & (1u << (8 + 5))) == 0) continue;
+        r = ClampToByteLocal(static_cast<int>((r * eva + back_r * evb) / 16u));
+        g = ClampToByteLocal(static_cast<int>((g * eva + back_g * evb) / 16u));
+        b = ClampToByteLocal(static_cast<int>((b * eva + back_b * evb) / 16u));
+      } else if (mode == 2u) {  // brighten
+        r = ClampToByteLocal(static_cast<int>(r + ((255 - r) * evy) / 16u));
+        g = ClampToByteLocal(static_cast<int>(g + ((255 - g) * evy) / 16u));
+        b = ClampToByteLocal(static_cast<int>(b + ((255 - b) * evy) / 16u));
+      } else if (mode == 3u) {  // darken
+        r = ClampToByteLocal(static_cast<int>(r - (r * evy) / 16u));
+        g = ClampToByteLocal(static_cast<int>(g - (g * evy) / 16u));
+        b = ClampToByteLocal(static_cast<int>(b - (b * evy) / 16u));
+      }
+      px = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+           (static_cast<uint32_t>(g) << 8) | b;
     }
-    px = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-         (static_cast<uint32_t>(g) << 8) | b;
   }
 }
 
@@ -1265,6 +1726,8 @@ void GBACore::RenderDebugFrame() {
               static_cast<uint8_t>(kBackdropPriority));
     return;
   }
+  EnsureObjDrawnMaskBufferSize();
+  BuildObjWindowMask();
   const uint16_t bg_mode = dispcnt & 0x7u;
   if (bg_mode == 0u) {
     RenderMode0Frame();

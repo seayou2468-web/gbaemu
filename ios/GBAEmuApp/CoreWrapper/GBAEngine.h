@@ -11,6 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)loadROMAtPath:(NSString *)path error:(NSError * _Nullable * _Nullable)error;
 - (void)reset;
 - (void)stepFrame;
+- (void)setKeysPressedMask:(uint16_t)keysPressedMask;
 - (NSData * _Nullable)copyCurrentFrameData;
 - (NSString *)lastErrorMessage;
 @end

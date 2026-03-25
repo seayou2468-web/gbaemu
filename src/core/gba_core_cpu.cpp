@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 
 namespace gba {
 uint32_t GBACore::RotateRight(uint32_t value, unsigned bits) const {
@@ -183,6 +184,128 @@ uint32_t GBACore::EstimateThumbCycles(uint16_t opcode) const {
   return 1u;                                                          // ALU/other
 }
 
+void GBACore::HandleRegisterRamReset(uint8_t flags) {
+  // SWI 01h RegisterRamReset
+  if (flags & 0x01u) std::fill(ewram_.begin(), ewram_.end(), 0);
+  if (flags & 0x02u) std::fill(iwram_.begin(), iwram_.end(), 0);
+  if (flags & 0x04u) std::fill(palette_ram_.begin(), palette_ram_.end(), 0);
+  if (flags & 0x08u) std::fill(vram_.begin(), vram_.end(), 0);
+  if (flags & 0x10u) std::fill(oam_.begin(), oam_.end(), 0);
+}
+
+void GBACore::HandleCpuSet(bool fast_mode) {
+  const uint32_t src = cpu_.regs[0];
+  const uint32_t dst = cpu_.regs[1];
+  const uint32_t cnt = cpu_.regs[2];
+  const bool fill = (cnt & (1u << 24)) != 0;
+  const bool word32 = fast_mode || ((cnt & (1u << 26)) != 0);
+  uint32_t units = cnt & 0x1FFFFFu;
+  if (fast_mode) units = (cnt & 0x1FFFFFu) * 8u;
+
+  if (units == 0) return;
+
+  if (word32) {
+    const uint32_t value = Read32(src & ~3u);
+    for (uint32_t i = 0; i < units; ++i) {
+      const uint32_t saddr = fill ? (src & ~3u) : ((src + i * 4u) & ~3u);
+      const uint32_t daddr = (dst + i * 4u) & ~3u;
+      Write32(daddr, fill ? value : Read32(saddr));
+    }
+  } else {
+    const uint16_t value = Read16(src & ~1u);
+    for (uint32_t i = 0; i < units; ++i) {
+      const uint32_t saddr = fill ? (src & ~1u) : ((src + i * 2u) & ~1u);
+      const uint32_t daddr = (dst + i * 2u) & ~1u;
+      Write16(daddr, fill ? value : Read16(saddr));
+    }
+  }
+}
+
+bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
+  const uint32_t next_pc = cpu_.regs[15] + (thumb_state ? 2u : 4u);
+  switch (swi_imm & 0xFFu) {
+    case 0x00u:  // SoftReset
+      Reset();
+      return true;
+    case 0x01u:  // RegisterRamReset
+      HandleRegisterRamReset(static_cast<uint8_t>(cpu_.regs[0] & 0xFFu));
+      cpu_.regs[15] = next_pc;
+      return true;
+    case 0x04u:  // IntrWait
+    case 0x05u: {  // VBlankIntrWait
+      // HLE approximation: arm requested IRQ sources and halt until IRQ pending.
+      uint16_t request = 0;
+      if ((swi_imm & 0xFFu) == 0x05u) {
+        request = 0x0001u;  // VBlank
+      } else {
+        request = static_cast<uint16_t>(cpu_.regs[1] & 0x3FFFu);
+        if (request == 0) request = 0x0001u;
+      }
+      const uint16_t ie = ReadIO16(0x04000200u);
+      WriteIO16(0x04000200u, static_cast<uint16_t>(ie | request));
+      WriteIO16(0x04000208u, 0x0001u);  // IME on
+      cpu_.halted = true;
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x02u:  // Halt
+    case 0x03u:  // Stop (approximated as Halt)
+      cpu_.halted = true;
+      cpu_.regs[15] = next_pc;
+      return true;
+    case 0x06u: {  // Div
+      const int32_t num = static_cast<int32_t>(cpu_.regs[0]);
+      const int32_t den = static_cast<int32_t>(cpu_.regs[1]);
+      if (den == 0) {
+        cpu_.regs[0] = 0;
+        cpu_.regs[1] = static_cast<uint32_t>(num);
+        cpu_.regs[3] = 0;
+      } else {
+        const int32_t q = num / den;
+        const int32_t r = num % den;
+        cpu_.regs[0] = static_cast<uint32_t>(q);
+        cpu_.regs[1] = static_cast<uint32_t>(r);
+        cpu_.regs[3] = static_cast<uint32_t>(q < 0 ? -q : q);
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x07u: {  // DivArm (R0=denom, R1=numer)
+      const int32_t den = static_cast<int32_t>(cpu_.regs[0]);
+      const int32_t num = static_cast<int32_t>(cpu_.regs[1]);
+      if (den == 0) {
+        cpu_.regs[0] = 0;
+        cpu_.regs[1] = static_cast<uint32_t>(num);
+        cpu_.regs[3] = 0;
+      } else {
+        const int32_t q = num / den;
+        const int32_t r = num % den;
+        cpu_.regs[0] = static_cast<uint32_t>(q);
+        cpu_.regs[1] = static_cast<uint32_t>(r);
+        cpu_.regs[3] = static_cast<uint32_t>(q < 0 ? -q : q);
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x08u: {  // Sqrt
+      const uint32_t x = cpu_.regs[0];
+      cpu_.regs[0] = static_cast<uint32_t>(std::sqrt(static_cast<double>(x)));
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x0Bu:  // CpuSet
+      HandleCpuSet(false);
+      cpu_.regs[15] = next_pc;
+      return true;
+    case 0x0Cu:  // CpuFastSet
+      HandleCpuSet(true);
+      cpu_.regs[15] = next_pc;
+      return true;
+    default:
+      return false;
+  }
+}
+
 void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   auto arm_reg_value = [&](uint32_t reg) -> uint32_t {
     if ((reg & 0xFu) == 15u) return cpu_.regs[15] + 8u;
@@ -222,6 +345,66 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       cpu_.regs[14] = cpu_.regs[15] + 4u;  // BL
     }
     cpu_.regs[15] = cpu_.regs[15] + 8u + static_cast<uint32_t>(offset);
+    return;
+  }
+
+  // Halfword/signed data transfer (LDRH/STRH/LDRSB/LDRSH)
+  if ((opcode & 0x0E000090u) == 0x00000090u && (opcode & 0x0FC000F0u) != 0x00000090u) {
+    const bool pre = (opcode & (1u << 24)) != 0;
+    const bool up = (opcode & (1u << 23)) != 0;
+    const bool imm = (opcode & (1u << 22)) != 0;
+    const bool write_back = (opcode & (1u << 21)) != 0;
+    const bool load = (opcode & (1u << 20)) != 0;
+    const uint32_t rn = (opcode >> 16) & 0xFu;
+    const uint32_t rd = (opcode >> 12) & 0xFu;
+    const uint32_t s = (opcode >> 6) & 0x1u;
+    const uint32_t h = (opcode >> 5) & 0x1u;
+
+    uint32_t offset = 0;
+    if (imm) {
+      offset = ((opcode >> 8) & 0xFu) << 4;
+      offset |= (opcode & 0xFu);
+    } else {
+      offset = arm_reg_value(opcode & 0xFu);
+    }
+
+    uint32_t addr = arm_reg_value(rn);
+    if (pre) {
+      addr = up ? (addr + offset) : (addr - offset);
+    }
+
+    if (load) {
+      uint32_t value = 0;
+      if (s == 0u && h == 1u) {  // LDRH
+        value = Read16(addr & ~1u);
+      } else if (s == 1u && h == 0u) {  // LDRSB
+        value = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(Read8(addr))));
+      } else if (s == 1u && h == 1u) {  // LDRSH
+        if (addr & 1u) {
+          value = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(Read8(addr))));
+        } else {
+          value = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(Read16(addr))));
+        }
+      } else {
+        // Reserved encoding; treat as no-op-like unknown transfer.
+        cpu_.regs[15] += 4;
+        return;
+      }
+      cpu_.regs[rd] = value;
+    } else {
+      if (s == 0u && h == 1u) {  // STRH
+        Write16(addr & ~1u, static_cast<uint16_t>(arm_reg_value(rd) & 0xFFFFu));
+      } else {
+        cpu_.regs[15] += 4;
+        return;
+      }
+    }
+
+    if (!pre) {
+      addr = up ? (addr + offset) : (addr - offset);
+    }
+    if (write_back || !pre) cpu_.regs[rn] = addr;
+    cpu_.regs[15] += 4;
     return;
   }
 
@@ -506,6 +689,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
 
   // SWI
   if ((opcode & 0x0F000000u) == 0x0F000000u) {
+    if (HandleSoftwareInterrupt(opcode & 0x00FFFFFFu, false)) return;
     EnterException(0x00000008u, 0x13u, true, false);  // SVC mode
     return;
   }
@@ -682,7 +866,8 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
 
 void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   // Shift by immediate (LSL/LSR/ASR)
-  if ((opcode & 0xE000u) == 0x0000u) {
+  // Thumb format 1 is 000xx (xx=00/01/10). Exclude 00011 (ADD/SUB format 2).
+  if ((opcode & 0xE000u) == 0x0000u && (opcode & 0x1800u) != 0x1800u) {
     const uint16_t shift_type = (opcode >> 11) & 0x3u;
     const uint16_t imm5 = (opcode >> 6) & 0x1Fu;
     const uint16_t rs = (opcode >> 3) & 0x7u;
@@ -928,7 +1113,13 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
       case 0x0: Write16(addr & ~1u, static_cast<uint16_t>(cpu_.regs[rd])); break;  // STRH
       case 0x1: cpu_.regs[rd] = Read16(addr & ~1u); break;                          // LDRH
       case 0x2: cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int8_t>(Read8(addr))); break;  // LDSB
-      case 0x3: cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int16_t>(Read16(addr & ~1u))); break; // LDSH
+      case 0x3:
+        if (addr & 1u) {
+          cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int8_t>(Read8(addr)));
+        } else {
+          cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int16_t>(Read16(addr)));
+        }
+        break; // LDSH
     }
     cpu_.regs[15] += 2;
     return;
@@ -1018,15 +1209,15 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const bool r = (opcode & (1u << 8)) != 0;      // LR/PC bit
     const uint16_t reg_list = opcode & 0xFFu;
     if (!load) {  // PUSH
+      if (r) {
+        cpu_.regs[13] -= 4u;
+        Write32(cpu_.regs[13], cpu_.regs[14]);
+      }
       for (int i = 7; i >= 0; --i) {
         if (reg_list & (1u << i)) {
           cpu_.regs[13] -= 4u;
           Write32(cpu_.regs[13], cpu_.regs[i]);
         }
-      }
-      if (r) {
-        cpu_.regs[13] -= 4u;
-        Write32(cpu_.regs[13], cpu_.regs[14]);
       }
     } else {      // POP
       for (int i = 0; i < 8; ++i) {
@@ -1036,7 +1227,14 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
         }
       }
       if (r) {
-        cpu_.regs[15] = Read32(cpu_.regs[13]) & ~1u;
+        const uint32_t target = Read32(cpu_.regs[13]);
+        if (target & 1u) {
+          cpu_.cpsr |= (1u << 5);   // stay/enter Thumb
+          cpu_.regs[15] = target & ~1u;
+        } else {
+          cpu_.cpsr &= ~(1u << 5);  // switch to ARM
+          cpu_.regs[15] = target & ~3u;
+        }
         cpu_.regs[13] += 4u;
         return;
       }
@@ -1067,6 +1265,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
 
   // Thumb SWI
   if ((opcode & 0xFF00u) == 0xDF00u) {
+    if (HandleSoftwareInterrupt(opcode & 0x00FFu, true)) return;
     EnterException(0x00000008u, 0x13u, true, false);  // SVC mode
     return;
   }
@@ -1122,7 +1321,19 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
-  if (cpu_.halted) return;
+  if (cpu_.halted) {
+    const uint16_t ie = ReadIO16(0x04000200u);
+    const uint16_t iflags = ReadIO16(0x04000202u);
+    if ((ie & iflags) == 0) return;
+    cpu_.halted = false;
+  }
+  auto is_exec_addr_valid = [&](uint32_t addr) -> bool {
+    if (bios_loaded_ && addr < 0x00004000u) return true;  // BIOS
+    if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) return true;  // EWRAM mirror
+    if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) return true;  // IWRAM mirror
+    if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) return true;  // ROM mirrors
+    return false;
+  };
   uint32_t consumed = 0;
   while (consumed < cycles) {
     ServiceInterruptIfNeeded();
@@ -1136,10 +1347,30 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       consumed += EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
     }
-    // Keep PC sane when branch jumps outside mapped ranges.
-    if (cpu_.regs[15] < 0x02000000u || cpu_.regs[15] > 0x09FFFFFFu) {
+    // Keep PC sane when branch jumps outside executable mapped ranges.
+    // Do not remap valid BIOS/IWRAM/EWRAM/ROM addresses.
+    if (!is_exec_addr_valid(cpu_.regs[15])) {
       const uint32_t mask = (cpu_.cpsr & (1u << 5)) ? 0x1FFFFFEu : 0x1FFFFFCu;
       cpu_.regs[15] = 0x08000000u + static_cast<uint32_t>((cpu_.regs[15] & mask) % std::max<size_t>(4, rom_.size()));
+    }
+  }
+}
+
+void GBACore::DebugStepCpuInstructions(uint32_t count) {
+  for (uint32_t i = 0; i < count; ++i) {
+    if (cpu_.halted) {
+      const uint16_t ie = ReadIO16(0x04000200u);
+      const uint16_t iflags = ReadIO16(0x04000202u);
+      if ((ie & iflags) == 0) return;
+      cpu_.halted = false;
+    }
+    ServiceInterruptIfNeeded();
+    if (cpu_.cpsr & (1u << 5)) {
+      const uint16_t opcode = Read16(cpu_.regs[15]);
+      ExecuteThumbInstruction(opcode);
+    } else {
+      const uint32_t opcode = Read32(cpu_.regs[15]);
+      ExecuteArmInstruction(opcode);
     }
   }
 }

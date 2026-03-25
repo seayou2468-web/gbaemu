@@ -83,6 +83,10 @@ class GBACore {
   void DebugWrite8(uint32_t addr, uint8_t value);
   void DebugWrite16(uint32_t addr, uint16_t value);
   void DebugWrite32(uint32_t addr, uint32_t value);
+  void DebugStepCpuInstructions(uint32_t count);
+  uint32_t DebugGetPC() const { return cpu_.regs[15]; }
+  uint32_t DebugGetCPSR() const { return cpu_.cpsr; }
+  uint32_t DebugGetReg(size_t index) const { return cpu_.regs[index & 0xFu]; }
 
  private:
   static constexpr uint32_t kCyclesPerFrame = 280896;
@@ -100,6 +104,7 @@ class GBACore {
   void RenderMode3Frame();
   void RenderMode4Frame();
   void RenderMode5Frame();
+  void BuildObjWindowMask();
   void RenderSprites();
   void ApplyColorEffects();
   void StepPpu(uint32_t cycles);
@@ -138,6 +143,9 @@ class GBACore {
   uint32_t EstimateThumbCycles(uint16_t opcode) const;
   void ExecuteArmInstruction(uint32_t opcode);
   void ExecuteThumbInstruction(uint16_t opcode);
+  bool HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state);
+  void HandleRegisterRamReset(uint8_t flags);
+  void HandleCpuSet(bool fast_mode);
   void RunCpuSlice(uint32_t cycles);
 
   struct CpuState {
@@ -188,6 +196,29 @@ class GBACore {
   uint32_t apu_phase_sq2_ = 0;
   uint32_t apu_phase_wave_ = 0;
   uint16_t apu_noise_lfsr_ = 0x7FFFu;
+  uint32_t apu_frame_seq_cycles_ = 0;
+  uint8_t apu_frame_seq_step_ = 0;
+  uint8_t apu_env_ch1_ = 0;
+  uint8_t apu_env_ch2_ = 0;
+  uint8_t apu_env_ch4_ = 0;
+  uint8_t apu_env_timer_ch1_ = 0;
+  uint8_t apu_env_timer_ch2_ = 0;
+  uint8_t apu_env_timer_ch4_ = 0;
+  uint8_t apu_len_ch1_ = 0;
+  uint8_t apu_len_ch2_ = 0;
+  uint16_t apu_len_ch3_ = 0;
+  uint8_t apu_len_ch4_ = 0;
+  uint16_t apu_ch1_sweep_freq_ = 0;
+  uint8_t apu_ch1_sweep_timer_ = 0;
+  bool apu_ch1_sweep_enabled_ = false;
+  bool apu_ch1_active_ = false;
+  bool apu_ch2_active_ = false;
+  bool apu_ch3_active_ = false;
+  bool apu_ch4_active_ = false;
+  bool apu_prev_trig_ch1_ = false;
+  bool apu_prev_trig_ch2_ = false;
+  bool apu_prev_trig_ch3_ = false;
+  bool apu_prev_trig_ch4_ = false;
 
   struct TimerState {
     uint16_t reload = 0;
