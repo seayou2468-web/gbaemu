@@ -2,11 +2,39 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
 #include <string>
 #include <vector>
 
 #include "gba_core.h"
-#include "rom_loader.h"
+
+namespace {
+
+bool LoadFile(const std::string& path, std::vector<uint8_t>* out, std::string* error) {
+  std::ifstream ifs(path, std::ios::binary);
+  if (!ifs.is_open()) {
+    if (error) *error = "Failed to open: " + path;
+    return false;
+  }
+
+  ifs.seekg(0, std::ios::end);
+  const std::streamsize size = ifs.tellg();
+  if (size <= 0) {
+    if (error) *error = "File is empty: " + path;
+    return false;
+  }
+
+  ifs.seekg(0, std::ios::beg);
+  out->resize(static_cast<size_t>(size));
+  if (!ifs.read(reinterpret_cast<char*>(out->data()), size)) {
+    if (error) *error = "Failed to read: " + path;
+    return false;
+  }
+
+  return true;
+}
+
+}  // namespace
 
 struct GBACoreHandle {
   gba::GBACore core;
@@ -28,7 +56,7 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* rom_path) {
   }
 
   handle->last_error.clear();
-  if (!gba::LoadFile(std::string(rom_path), &handle->rom_buffer, &handle->last_error) ||
+  if (!LoadFile(std::string(rom_path), &handle->rom_buffer, &handle->last_error) ||
       handle->rom_buffer.empty()) {
     if (handle->last_error.empty()) {
       handle->last_error = "ROM file loading failed";
@@ -53,7 +81,7 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* bios_path) {
 
   handle->last_error.clear();
   std::vector<uint8_t> bios_buffer;
-  if (!gba::LoadFile(std::string(bios_path), &bios_buffer, &handle->last_error) ||
+  if (!LoadFile(std::string(bios_path), &bios_buffer, &handle->last_error) ||
       bios_buffer.empty()) {
     if (handle->last_error.empty()) {
       handle->last_error = "BIOS file loading failed";

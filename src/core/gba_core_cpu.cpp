@@ -1,5 +1,4 @@
 #include "gba_core.h"
-#include "mgba_compat.h"
 
 #include <algorithm>
 #include <bit>
