@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 
 namespace gba {
 uint32_t GBACore::RotateRight(uint32_t value, unsigned bits) const {
@@ -235,6 +236,11 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       // Minimal HLE: avoid lockups in polling loops on incomplete IRQ/BIOS flows.
       cpu_.regs[15] = next_pc;
       return true;
+    case 0x02u:  // Halt
+    case 0x03u:  // Stop (approximated as Halt)
+      cpu_.halted = true;
+      cpu_.regs[15] = next_pc;
+      return true;
     case 0x06u: {  // Div
       const int32_t num = static_cast<int32_t>(cpu_.regs[0]);
       const int32_t den = static_cast<int32_t>(cpu_.regs[1]);
@@ -249,6 +255,29 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
         cpu_.regs[1] = static_cast<uint32_t>(r);
         cpu_.regs[3] = static_cast<uint32_t>(q < 0 ? -q : q);
       }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x07u: {  // DivArm (R0=denom, R1=numer)
+      const int32_t den = static_cast<int32_t>(cpu_.regs[0]);
+      const int32_t num = static_cast<int32_t>(cpu_.regs[1]);
+      if (den == 0) {
+        cpu_.regs[0] = 0;
+        cpu_.regs[1] = static_cast<uint32_t>(num);
+        cpu_.regs[3] = 0;
+      } else {
+        const int32_t q = num / den;
+        const int32_t r = num % den;
+        cpu_.regs[0] = static_cast<uint32_t>(q);
+        cpu_.regs[1] = static_cast<uint32_t>(r);
+        cpu_.regs[3] = static_cast<uint32_t>(q < 0 ? -q : q);
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x08u: {  // Sqrt
+      const uint32_t x = cpu_.regs[0];
+      cpu_.regs[0] = static_cast<uint32_t>(std::sqrt(static_cast<double>(x)));
       cpu_.regs[15] = next_pc;
       return true;
     }
@@ -1262,7 +1291,12 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
-  if (cpu_.halted) return;
+  if (cpu_.halted) {
+    const uint16_t ie = ReadIO16(0x04000200u);
+    const uint16_t iflags = ReadIO16(0x04000202u);
+    if ((ie & iflags) == 0) return;
+    cpu_.halted = false;
+  }
   auto is_exec_addr_valid = [&](uint32_t addr) -> bool {
     if (bios_loaded_ && addr < 0x00004000u) return true;  // BIOS
     if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) return true;  // EWRAM mirror
