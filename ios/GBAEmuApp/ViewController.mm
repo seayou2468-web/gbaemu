@@ -192,8 +192,14 @@
                 [self.engine stepFrame];
             }
             [self renderCurrentFrame];
-            self.statusLabel.text = @"ROMを読み込みました";
-            [self appendLog:[NSString stringWithFormat:@"ROM load ok: %@", url.lastPathComponent ?: @"(unknown)"]];
+            NSString *coreMessage = [self.engine lastErrorMessage];
+            if (coreMessage.length > 0 && ![coreMessage isEqualToString:@"(no error)"]) {
+                self.statusLabel.text = [NSString stringWithFormat:@"ROM読み込み完了（注意: %@）", coreMessage];
+                [self appendLog:[NSString stringWithFormat:@"ROM load ok with warning: %@ (%@)", url.lastPathComponent ?: @"(unknown)", coreMessage]];
+            } else {
+                self.statusLabel.text = @"ROMを読み込みました";
+                [self appendLog:[NSString stringWithFormat:@"ROM load ok: %@", url.lastPathComponent ?: @"(unknown)"]];
+            }
         } else {
             self.romLoaded = NO;
             self.romStatusLabel.text = @"ROM: 読み込み失敗";

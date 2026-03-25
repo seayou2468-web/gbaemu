@@ -67,13 +67,11 @@ bool GBACore::LoadROM(const std::vector<uint8_t>& rom, std::string* error) {
   rom_info_.logo_valid = ValidateNintendoLogo();
   rom_info_.complement_check_valid = (rom_info_.complement_check == rom_info_.computed_complement_check);
 
-  if (rom_info_.fixed_value != 0x96) {
-    if (error) *error = "Invalid Nintendo header fixed value at 0xB2.";
-    loaded_ = false;
-    return false;
+  // Some homebrew/test ROMs can intentionally alter header fields.
+  // Keep validity flags for diagnostics, but do not hard-fail loading.
+  if (rom_info_.fixed_value != 0x96 && error) {
+    *error = "Warning: Header fixed value at 0xB2 is not 0x96.";
   }
-  // Some homebrew/test ROMs can intentionally alter logo/complement fields.
-  // Keep the validity flags for diagnostics, but do not hard-fail loading.
   if (!rom_info_.logo_valid && error) {
     *error = "Warning: Nintendo logo area mismatch (0x04-0x9F).";
   }
