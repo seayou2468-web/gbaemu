@@ -85,6 +85,7 @@ class GBACore {
   void DebugWrite32(uint32_t addr, uint32_t value);
   uint32_t DebugGetPC() const { return cpu_.regs[15]; }
   uint32_t DebugGetCPSR() const { return cpu_.cpsr; }
+  uint32_t DebugGetReg(size_t index) const { return cpu_.regs[index & 0xFu]; }
 
  private:
   static constexpr uint32_t kCyclesPerFrame = 280896;
