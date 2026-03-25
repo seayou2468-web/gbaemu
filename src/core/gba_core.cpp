@@ -262,7 +262,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   std::vector<uint8_t> blob;
   blob.reserve(512 * 1024);
   blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
-  append_u32(&blob, 9u);  // version
+  append_u32(&blob, 10u);  // version
   append_u64(&blob, frame_count_);
   append_u64(&blob, executed_cycles_);
   append_u32(&blob, cpu_.cpsr);
@@ -284,6 +284,25 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   append_u32(&blob, apu_phase_sq2_);
   append_u32(&blob, apu_phase_wave_);
   append_u32(&blob, apu_noise_lfsr_);
+  append_u32(&blob, apu_frame_seq_cycles_);
+  append_u32(&blob, apu_frame_seq_step_);
+  append_u32(&blob, apu_env_ch1_);
+  append_u32(&blob, apu_env_ch2_);
+  append_u32(&blob, apu_env_ch4_);
+  append_u32(&blob, apu_env_timer_ch1_);
+  append_u32(&blob, apu_env_timer_ch2_);
+  append_u32(&blob, apu_env_timer_ch4_);
+  append_u32(&blob, apu_len_ch1_);
+  append_u32(&blob, apu_len_ch2_);
+  append_u32(&blob, apu_len_ch3_);
+  append_u32(&blob, apu_len_ch4_);
+  append_u32(&blob, apu_ch1_sweep_freq_);
+  append_u32(&blob, apu_ch1_sweep_timer_);
+  append_u32(&blob, apu_ch1_sweep_enabled_ ? 1u : 0u);
+  append_u32(&blob, apu_ch1_active_ ? 1u : 0u);
+  append_u32(&blob, apu_ch2_active_ ? 1u : 0u);
+  append_u32(&blob, apu_ch3_active_ ? 1u : 0u);
+  append_u32(&blob, apu_ch4_active_ ? 1u : 0u);
   append_u32(&blob, static_cast<uint32_t>(fifo_a_.size()));
   for (uint8_t b : fifo_a_) append_u32(&blob, b);
   append_u32(&blob, static_cast<uint32_t>(fifo_b_.size()));
@@ -337,7 +356,7 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   uint32_t version = 0;
   if (!read_u32(&off, &version) ||
       (version != 1u && version != 2u && version != 3u && version != 4u && version != 5u &&
-       version != 6u && version != 7u && version != 8u && version != 9u)) {
+       version != 6u && version != 7u && version != 8u && version != 9u && version != 10u)) {
     if (error) *error = "Unsupported savestate version.";
     return false;
   }
@@ -397,6 +416,45 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
           if (!read_u32(&off, &apu_phase_wave_)) return false;
           if (!read_u32(&off, &tmp32)) return false;
           apu_noise_lfsr_ = static_cast<uint16_t>(tmp32 & 0x7FFFu);
+          if (version >= 10u) {
+            if (!read_u32(&off, &apu_frame_seq_cycles_)) return false;
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_frame_seq_step_ = static_cast<uint8_t>(tmp32 & 0x7u);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_env_ch1_ = static_cast<uint8_t>(tmp32 & 0xFu);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_env_ch2_ = static_cast<uint8_t>(tmp32 & 0xFu);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_env_ch4_ = static_cast<uint8_t>(tmp32 & 0xFu);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_env_timer_ch1_ = static_cast<uint8_t>(tmp32 & 0x7u);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_env_timer_ch2_ = static_cast<uint8_t>(tmp32 & 0x7u);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_env_timer_ch4_ = static_cast<uint8_t>(tmp32 & 0x7u);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_len_ch1_ = static_cast<uint8_t>(tmp32 & 0x3Fu);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_len_ch2_ = static_cast<uint8_t>(tmp32 & 0x3Fu);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_len_ch3_ = static_cast<uint16_t>(tmp32 & 0xFFu);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_len_ch4_ = static_cast<uint8_t>(tmp32 & 0x3Fu);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_ch1_sweep_freq_ = static_cast<uint16_t>(tmp32 & 0x7FFu);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_ch1_sweep_timer_ = static_cast<uint8_t>(tmp32 & 0x7u);
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_ch1_sweep_enabled_ = (tmp32 & 1u) != 0;
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_ch1_active_ = (tmp32 & 1u) != 0;
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_ch2_active_ = (tmp32 & 1u) != 0;
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_ch3_active_ = (tmp32 & 1u) != 0;
+            if (!read_u32(&off, &tmp32)) return false;
+            apu_ch4_active_ = (tmp32 & 1u) != 0;
+          }
         } else {
           apu_phase_sq1_ = 0;
           apu_phase_sq2_ = 0;

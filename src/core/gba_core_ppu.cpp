@@ -395,11 +395,20 @@ void GBACore::BuildObjWindowMask() {
         const int sx = x + px;
         if (sx < 0 || sx >= kScreenWidth) continue;
         int tx = 0, ty = 0;
+        int sample_px = px;
+        int sample_py = py;
+        if (mosaic) {
+          const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
+          const int mos_h = static_cast<int>(((mosaic_reg >> 8) & 0xFu) + 1);
+          const int mos_v = static_cast<int>(((mosaic_reg >> 12) & 0xFu) + 1);
+          sample_px = (px / mos_h) * mos_h;
+          sample_py = (py / mos_v) * mos_v;
+        }
         if (affine) {
           const int cx = draw_w / 2;
           const int cy = draw_h / 2;
-          const int dx = px - cx;
-          const int dy = py - cy;
+          const int dx = sample_px - cx;
+          const int dy = sample_py - cy;
           const int src_cx = src_w / 2;
           const int src_cy = src_h / 2;
           tx = src_cx + static_cast<int>((static_cast<int32_t>(pa) * dx +
@@ -410,8 +419,8 @@ void GBACore::BuildObjWindowMask() {
                                          8);
           if (tx < 0 || ty < 0 || tx >= src_w || ty >= src_h) continue;
         } else {
-          tx = hflip ? (src_w - 1 - px) : px;
-          ty = vflip ? (src_h - 1 - py) : py;
+          tx = hflip ? (src_w - 1 - sample_px) : sample_px;
+          ty = vflip ? (src_h - 1 - sample_py) : sample_py;
         }
 
         uint16_t color_index = 0;
