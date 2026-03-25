@@ -119,4 +119,15 @@
     return data;
 }
 
+- (NSString *)lastErrorMessage {
+    if (_handle == NULL) {
+        return @"core handle is null";
+    }
+    const char *lastError = GBA_GetLastError(_handle);
+    if (lastError == NULL || lastError[0] == '\0') {
+        return @"(no error)";
+    }
+    return [NSString stringWithUTF8String:lastError];
+}
+
 @end
