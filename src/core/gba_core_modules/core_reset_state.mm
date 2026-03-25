@@ -1,3 +1,9 @@
+#include "gba_core.h"
+
+#include <algorithm>
+
+namespace gba {
+
 void GBACore::Reset() {
   frame_count_ = 0;
   executed_cycles_ = 0;
@@ -139,3 +145,4 @@ void GBACore::ImportBackupData(const std::vector<uint8_t>& data) {
   }
 }
 
+}  // namespace gba

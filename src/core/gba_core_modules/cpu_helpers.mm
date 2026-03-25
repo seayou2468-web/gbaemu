@@ -1,3 +1,6 @@
+#ifndef GBA_CORE_CPU_HELPERS_IMPL
+#define GBA_CORE_CPU_HELPERS_IMPL
+
 // ---- BEGIN gba_core_cpu.cpp ----
 #include "gba_core.h"
 
@@ -297,3 +300,6 @@ void GBACore::HandleCpuSet(bool fast_mode) {
   }
 }
 
+}  // namespace gba
+
+#endif  // GBA_CORE_CPU_HELPERS_IMPL

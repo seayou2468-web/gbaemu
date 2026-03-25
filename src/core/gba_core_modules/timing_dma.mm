@@ -1,3 +1,7 @@
+#include "gba_core.h"
+
+namespace gba {
+
 void GBACore::StepPpu(uint32_t cycles) {
   constexpr uint32_t kHBlankStartCycle = mgba_compat::kVideoHDrawCycles;
   auto write_io_raw16 = [&](uint32_t addr, uint16_t value) {
@@ -219,3 +223,4 @@ void GBACore::ConsumeAudioFifoOnTimer(size_t timer_index) {
   }
 }
 
+}  // namespace gba

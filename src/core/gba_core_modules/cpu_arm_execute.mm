@@ -1,3 +1,7 @@
+#include "gba_core.h"
+
+namespace gba {
+
 void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   auto arm_reg_value = [&](uint32_t reg) -> uint32_t {
     if ((reg & 0xFu) == 15u) return cpu_.regs[15] + 8u;
@@ -563,3 +567,4 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   return;
 }
 
+}  // namespace gba

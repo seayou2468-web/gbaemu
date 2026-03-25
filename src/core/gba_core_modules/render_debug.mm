@@ -1,3 +1,8 @@
+#include "gba_core.h"
+#include "ppu_common.mm"
+
+namespace gba {
+
 void GBACore::ApplyColorEffects() {
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);

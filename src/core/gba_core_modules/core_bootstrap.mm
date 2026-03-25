@@ -117,3 +117,4 @@ void GBACore::LoadBuiltInBIOS() {
   }
 }
 
+}  // namespace gba

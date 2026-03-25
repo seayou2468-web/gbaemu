@@ -1,3 +1,10 @@
+#include "gba_core.h"
+#include "cpu_helpers.mm"
+
+#include <limits>
+
+namespace gba {
+
 bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
   // When any BIOS image is mapped (external or built-in mGBA HLE BIOS),
   // dispatch SWI via SVC exception and let BIOS code execute the service.
@@ -454,3 +461,4 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
   }
 }
 
+}  // namespace gba

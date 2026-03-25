@@ -1,3 +1,8 @@
+#include "gba_core.h"
+#include "ppu_common.mm"
+
+namespace gba {
+
 void GBACore::RenderMode0Frame() {
   EnsureBgPriorityBufferSize();
   EnsureBgLayerBufferSize();
@@ -517,3 +522,4 @@ void GBACore::RenderMode2Frame() {
   }
 }
 
+}  // namespace gba

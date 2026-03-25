@@ -1,3 +1,6 @@
+#ifndef GBA_CORE_PPU_COMMON_IMPL
+#define GBA_CORE_PPU_COMMON_IMPL
+
 // ---- BEGIN gba_core_ppu.cpp ----
 #include "gba_core.h"
 
@@ -202,3 +205,7 @@ uint16_t LayerToBlendMask(uint8_t layer, bool top_is_obj) {
   return static_cast<uint16_t>(1u << 5);  // Backdrop
 }
 }  // namespace
+
+}  // namespace gba
+
+#endif  // GBA_CORE_PPU_COMMON_IMPL

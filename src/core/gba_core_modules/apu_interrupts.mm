@@ -1,3 +1,8 @@
+#include "gba_core.h"
+#include "ppu_common.mm"
+
+namespace gba {
+
 void GBACore::StepApu(uint32_t cycles) {
   // Lightweight APU model: PSG + FIFO mix.
   uint16_t soundcnt_x = ReadIO16(0x04000084u);
@@ -339,3 +344,4 @@ void GBACore::ServiceInterruptIfNeeded() {
   // No safe vector installed; keep pending flags latched for polling code.
 }
 
+}  // namespace gba

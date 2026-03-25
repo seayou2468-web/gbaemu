@@ -1,3 +1,7 @@
+#include "gba_core.h"
+
+namespace gba {
+
 void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   // Shift by immediate (LSL/LSR/ASR)
   // Thumb format 1 is 000xx (xx=00/01/10). Exclude 00011 (ADD/SUB format 2).

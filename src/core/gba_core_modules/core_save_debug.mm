@@ -1,3 +1,9 @@
+#include "gba_core.h"
+
+#include <algorithm>
+
+namespace gba {
+
 std::vector<uint8_t> GBACore::SaveStateBlob() const {
   auto append_u32 = [](std::vector<uint8_t>* out, uint32_t v) {
     out->push_back(static_cast<uint8_t>(v & 0xFF));
@@ -341,3 +347,4 @@ void GBACore::DebugWrite8(uint32_t addr, uint8_t value) { Write8(addr, value); }
 void GBACore::DebugWrite16(uint32_t addr, uint16_t value) { Write16(addr, value); }
 void GBACore::DebugWrite32(uint32_t addr, uint32_t value) { Write32(addr, value); }
 
+}  // namespace gba

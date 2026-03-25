@@ -1,3 +1,8 @@
+#include "gba_core.h"
+#include "ppu_common.mm"
+
+namespace gba {
+
 void GBACore::RenderMode3Frame() {
   // Mode 3: 240x160 direct color (BGR555) in VRAM.
   EnsureBgPriorityBufferSize();
@@ -643,3 +648,4 @@ void GBACore::RenderSprites() {
   }
 }
 
+}  // namespace gba
