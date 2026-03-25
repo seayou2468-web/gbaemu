@@ -1,9 +1,9 @@
-#import "ViewController.h"
+#import "./ViewController.h"
 
 #import <dispatch/dispatch.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-#import "CoreWrapper/GBAEngine.h"
+#import "./CoreWrapper/GBAEngine.h"
 
 @interface ViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, strong) UILabel *statusLabel;

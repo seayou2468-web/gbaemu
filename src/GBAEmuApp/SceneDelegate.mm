@@ -1,5 +1,5 @@
-#import "SceneDelegate.h"
-#import "ViewController.h"
+#import "./SceneDelegate.h"
+#import "./ViewController.h"
 
 @implementation SceneDelegate
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-TARGET_DIR="$ROOT_DIR/ios/GBAEmuApp"
+TARGET_DIR="$ROOT_DIR/src/GBAEmuApp"
 
 if [[ ! -d "$TARGET_DIR" ]]; then
   echo "target directory not found: $TARGET_DIR" >&2
@@ -28,4 +28,4 @@ if [[ "$failed" -ne 0 ]]; then
   exit 2
 fi
 
-echo "OK: No C++ token leakage into .m/.h files under ios/GBAEmuApp"
+echo "OK: No C++ token leakage into .m/.h files under src/GBAEmuApp"

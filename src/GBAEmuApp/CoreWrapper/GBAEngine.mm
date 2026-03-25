@@ -1,8 +1,8 @@
-#import "GBAEngine.h"
+#import "./GBAEngine.h"
 
 #include <cstdint>
 
-#import "../../../src/core/gba_core_c_api.h"
+#import "../../core/gba_core_c_api.h"
 
 @implementation GBAEngine {
     GBACoreHandle *_handle;
