@@ -307,6 +307,62 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     return;
   }
 
+  // Halfword/signed data transfer (LDRH/STRH/LDRSB/LDRSH)
+  if ((opcode & 0x0E000090u) == 0x00000090u && (opcode & 0x0FC000F0u) != 0x00000090u) {
+    const bool pre = (opcode & (1u << 24)) != 0;
+    const bool up = (opcode & (1u << 23)) != 0;
+    const bool imm = (opcode & (1u << 22)) != 0;
+    const bool write_back = (opcode & (1u << 21)) != 0;
+    const bool load = (opcode & (1u << 20)) != 0;
+    const uint32_t rn = (opcode >> 16) & 0xFu;
+    const uint32_t rd = (opcode >> 12) & 0xFu;
+    const uint32_t s = (opcode >> 6) & 0x1u;
+    const uint32_t h = (opcode >> 5) & 0x1u;
+
+    uint32_t offset = 0;
+    if (imm) {
+      offset = ((opcode >> 8) & 0xFu) << 4;
+      offset |= (opcode & 0xFu);
+    } else {
+      offset = arm_reg_value(opcode & 0xFu);
+    }
+
+    uint32_t addr = arm_reg_value(rn);
+    if (pre) {
+      addr = up ? (addr + offset) : (addr - offset);
+    }
+
+    if (load) {
+      uint32_t value = 0;
+      if (s == 0u && h == 1u) {  // LDRH
+        value = Read16(addr & ~1u);
+      } else if (s == 1u && h == 0u) {  // LDRSB
+        value = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(Read8(addr))));
+      } else if (s == 1u && h == 1u) {  // LDRSH
+        value = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(Read16(addr & ~1u))));
+      } else {
+        // Reserved encoding; treat as no-op-like unknown transfer.
+        cpu_.regs[15] += 4;
+        return;
+      }
+      cpu_.regs[rd] = value;
+    } else {
+      if (s == 0u && h == 1u) {  // STRH
+        Write16(addr & ~1u, static_cast<uint16_t>(arm_reg_value(rd) & 0xFFFFu));
+      } else {
+        cpu_.regs[15] += 4;
+        return;
+      }
+    }
+
+    if (!pre) {
+      addr = up ? (addr + offset) : (addr - offset);
+    }
+    if (write_back || !pre) cpu_.regs[rn] = addr;
+    cpu_.regs[15] += 4;
+    return;
+  }
+
   // MUL / MLA
   if ((opcode & 0x0FC000F0u) == 0x00000090u) {
     const bool set_flags = (opcode & (1u << 20)) != 0;
