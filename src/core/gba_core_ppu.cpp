@@ -25,6 +25,21 @@ void EnsureBgPriorityBufferSize() {
   }
 }
 
+std::vector<uint8_t>& ObjWindowMaskBuffer() {
+  static std::vector<uint8_t> buffer;
+  return buffer;
+}
+
+void EnsureObjWindowMaskBufferSize() {
+  auto& buffer = ObjWindowMaskBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0u);
+  }
+}
+
 uint32_t Bgr555ToRgba8888(uint16_t bgr) {
   const uint8_t r5 = static_cast<uint8_t>((bgr >> 0) & 0x1F);
   const uint8_t g5 = static_cast<uint8_t>((bgr >> 5) & 0x1F);
@@ -49,12 +64,14 @@ bool IsWithinWindowAxis(int p, int start, int end) {
   return p >= start || p < end;
 }
 
-bool IsBgVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+uint8_t ResolveWindowControl(uint16_t dispcnt, uint16_t winin, uint16_t winout,
                          uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
-                         int bg, int x, int y) {
+                         const std::vector<uint8_t>& obj_window_mask,
+                         int x, int y) {
   const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
   const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
-  if (!win0_enabled && !win1_enabled) return true;
+  const bool objwin_enabled = (dispcnt & (1u << 15)) != 0;
+  if (!win0_enabled && !win1_enabled && !objwin_enabled) return 0x3Fu;
 
   const int win0_l = std::min<int>(240, (win0h >> 8) & 0xFFu);
   const int win0_r = std::min<int>(240, win0h & 0xFFu);
@@ -73,33 +90,32 @@ bool IsBgVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
   uint8_t control = static_cast<uint8_t>(winout & 0xFFu);  // outside window
   if (in_win0) control = static_cast<uint8_t>(winin & 0xFFu);
   else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
+  else if (objwin_enabled) {
+    const size_t off = static_cast<size_t>(y) * GBACore::kScreenWidth + x;
+    if (off < obj_window_mask.size() && obj_window_mask[off] != 0) {
+      control = static_cast<uint8_t>((winout >> 8) & 0x3Fu);
+    }
+  }
+  return control;
+}
+
+bool IsBgVisibleByWindow(uint8_t control, int bg) {
   return (control & (1u << bg)) != 0;
+}
+
+bool IsBgVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                         uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                         int bg, int x, int y) {
+  const uint8_t control =
+      ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
+  return IsBgVisibleByWindow(control, bg);
 }
 
 bool IsObjVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
                           uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
                           int x, int y) {
-  const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
-  const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
-  if (!win0_enabled && !win1_enabled) return true;
-
-  const int win0_l = std::min<int>(240, (win0h >> 8) & 0xFFu);
-  const int win0_r = std::min<int>(240, win0h & 0xFFu);
-  const int win0_t = std::min<int>(160, (win0v >> 8) & 0xFFu);
-  const int win0_b = std::min<int>(160, win0v & 0xFFu);
-  const int win1_l = std::min<int>(240, (win1h >> 8) & 0xFFu);
-  const int win1_r = std::min<int>(240, win1h & 0xFFu);
-  const int win1_t = std::min<int>(160, (win1v >> 8) & 0xFFu);
-  const int win1_b = std::min<int>(160, win1v & 0xFFu);
-
-  const bool in_win0 = win0_enabled && IsWithinWindowAxis(x, win0_l, win0_r) &&
-                       IsWithinWindowAxis(y, win0_t, win0_b);
-  const bool in_win1 = win1_enabled && IsWithinWindowAxis(x, win1_l, win1_r) &&
-                       IsWithinWindowAxis(y, win1_t, win1_b);
-
-  uint8_t control = static_cast<uint8_t>(winout & 0xFFu);
-  if (in_win0) control = static_cast<uint8_t>(winin & 0xFFu);
-  else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
+  const uint8_t control = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v,
+                                               ObjWindowMaskBuffer(), x, y);
   return (control & (1u << 4)) != 0;
 }
 }  // namespace
@@ -307,6 +323,131 @@ void GBACore::RenderMode5Frame() {
   }
 }
 
+void GBACore::BuildObjWindowMask() {
+  EnsureObjWindowMaskBufferSize();
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  if ((dispcnt & (1u << 15)) == 0 || (dispcnt & (1u << 12)) == 0) return;
+
+  static constexpr int kObjDim[3][4][2] = {
+      {{8, 8}, {16, 16}, {32, 32}, {64, 64}},
+      {{16, 8}, {32, 8}, {32, 16}, {64, 32}},
+      {{8, 16}, {8, 32}, {16, 32}, {32, 64}},
+  };
+  const bool obj_1d = (dispcnt & (1u << 6)) != 0;
+  auto& mask = ObjWindowMaskBuffer();
+
+  for (int obj = 127; obj >= 0; --obj) {
+    const size_t off = static_cast<size_t>(obj * 8);
+    if (off + 5 >= oam_.size()) continue;
+    const uint16_t attr0 = static_cast<uint16_t>(oam_[off]) |
+                           static_cast<uint16_t>(oam_[off + 1] << 8);
+    const uint16_t attr1 = static_cast<uint16_t>(oam_[off + 2]) |
+                           static_cast<uint16_t>(oam_[off + 3] << 8);
+    const uint16_t attr2 = static_cast<uint16_t>(oam_[off + 4]) |
+                           static_cast<uint16_t>(oam_[off + 5] << 8);
+    if (((attr0 >> 8) & 0x3u) != 2u) continue;  // OBJ window
+
+    const bool affine = (attr0 & (1u << 8)) != 0;
+    const bool double_size = affine && ((attr0 & (1u << 9)) != 0);
+    const int shape = (attr0 >> 14) & 0x3;
+    const int size = (attr1 >> 14) & 0x3;
+    if (shape >= 3) continue;
+    const int src_w = kObjDim[shape][size][0];
+    const int src_h = kObjDim[shape][size][1];
+    const int draw_w = double_size ? (src_w * 2) : src_w;
+    const int draw_h = double_size ? (src_h * 2) : src_h;
+
+    int y = attr0 & 0xFF;
+    int x = attr1 & 0x1FF;
+    if (y >= 160) y -= 256;
+    if (x >= 240) x -= 512;
+
+    const bool color_256 = (attr0 & (1u << 13)) != 0;
+    const bool hflip = (attr1 & (1u << 12)) != 0;
+    const bool vflip = (attr1 & (1u << 13)) != 0;
+    const uint16_t tile_id = attr2 & 0x03FFu;
+    const uint16_t palbank = static_cast<uint16_t>((attr2 >> 12) & 0xFu);
+    const size_t obj_chr_base = 0x10000u;
+
+    int16_t pa = 0, pb = 0, pc = 0, pd = 0;
+    if (affine) {
+      const uint16_t affine_idx = static_cast<uint16_t>((attr1 >> 9) & 0x1Fu);
+      const size_t pa_off = static_cast<size_t>(affine_idx) * 0x20u + 0x06u;
+      const size_t pb_off = static_cast<size_t>(affine_idx) * 0x20u + 0x0Eu;
+      const size_t pc_off = static_cast<size_t>(affine_idx) * 0x20u + 0x16u;
+      const size_t pd_off = static_cast<size_t>(affine_idx) * 0x20u + 0x1Eu;
+      if (pd_off + 1 >= oam_.size()) continue;
+      pa = static_cast<int16_t>(static_cast<uint16_t>(oam_[pa_off]) |
+                                static_cast<uint16_t>(oam_[pa_off + 1] << 8));
+      pb = static_cast<int16_t>(static_cast<uint16_t>(oam_[pb_off]) |
+                                static_cast<uint16_t>(oam_[pb_off + 1] << 8));
+      pc = static_cast<int16_t>(static_cast<uint16_t>(oam_[pc_off]) |
+                                static_cast<uint16_t>(oam_[pc_off + 1] << 8));
+      pd = static_cast<int16_t>(static_cast<uint16_t>(oam_[pd_off]) |
+                                static_cast<uint16_t>(oam_[pd_off + 1] << 8));
+    }
+
+    for (int py = 0; py < draw_h; ++py) {
+      const int sy = y + py;
+      if (sy < 0 || sy >= kScreenHeight) continue;
+      for (int px = 0; px < draw_w; ++px) {
+        const int sx = x + px;
+        if (sx < 0 || sx >= kScreenWidth) continue;
+        int tx = 0, ty = 0;
+        if (affine) {
+          const int cx = draw_w / 2;
+          const int cy = draw_h / 2;
+          const int dx = px - cx;
+          const int dy = py - cy;
+          const int src_cx = src_w / 2;
+          const int src_cy = src_h / 2;
+          tx = src_cx + static_cast<int>((static_cast<int32_t>(pa) * dx +
+                                          static_cast<int32_t>(pb) * dy) >>
+                                         8);
+          ty = src_cy + static_cast<int>((static_cast<int32_t>(pc) * dx +
+                                          static_cast<int32_t>(pd) * dy) >>
+                                         8);
+          if (tx < 0 || ty < 0 || tx >= src_w || ty >= src_h) continue;
+        } else {
+          tx = hflip ? (src_w - 1 - px) : px;
+          ty = vflip ? (src_h - 1 - py) : py;
+        }
+
+        uint16_t color_index = 0;
+        if (color_256) {
+          const int tile_x = tx / 8;
+          const int tile_y = ty / 8;
+          const int in_x = tx & 7;
+          const int in_y = ty & 7;
+          const int tile_stride = obj_1d ? (src_w / 8) : 32;
+          const size_t chr_off = obj_chr_base +
+                                 static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 64 +
+                                                     in_y * 8 + in_x);
+          if (chr_off >= vram_.size()) continue;
+          color_index = vram_[chr_off];
+        } else {
+          const int tile_x = tx / 8;
+          const int tile_y = ty / 8;
+          const int in_x = tx & 7;
+          const int in_y = ty & 7;
+          const int tile_stride = obj_1d ? (src_w / 8) : 32;
+          const size_t chr_off = obj_chr_base +
+                                 static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 32 +
+                                                     in_y * 4 + in_x / 2);
+          if (chr_off >= vram_.size()) continue;
+          const uint8_t packed = vram_[chr_off];
+          const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
+          if (nib == 0u) continue;
+          color_index = static_cast<uint16_t>(palbank * 16u + nib);
+        }
+        if (color_256 && color_index == 0u) continue;
+        const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
+        mask[fb_off] = 1u;
+      }
+    }
+  }
+}
+
 void GBACore::RenderSprites() {
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   if ((dispcnt & (1u << 12)) == 0) return;  // OBJ disable
@@ -316,6 +457,12 @@ void GBACore::RenderSprites() {
   const uint16_t win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u);
   const uint16_t win1v = ReadIO16(0x04000046u);
+  const uint16_t bldcnt = ReadIO16(0x04000050u);
+  const uint16_t bldalpha = ReadIO16(0x04000052u);
+  const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
+  const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
+  const bool obj_is_1st_target = (bldcnt & (1u << 4)) != 0;
+  const bool any_2nd_target = ((bldcnt >> 8) & 0x3Fu) != 0;
 
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
@@ -350,7 +497,7 @@ void GBACore::RenderSprites() {
                            static_cast<uint16_t>(oam_[off + 5] << 8);
 
     const uint16_t obj_mode = (attr0 >> 8) & 0x3u;
-    if (obj_mode == 2u) continue;  // OBJ window unsupported
+    if (obj_mode == 2u) continue;  // OBJ-window sprites are consumed by BuildObjWindowMask().
     const bool affine = (attr0 & (1u << 8)) != 0;
     const bool double_size = affine && ((attr0 & (1u << 9)) != 0);
 
@@ -457,7 +604,32 @@ void GBACore::RenderSprites() {
         if (color_256 && color_index == 0u) continue;  // transparent
         const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
         if (obj_priority > bg_priority[fb_off]) continue;
-        frame_buffer_[fb_off] = palette_color(color_index);
+        uint32_t obj_px = palette_color(color_index);
+        if (obj_mode == 1u) {
+          const uint8_t window_control = ResolveWindowControl(
+              dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), sx, sy);
+          const bool effects_enabled = (window_control & (1u << 5)) != 0;
+          if (!(effects_enabled && obj_is_1st_target && any_2nd_target)) {
+            frame_buffer_[fb_off] = obj_px;
+            bg_priority[fb_off] = obj_priority;
+            continue;
+          }
+          // Semi-transparent OBJ: approximate hardware blend using current
+          // framebuffer pixel as 2nd target.
+          const uint32_t under = frame_buffer_[fb_off];
+          const uint8_t sr = static_cast<uint8_t>((obj_px >> 16) & 0xFFu);
+          const uint8_t sg = static_cast<uint8_t>((obj_px >> 8) & 0xFFu);
+          const uint8_t sb = static_cast<uint8_t>(obj_px & 0xFFu);
+          const uint8_t ur = static_cast<uint8_t>((under >> 16) & 0xFFu);
+          const uint8_t ug = static_cast<uint8_t>((under >> 8) & 0xFFu);
+          const uint8_t ub = static_cast<uint8_t>(under & 0xFFu);
+          const uint8_t rr = ClampToByteLocal(static_cast<int>((sr * eva + ur * evb) / 16u));
+          const uint8_t rg = ClampToByteLocal(static_cast<int>((sg * eva + ug * evb) / 16u));
+          const uint8_t rb = ClampToByteLocal(static_cast<int>((sb * eva + ub * evb) / 16u));
+          obj_px = 0xFF000000u | (static_cast<uint32_t>(rr) << 16) |
+                   (static_cast<uint32_t>(rg) << 8) | rb;
+        }
+        frame_buffer_[fb_off] = obj_px;
         bg_priority[fb_off] = obj_priority;
       }
     }
@@ -1107,20 +1279,27 @@ void GBACore::StepApu(uint32_t cycles) {
     return (step < high) ? 48 : -48;
   };
 
-  int psg_mix = 0;
+  int ch1 = 0;
+  int ch2 = 0;
+  int ch3 = 0;
+  int ch4 = 0;
   if (soundcnt_x & 0x0001u) {  // CH1
     const uint16_t nr11 = ReadIO16(0x04000062u);
+    const uint16_t nr12 = ReadIO16(0x04000063u);
     const uint16_t nr13 = ReadIO16(0x04000064u);
     const uint16_t nr14 = ReadIO16(0x04000065u);
     const uint16_t freq = static_cast<uint16_t>(nr13 | ((nr14 & 0x7u) << 8));
-    psg_mix += square_sample(&apu_phase_sq1_, freq, nr11);
+    const int init_vol = static_cast<int>((nr12 >> 4) & 0xFu);
+    ch1 = (square_sample(&apu_phase_sq1_, freq, nr11) * init_vol) / 15;
   }
   if (soundcnt_x & 0x0002u) {  // CH2
     const uint16_t nr21 = ReadIO16(0x04000068u);
+    const uint16_t nr22 = ReadIO16(0x04000069u);
     const uint16_t nr23 = ReadIO16(0x0400006Cu);
     const uint16_t nr24 = ReadIO16(0x0400006Du);
     const uint16_t freq = static_cast<uint16_t>(nr23 | ((nr24 & 0x7u) << 8));
-    psg_mix += square_sample(&apu_phase_sq2_, freq, nr21);
+    const int init_vol = static_cast<int>((nr22 >> 4) & 0xFu);
+    ch2 = (square_sample(&apu_phase_sq2_, freq, nr21) * init_vol) / 15;
   }
   if (soundcnt_x & 0x0004u) {  // CH3 wave
     const uint16_t nr30 = ReadIO16(0x04000070u);
@@ -1131,37 +1310,61 @@ void GBACore::StepApu(uint32_t cycles) {
       const uint16_t n = static_cast<uint16_t>(nr33 | ((nr34 & 0x7u) << 8));
       const uint32_t hz = (2048u > n) ? (65536u / std::max<uint16_t>(1u, static_cast<uint16_t>(2048u - n))) : 0u;
       apu_phase_wave_ += hz * std::max<uint32_t>(1u, cycles);
-      const uint32_t sample_idx = (apu_phase_wave_ / 2048u) & 31u;
-      const size_t wave_off = static_cast<size_t>(sample_idx / 2u);
-      const uint8_t packed = (wave_off < 16u) ? io_regs_[0x90 + wave_off] : 0;
+      const bool two_bank_mode = (nr30 & (1u << 5)) != 0;
+      const bool bank_select = (nr30 & (1u << 6)) != 0;
+      const uint32_t sample_idx = (apu_phase_wave_ / 2048u) & (two_bank_mode ? 15u : 31u);
+      const size_t bank_base = two_bank_mode ? (bank_select ? 16u : 0u) : 0u;
+      const size_t wave_off = bank_base + static_cast<size_t>(sample_idx / 2u);
+      const uint8_t packed = (wave_off < 32u) ? io_regs_[0x90 + wave_off] : 0;
       uint8_t sample4 = (sample_idx & 1u) ? (packed & 0x0Fu) : (packed >> 4);
       const uint16_t vol_code = (nr32 >> 5) & 0x3u;
       if (vol_code == 0) sample4 = 0;
       else if (vol_code == 2) sample4 >>= 1;
       else if (vol_code == 3) sample4 >>= 2;
-      psg_mix += static_cast<int>(sample4) * 8 - 60;
+      ch3 = static_cast<int>(sample4) * 8 - 60;
     }
   }
   if (soundcnt_x & 0x0008u) {  // CH4 noise
+    const uint16_t nr42 = ReadIO16(0x04000077u);
     const uint16_t nr43 = ReadIO16(0x04000078u);
     const uint32_t div = (nr43 & 0x7u) == 0 ? 8u : (nr43 & 0x7u) * 16u;
     const uint32_t shift = (nr43 >> 4) & 0xFu;
     const uint32_t period = div << shift;
+    const bool narrow_7bit = (nr43 & (1u << 3)) != 0;
     for (uint32_t i = 0; i < std::max<uint32_t>(1u, cycles / std::max<uint32_t>(1u, period)); ++i) {
       const uint16_t x = static_cast<uint16_t>((apu_noise_lfsr_ ^ (apu_noise_lfsr_ >> 1)) & 1u);
       apu_noise_lfsr_ = static_cast<uint16_t>((apu_noise_lfsr_ >> 1) | (x << 14));
+      if (narrow_7bit) {
+        apu_noise_lfsr_ = static_cast<uint16_t>((apu_noise_lfsr_ & ~0x40u) | (x << 6));
+      }
     }
-    psg_mix += (apu_noise_lfsr_ & 1u) ? 28 : -28;
+    const int init_vol = static_cast<int>((nr42 >> 4) & 0xFu);
+    ch4 = ((apu_noise_lfsr_ & 1u) ? 28 : -28) * init_vol / 15;
   }
+
+  const bool right_ch1 = (soundcnt_l & (1u << 0)) != 0;
+  const bool right_ch2 = (soundcnt_l & (1u << 1)) != 0;
+  const bool right_ch3 = (soundcnt_l & (1u << 2)) != 0;
+  const bool right_ch4 = (soundcnt_l & (1u << 3)) != 0;
+  const bool left_ch1 = (soundcnt_l & (1u << 4)) != 0;
+  const bool left_ch2 = (soundcnt_l & (1u << 5)) != 0;
+  const bool left_ch3 = (soundcnt_l & (1u << 6)) != 0;
+  const bool left_ch4 = (soundcnt_l & (1u << 7)) != 0;
+  const int right_sum = (right_ch1 ? ch1 : 0) + (right_ch2 ? ch2 : 0) +
+                        (right_ch3 ? ch3 : 0) + (right_ch4 ? ch4 : 0);
+  const int left_sum = (left_ch1 ? ch1 : 0) + (left_ch2 ? ch2 : 0) +
+                       (left_ch3 ? ch3 : 0) + (left_ch4 ? ch4 : 0);
 
   const int left_vol = (soundcnt_l >> 4) & 0x7;
   const int right_vol = soundcnt_l & 0x7;
-  psg_mix = (psg_mix * (left_vol + right_vol + 1)) / 4;
+  const int psg_master = (soundcnt_h & 0x0003u) == 0 ? 1 : ((soundcnt_h & 0x0003u) == 1 ? 2 : 4);
+  int psg_mix = ((left_sum * left_vol) + (right_sum * right_vol)) / 8;
+  psg_mix = (psg_mix * psg_master) / 4;
 
   const int fifo_a_gain = (soundcnt_h & (1u << 2)) ? 2 : 1;
   const int fifo_b_gain = (soundcnt_h & (1u << 3)) ? 2 : 1;
   const int fifo_mix = fifo_a_last_sample_ * fifo_a_gain + fifo_b_last_sample_ * fifo_b_gain;
-  const int mixed = psg_mix + fifo_mix + static_cast<int>(cycles / 128u);
+  const int mixed = psg_mix + fifo_mix;
   audio_mix_level_ = static_cast<uint16_t>(ClampToByteLocal(mixed) & 0xFFu);
 }
 
@@ -1221,6 +1424,13 @@ void GBACore::ServiceInterruptIfNeeded() {
 }
 
 void GBACore::ApplyColorEffects() {
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
   const uint16_t bldcnt = ReadIO16(0x04000050u);
   const uint16_t bldalpha = ReadIO16(0x04000052u);
   const uint16_t bldy = ReadIO16(0x04000054u);
@@ -1228,26 +1438,39 @@ void GBACore::ApplyColorEffects() {
   if (mode == 0u) return;
 
   const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
+  const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
   const uint32_t evy = std::min<uint32_t>(16u, bldy & 0x1Fu);
-  for (uint32_t& px : frame_buffer_) {
-    uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
-    uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
-    uint8_t b = static_cast<uint8_t>(px & 0xFFu);
-    if (mode == 1u) {  // alpha blend (approximate against backdrop black)
-      r = ClampToByteLocal(static_cast<int>((r * eva) / 16u));
-      g = ClampToByteLocal(static_cast<int>((g * eva) / 16u));
-      b = ClampToByteLocal(static_cast<int>((b * eva) / 16u));
-    } else if (mode == 2u) {  // brighten
-      r = ClampToByteLocal(static_cast<int>(r + ((255 - r) * evy) / 16u));
-      g = ClampToByteLocal(static_cast<int>(g + ((255 - g) * evy) / 16u));
-      b = ClampToByteLocal(static_cast<int>(b + ((255 - b) * evy) / 16u));
-    } else if (mode == 3u) {  // darken
-      r = ClampToByteLocal(static_cast<int>(r - (r * evy) / 16u));
-      g = ClampToByteLocal(static_cast<int>(g - (g * evy) / 16u));
-      b = ClampToByteLocal(static_cast<int>(b - (b * evy) / 16u));
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+  const uint8_t back_r = static_cast<uint8_t>((backdrop >> 16) & 0xFFu);
+  const uint8_t back_g = static_cast<uint8_t>((backdrop >> 8) & 0xFFu);
+  const uint8_t back_b = static_cast<uint8_t>(backdrop & 0xFFu);
+  for (int y = 0; y < kScreenHeight; ++y) {
+    for (int x = 0; x < kScreenWidth; ++x) {
+      const uint8_t window_control =
+          ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
+      if ((window_control & (1u << 5)) == 0) continue;  // color effects masked by window
+      uint32_t& px = frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x];
+      uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
+      uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
+      uint8_t b = static_cast<uint8_t>(px & 0xFFu);
+      if (mode == 1u) {
+        // Improved approximation: blend against current backdrop color instead
+        // of hardcoded black. This reduces visible darkening artifacts.
+        r = ClampToByteLocal(static_cast<int>((r * eva + back_r * evb) / 16u));
+        g = ClampToByteLocal(static_cast<int>((g * eva + back_g * evb) / 16u));
+        b = ClampToByteLocal(static_cast<int>((b * eva + back_b * evb) / 16u));
+      } else if (mode == 2u) {  // brighten
+        r = ClampToByteLocal(static_cast<int>(r + ((255 - r) * evy) / 16u));
+        g = ClampToByteLocal(static_cast<int>(g + ((255 - g) * evy) / 16u));
+        b = ClampToByteLocal(static_cast<int>(b + ((255 - b) * evy) / 16u));
+      } else if (mode == 3u) {  // darken
+        r = ClampToByteLocal(static_cast<int>(r - (r * evy) / 16u));
+        g = ClampToByteLocal(static_cast<int>(g - (g * evy) / 16u));
+        b = ClampToByteLocal(static_cast<int>(b - (b * evy) / 16u));
+      }
+      px = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+           (static_cast<uint32_t>(g) << 8) | b;
     }
-    px = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-         (static_cast<uint32_t>(g) << 8) | b;
   }
 }
 
@@ -1265,6 +1488,7 @@ void GBACore::RenderDebugFrame() {
               static_cast<uint8_t>(kBackdropPriority));
     return;
   }
+  BuildObjWindowMask();
   const uint16_t bg_mode = dispcnt & 0x7u;
   if (bg_mode == 0u) {
     RenderMode0Frame();
