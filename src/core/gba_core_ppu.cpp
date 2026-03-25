@@ -57,6 +57,34 @@ void GBACore::RenderMode4Frame() {
   }
 }
 
+void GBACore::RenderMode5Frame() {
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const bool page1 = (dispcnt & (1u << 4)) != 0;
+  const size_t page_base = page1 ? 0xA000u : 0u;
+  constexpr int kMode5Width = 160;
+  constexpr int kMode5Height = 128;
+
+  std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFF000000u);
+
+  for (int y = 0; y < kMode5Height; ++y) {
+    for (int x = 0; x < kMode5Width; ++x) {
+      const size_t off = page_base + static_cast<size_t>((y * kMode5Width + x) * 2);
+      if (off + 1 >= vram_.size()) continue;
+      const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
+                              static_cast<uint16_t>(vram_[off + 1] << 8);
+      const uint8_t r5 = static_cast<uint8_t>((bgr555 >> 0) & 0x1F);
+      const uint8_t g5 = static_cast<uint8_t>((bgr555 >> 5) & 0x1F);
+      const uint8_t b5 = static_cast<uint8_t>((bgr555 >> 10) & 0x1F);
+      const uint8_t r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+      const uint8_t g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
+      const uint8_t b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
+      frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] =
+          0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+          (static_cast<uint32_t>(g) << 8) | b;
+    }
+  }
+}
+
 void GBACore::RenderSprites() {
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   if ((dispcnt & (1u << 12)) == 0) return;  // OBJ disable
@@ -641,6 +669,12 @@ void GBACore::RenderDebugFrame() {
   }
   if (bg_mode == 4u) {
     RenderMode4Frame();
+    RenderSprites();
+    ApplyColorEffects();
+    return;
+  }
+  if (bg_mode == 5u) {
+    RenderMode5Frame();
     RenderSprites();
     ApplyColorEffects();
     return;

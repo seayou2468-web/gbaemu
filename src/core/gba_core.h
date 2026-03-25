@@ -97,6 +97,7 @@ class GBACore {
   void RenderMode0Frame();
   void RenderMode3Frame();
   void RenderMode4Frame();
+  void RenderMode5Frame();
   void RenderSprites();
   void ApplyColorEffects();
   void StepPpu(uint32_t cycles);
