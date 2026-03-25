@@ -473,6 +473,79 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       cpu_.regs[15] = next_pc;
       return true;
     }
+    case 0x13u: {  // HuffUnComp (4-bit/8-bit)
+      uint32_t src = cpu_.regs[0];
+      const uint32_t dst = cpu_.regs[1];
+      const uint32_t header = Read32(src);
+      src += 4u;
+      if ((header & 0xFFu) != 0x20u) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
+      const uint32_t out_size = header >> 8;
+      const uint8_t data_bits = Read8(src++);
+      if (data_bits != 4u && data_bits != 8u) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
+      const uint8_t tree_size_field = Read8(src++);
+      const uint32_t tree_bytes = static_cast<uint32_t>(tree_size_field + 1u) * 2u;
+      const uint32_t tree_base = src;
+      uint32_t stream = src + tree_bytes;
+
+      auto read_stream_bit = [&](uint32_t* ptr, uint32_t* bitbuf, int* bits_left) -> uint32_t {
+        if (*bits_left == 0) {
+          *bitbuf = Read32(*ptr);
+          *ptr += 4u;
+          *bits_left = 32;
+        }
+        const uint32_t bit = (*bitbuf >> 31) & 1u;
+        *bitbuf <<= 1;
+        --(*bits_left);
+        return bit;
+      };
+
+      auto decode_symbol = [&](uint32_t* ptr, uint32_t* bitbuf, int* bits_left) -> uint8_t {
+        uint32_t node_off = 0u;
+        while (true) {
+          const uint8_t node = Read8(tree_base + node_off);
+          const uint32_t dir = read_stream_bit(ptr, bitbuf, bits_left);
+          const uint32_t child_off = node_off + (static_cast<uint32_t>(node & 0x3Fu) + 1u) * 2u;
+          const uint32_t entry_off = child_off + dir;
+          const bool terminal = (node & (dir ? 0x80u : 0x40u)) != 0;
+          if (terminal) {
+            return Read8(tree_base + entry_off);
+          }
+          node_off = entry_off;
+          if (node_off >= tree_bytes) return 0;
+        }
+      };
+
+      std::vector<uint8_t> out;
+      out.reserve(out_size);
+      uint32_t bitbuf = 0;
+      int bits_left = 0;
+      if (data_bits == 8u) {
+        while (out.size() < out_size) {
+          out.push_back(decode_symbol(&stream, &bitbuf, &bits_left));
+        }
+      } else {  // 4-bit
+        while (out.size() < out_size) {
+          const uint8_t lo = static_cast<uint8_t>(decode_symbol(&stream, &bitbuf, &bits_left) & 0x0Fu);
+          uint8_t byte = lo;
+          if (out.size() + 1u < out_size) {
+            const uint8_t hi = static_cast<uint8_t>(decode_symbol(&stream, &bitbuf, &bits_left) & 0x0Fu);
+            byte = static_cast<uint8_t>(lo | (hi << 4));
+          }
+          out.push_back(byte);
+        }
+      }
+      for (uint32_t i = 0; i < out.size(); ++i) {
+        Write8(dst + i, out[i]);
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
     case 0x14u:  // RLUnCompWram
     case 0x15u: {  // RLUnCompVram
       uint32_t src = cpu_.regs[0];
