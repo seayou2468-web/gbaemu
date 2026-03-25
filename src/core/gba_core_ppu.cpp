@@ -9,69 +9,123 @@ uint8_t ClampToByteLocal(int value) {
   if (value > 255) return 255;
   return static_cast<uint8_t>(value);
 }
+
+constexpr int kBackdropPriority = 4;
+
+std::vector<uint8_t>& BgPriorityBuffer() {
+  static std::vector<uint8_t> buffer;
+  return buffer;
+}
+
+void EnsureBgPriorityBufferSize() {
+  auto& buffer = BgPriorityBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, static_cast<uint8_t>(kBackdropPriority));
+  }
+}
+
+uint32_t Bgr555ToRgba8888(uint16_t bgr) {
+  const uint8_t r5 = static_cast<uint8_t>((bgr >> 0) & 0x1F);
+  const uint8_t g5 = static_cast<uint8_t>((bgr >> 5) & 0x1F);
+  const uint8_t b5 = static_cast<uint8_t>((bgr >> 10) & 0x1F);
+  const uint8_t r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+  const uint8_t g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
+  const uint8_t b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
+  return 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+         (static_cast<uint32_t>(g) << 8) | b;
+}
+
+uint16_t ReadBackdropBgr(const std::array<uint8_t, 1024>& palette_ram) {
+  return static_cast<uint16_t>(palette_ram[0]) |
+         static_cast<uint16_t>(palette_ram[1] << 8);
+}
 }  // namespace
 void GBACore::RenderMode3Frame() {
   // Mode 3: 240x160 direct color (BGR555) in VRAM.
+  EnsureBgPriorityBufferSize();
+  auto& bg_priority = BgPriorityBuffer();
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
+  const uint8_t bg2_priority = static_cast<uint8_t>(ReadIO16(0x0400000Cu) & 0x3u);
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+
+  if (!bg2_enabled) {
+    std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
+    std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
+    return;
+  }
+
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t off = static_cast<size_t>((y * kScreenWidth + x) * 2);
-      if (off + 1 >= vram_.size()) continue;
+      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      if (off + 1 >= vram_.size()) {
+        frame_buffer_[fb_off] = backdrop;
+        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        continue;
+      }
       const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
                               static_cast<uint16_t>(vram_[off + 1] << 8);
-      const uint8_t r5 = static_cast<uint8_t>((bgr555 >> 0) & 0x1F);
-      const uint8_t g5 = static_cast<uint8_t>((bgr555 >> 5) & 0x1F);
-      const uint8_t b5 = static_cast<uint8_t>((bgr555 >> 10) & 0x1F);
-      const uint8_t r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
-      const uint8_t g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
-      const uint8_t b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
-      frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] =
-          0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-          (static_cast<uint32_t>(g) << 8) | b;
+      frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
+      bg_priority[fb_off] = bg2_priority;
     }
   }
 }
 
 void GBACore::RenderMode4Frame() {
+  EnsureBgPriorityBufferSize();
+  auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
+  const uint8_t bg2_priority = static_cast<uint8_t>(ReadIO16(0x0400000Cu) & 0x3u);
   const bool page1 = (dispcnt & (1u << 4)) != 0;
   const size_t page_base = page1 ? 0xA000u : 0u;
 
+  const uint16_t backdrop_bgr = ReadBackdropBgr(palette_ram_);
+  const uint32_t backdrop = Bgr555ToRgba8888(backdrop_bgr);
+
   auto palette_color = [&](uint16_t idx) -> uint32_t {
     const size_t off = static_cast<size_t>((idx & 0xFFu) * 2u);
-    if (off + 1 >= palette_ram_.size()) return 0xFF000000u;
+    if (off + 1 >= palette_ram_.size()) return backdrop;
     const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
                          static_cast<uint16_t>(palette_ram_[off + 1] << 8);
-    const uint8_t r = static_cast<uint8_t>(((bgr >> 0) & 0x1Fu) * 255u / 31u);
-    const uint8_t g = static_cast<uint8_t>(((bgr >> 5) & 0x1Fu) * 255u / 31u);
-    const uint8_t b = static_cast<uint8_t>(((bgr >> 10) & 0x1Fu) * 255u / 31u);
-    return 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-           (static_cast<uint32_t>(g) << 8) | b;
+    return Bgr555ToRgba8888(bgr);
   };
+
+  if (!bg2_enabled) {
+    std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
+    std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
+    return;
+  }
 
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t off = page_base + static_cast<size_t>(y * kScreenWidth + x);
       const uint8_t index = (off < vram_.size()) ? vram_[off] : 0;
-      frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(index);
+      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      frame_buffer_[fb_off] = palette_color(index);
+      bg_priority[fb_off] = (index == 0u) ? static_cast<uint8_t>(kBackdropPriority) : bg2_priority;
     }
   }
 }
 
 void GBACore::RenderMode5Frame() {
+  EnsureBgPriorityBufferSize();
+  auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
+  const uint8_t bg2_priority = static_cast<uint8_t>(ReadIO16(0x0400000Cu) & 0x3u);
   const bool page1 = (dispcnt & (1u << 4)) != 0;
   const size_t page_base = page1 ? 0xA000u : 0u;
   constexpr int kMode5Width = 160;
   constexpr int kMode5Height = 128;
-  const uint16_t backdrop_bgr = static_cast<uint16_t>(palette_ram_[0]) |
-                                static_cast<uint16_t>(palette_ram_[1] << 8);
-  const uint8_t bg_r = static_cast<uint8_t>(((backdrop_bgr >> 0) & 0x1Fu) * 255u / 31u);
-  const uint8_t bg_g = static_cast<uint8_t>(((backdrop_bgr >> 5) & 0x1Fu) * 255u / 31u);
-  const uint8_t bg_b = static_cast<uint8_t>(((backdrop_bgr >> 10) & 0x1Fu) * 255u / 31u);
-  const uint32_t backdrop = 0xFF000000u | (static_cast<uint32_t>(bg_r) << 16) |
-                            (static_cast<uint32_t>(bg_g) << 8) | bg_b;
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
 
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
+  std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
+
+  if (!bg2_enabled) return;
 
   for (int y = 0; y < kMode5Height; ++y) {
     for (int x = 0; x < kMode5Width; ++x) {
@@ -79,15 +133,9 @@ void GBACore::RenderMode5Frame() {
       if (off + 1 >= vram_.size()) continue;
       const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
                               static_cast<uint16_t>(vram_[off + 1] << 8);
-      const uint8_t r5 = static_cast<uint8_t>((bgr555 >> 0) & 0x1F);
-      const uint8_t g5 = static_cast<uint8_t>((bgr555 >> 5) & 0x1F);
-      const uint8_t b5 = static_cast<uint8_t>((bgr555 >> 10) & 0x1F);
-      const uint8_t r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
-      const uint8_t g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
-      const uint8_t b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
-      frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] =
-          0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-          (static_cast<uint32_t>(g) << 8) | b;
+      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
+      bg_priority[fb_off] = bg2_priority;
     }
   }
 }
@@ -95,6 +143,9 @@ void GBACore::RenderMode5Frame() {
 void GBACore::RenderSprites() {
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   if ((dispcnt & (1u << 12)) == 0) return;  // OBJ disable
+
+  EnsureBgPriorityBufferSize();
+  auto& bg_priority = BgPriorityBuffer();
 
   static constexpr int kObjDim[3][4][2] = {
       {{8, 8}, {16, 16}, {32, 32}, {64, 64}},     // square
@@ -144,6 +195,7 @@ void GBACore::RenderSprites() {
     const bool color_256 = (attr0 & (1u << 13)) != 0;
     const bool hflip = (attr1 & (1u << 12)) != 0;
     const bool vflip = (attr1 & (1u << 13)) != 0;
+    const uint8_t obj_priority = static_cast<uint8_t>((attr2 >> 10) & 0x3u);
     const uint16_t tile_id = attr2 & 0x03FFu;
     const uint16_t palbank = static_cast<uint16_t>((attr2 >> 12) & 0xFu);
     const size_t obj_chr_base = 0x10000u;
@@ -184,13 +236,18 @@ void GBACore::RenderSprites() {
           color_index = static_cast<uint16_t>(palbank * 16u + nib);
         }
         if ((color_index & 0xFFu) == 0) continue;  // transparent
-        frame_buffer_[static_cast<size_t>(sy) * kScreenWidth + sx] = palette_color(color_index);
+        const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
+        if (obj_priority > bg_priority[fb_off]) continue;
+        frame_buffer_[fb_off] = palette_color(color_index);
+        bg_priority[fb_off] = obj_priority;
       }
     }
   }
 }
 
 void GBACore::RenderMode0Frame() {
+  EnsureBgPriorityBufferSize();
+  auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
@@ -286,11 +343,15 @@ void GBACore::RenderMode0Frame() {
         }
       }
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
+      bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
+          static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
     }
   }
 }
 
 void GBACore::RenderMode1Frame() {
+  EnsureBgPriorityBufferSize();
+  auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
@@ -466,11 +527,15 @@ void GBACore::RenderMode1Frame() {
         }
       }
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
+      bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
+          static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
     }
   }
 }
 
 void GBACore::RenderMode2Frame() {
+  EnsureBgPriorityBufferSize();
+  auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
@@ -579,6 +644,8 @@ void GBACore::RenderMode2Frame() {
       }
 
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
+      bg_priority[static_cast<size_t>(y) * kScreenWidth + x] =
+          static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
     }
   }
 }
@@ -948,6 +1015,9 @@ void GBACore::RenderDebugFrame() {
   if ((dispcnt & (1u << 7)) != 0) {
     // Forced blank: display white regardless of BG mode.
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
+    EnsureBgPriorityBufferSize();
+    std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
+              static_cast<uint8_t>(kBackdropPriority));
     return;
   }
   const uint16_t bg_mode = dispcnt & 0x7u;
@@ -987,14 +1057,11 @@ void GBACore::RenderDebugFrame() {
     ApplyColorEffects();
     return;
   }
-  const uint16_t backdrop_bgr = static_cast<uint16_t>(palette_ram_[0]) |
-                                static_cast<uint16_t>(palette_ram_[1] << 8);
-  const uint8_t bg_r = static_cast<uint8_t>(((backdrop_bgr >> 0) & 0x1Fu) * 255u / 31u);
-  const uint8_t bg_g = static_cast<uint8_t>(((backdrop_bgr >> 5) & 0x1Fu) * 255u / 31u);
-  const uint8_t bg_b = static_cast<uint8_t>(((backdrop_bgr >> 10) & 0x1Fu) * 255u / 31u);
-  const uint32_t backdrop = 0xFF000000u | (static_cast<uint32_t>(bg_r) << 16) |
-                            (static_cast<uint32_t>(bg_g) << 8) | bg_b;
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
+  EnsureBgPriorityBufferSize();
+  std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
+            static_cast<uint8_t>(kBackdropPriority));
 }
 
 uint64_t GBACore::ComputeFrameHash() const {
