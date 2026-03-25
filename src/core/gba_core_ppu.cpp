@@ -1949,12 +1949,17 @@ void GBACore::RenderDebugFrame() {
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   if ((dispcnt & (1u << 7)) != 0) {
-    // Forced blank: display white regardless of BG mode.
-    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
-    EnsureBgPriorityBufferSize();
-    std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-              static_cast<uint8_t>(kBackdropPriority));
-    return;
+    // Forced blank can be toggled during VBlank by many titles.
+    // Since this renderer builds a full frame from a single register snapshot,
+    // avoid washing out the whole frame when the latch is observed in VBlank.
+    const uint16_t vcount = ReadIO16(0x04000006u);
+    if (vcount < kVisibleScanlines) {
+      std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
+      EnsureBgPriorityBufferSize();
+      std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
+                static_cast<uint8_t>(kBackdropPriority));
+      return;
+    }
   }
   EnsureObjDrawnMaskBufferSize();
   EnsureBgBaseColorBufferSize();
