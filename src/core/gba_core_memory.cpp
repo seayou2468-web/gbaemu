@@ -46,7 +46,7 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     }
   }
   // 0x04000000-0x040003FF: IO
-  if (addr >= 0x04000000u) {
+  if (addr >= 0x04000000u && addr <= 0x040003FCu) {
     const uint32_t off32 = addr - 0x04000000u;
     if (off32 <= io_regs_.size() - 4) {
       const uint16_t lo = ReadIO16(addr);
@@ -161,7 +161,7 @@ uint16_t GBACore::Read16(uint32_t addr) const {
              static_cast<uint16_t>(rom_[off1] << 8);
     }
   }
-  if (addr >= 0x04000000u) {
+  if (addr >= 0x04000000u && addr <= 0x040003FEu) {
     const uint32_t off32 = addr - 0x04000000u;
     if (off32 <= io_regs_.size() - 2) {
       return ReadIO16(addr & ~1u);
@@ -229,7 +229,7 @@ uint8_t GBACore::Read8(uint32_t addr) const {
       return rom_[off];
     }
   }
-  if (addr >= 0x04000000u) {
+  if (addr >= 0x04000000u && addr <= 0x040003FFu) {
     const uint32_t off32 = addr - 0x04000000u;
     if (off32 < io_regs_.size()) {
       const uint16_t half = ReadIO16(addr & ~1u);
@@ -281,7 +281,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
       return;
     }
   }
-  if (addr >= 0x04000000u) {
+  if (addr >= 0x04000000u && addr <= 0x040003FCu) {
     const uint32_t off32 = addr - 0x04000000u;
     if (off32 <= io_regs_.size() - 4) {
       WriteIO16(addr, static_cast<uint16_t>(value & 0xFFFFu));
@@ -357,7 +357,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
       return;
     }
   }
-  if (addr >= 0x04000000u) {
+  if (addr >= 0x04000000u && addr <= 0x040003FEu) {
     const uint32_t off32 = addr - 0x04000000u;
     if (off32 <= io_regs_.size() - 2) {
       WriteIO16(addr & ~1u, value);
@@ -453,7 +453,7 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     WriteBackup8(addr, static_cast<uint8_t>(value & 0x1u));
     return;
   }
-  if (addr >= 0x04000000u) {
+  if (addr >= 0x04000000u && addr <= 0x040003FFu) {
     const uint32_t off32 = addr - 0x04000000u;
     if (off32 < io_regs_.size()) {
       const uint16_t old = ReadIO16(addr & ~1u);
