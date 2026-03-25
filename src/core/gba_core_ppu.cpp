@@ -1367,6 +1367,12 @@ void GBACore::RenderMode2Frame() {
 
 void GBACore::StepPpu(uint32_t cycles) {
   constexpr uint32_t kHBlankStartCycle = 1006u;
+  auto write_io_raw16 = [&](uint32_t addr, uint16_t value) {
+    const size_t off = static_cast<size_t>(addr - 0x04000000u);
+    if (off + 1 >= io_regs_.size()) return;
+    io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
+    io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+  };
   ppu_cycle_accum_ += cycles;
   uint16_t dispstat = ReadIO16(0x04000004u);
   const bool was_hblank = (dispstat & 0x0002u) != 0;
@@ -1379,13 +1385,13 @@ void GBACore::StepPpu(uint32_t cycles) {
   if (!was_hblank && now_hblank && (dispstat & (1u << 4))) {
     RaiseInterrupt(1u << 1);  // HBlank IRQ
   }
-  WriteIO16(0x04000004u, dispstat);
+  write_io_raw16(0x04000004u, dispstat);
 
   while (ppu_cycle_accum_ >= kCyclesPerScanline) {
     ppu_cycle_accum_ -= kCyclesPerScanline;
     uint16_t vcount = ReadIO16(0x04000006u);
     vcount = static_cast<uint16_t>((vcount + 1u) % kTotalScanlines);
-    WriteIO16(0x04000006u, vcount);
+    write_io_raw16(0x04000006u, vcount);
 
     dispstat = ReadIO16(0x04000004u);
     const bool was_vblank = (dispstat & 0x0001u) != 0;
@@ -1412,7 +1418,7 @@ void GBACore::StepPpu(uint32_t cycles) {
 
     // New scanline starts outside HBlank.
     dispstat &= static_cast<uint16_t>(~0x0002u);
-    WriteIO16(0x04000004u, dispstat);
+    write_io_raw16(0x04000004u, dispstat);
   }
 }
 
@@ -1881,14 +1887,14 @@ void GBACore::ServiceInterruptIfNeeded() {
   const uint32_t irq_vector = Read32(0x03007FFCu);
   const bool vector_thumb = (irq_vector & 1u) != 0;
   const uint32_t vector_addr = irq_vector & ~1u;
-  const bool vector_valid =
-      (vector_addr >= 0x02000000u && vector_addr <= 0x03FFFFFFu) ||
-      (vector_addr >= 0x08000000u && vector_addr <= 0x0DFFFFFFu);
+  const bool vector_valid = (vector_addr >= 0x08000000u && vector_addr <= 0x0DFFFFFFu);
   if (vector_valid) {
     EnterException(vector_addr, 0x12u, true, vector_thumb);
     return;
   }
-  EnterException(0x00000018u, 0x12u, true, false);  // IRQ mode
+  // If no usable vector is installed, consume the pending bits to avoid
+  // trapping repeatedly into an invalid BIOS IRQ vector.
+  WriteIO16(0x04000202u, pending);
 }
 
 void GBACore::ApplyColorEffects() {

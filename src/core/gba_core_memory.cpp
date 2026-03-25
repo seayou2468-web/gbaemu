@@ -498,6 +498,15 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (addr == 0x04000208u) {
     value &= 0x0001u;
   }
+  // DISPSTAT: bits 0-2 are status (read-only), bits 3-5/8-15 writable.
+  if (addr == 0x04000004u) {
+    const uint16_t old = ReadIO16(addr);
+    value = static_cast<uint16_t>((value & 0xFFF8u) | (old & 0x0007u));
+  }
+  // VCOUNT is read-only.
+  if (addr == 0x04000006u) {
+    return;
+  }
   // SOUNDCNT_X: only bit7 is writable; bits0-3 are read-only channel-active flags.
   if (addr == 0x04000084u) {
     const uint16_t old = ReadIO16(addr);
