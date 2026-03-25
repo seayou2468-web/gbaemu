@@ -69,10 +69,13 @@ void GBACore::Reset() {
   cpu_.banked_lr[0x12u] = 0;
   cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
   cpu_.regs[14] = 0;
-  // Real boot executes from BIOS reset vector only for externally supplied BIOS.
-  // Built-in BIOS is a compatibility stub and still uses direct cartridge entry.
-  const bool use_real_bios_boot = bios_loaded_ && !bios_is_builtin_;
-  cpu_.regs[15] = use_real_bios_boot ? 0x00000000u : 0x08000000u;
+  // We currently boot directly from cartridge entry even when an external BIOS
+  // file is loaded. The high-level BIOS compatibility path does not yet emulate
+  // enough startup behavior and can get stuck in forced-blank (white screen).
+  //
+  // TODO: Re-enable true BIOS-vector boot once BIOS/IRQ startup emulation is
+  // complete and validated across bundled test ROMs.
+  cpu_.regs[15] = 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
   // VCOUNT
@@ -83,8 +86,8 @@ void GBACore::Reset() {
   WriteIO16(0x04000200u, 0x0000u);
   WriteIO16(0x04000202u, 0x0000u);
   WriteIO16(0x04000208u, 0x0001u);
-  // POSTFLG remains 0 during real BIOS boot, and is 1 for direct cartridge fallback.
-  Write8(0x04000300u, use_real_bios_boot ? 0x00u : 0x01u);
+  // Mark POST boot complete for direct cartridge start path.
+  Write8(0x04000300u, 0x01u);
   SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
   frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
