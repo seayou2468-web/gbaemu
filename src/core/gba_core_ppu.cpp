@@ -1963,17 +1963,12 @@ void GBACore::RenderDebugFrame() {
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   if ((dispcnt & (1u << 7)) != 0) {
-    // Forced blank can be toggled during VBlank by many titles.
-    // Since this renderer builds a full frame from a single register snapshot,
-    // avoid washing out the whole frame when the latch is observed in VBlank.
-    const uint16_t vcount = ReadIO16(0x04000006u);
-    if (vcount < kVisibleScanlines) {
-      std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
-      EnsureBgPriorityBufferSize();
-      std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-                static_cast<uint8_t>(kBackdropPriority));
-      return;
-    }
+    // Forced blank is frequently pulsed around mode/setup transitions.
+    // This renderer synthesizes a whole frame from one register snapshot, so
+    // treating any sampled forced-blank state as a full white frame can cause
+    // persistent "white screen" artifacts in compatibility tests.
+    // Keep the previously rendered frame instead of whitening the framebuffer.
+    return;
   }
   EnsureObjDrawnMaskBufferSize();
   EnsureBgBaseColorBufferSize();
