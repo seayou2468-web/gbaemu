@@ -1694,6 +1694,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
   if (cpu_.halted) {
+    bool woke_from_intrwait = false;
     if (swi_intrwait_active_) {
       const uint16_t iflags = ReadIO16(0x04000202u);
       const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
@@ -1702,11 +1703,14 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       swi_intrwait_active_ = false;
       swi_intrwait_mask_ = 0;
       cpu_.halted = false;
+      woke_from_intrwait = true;
     }
-    const uint16_t ie = ReadIO16(0x04000200u);
-    const uint16_t iflags = ReadIO16(0x04000202u);
-    if ((ie & iflags) == 0) return;
-    cpu_.halted = false;
+    if (!woke_from_intrwait) {
+      const uint16_t ie = ReadIO16(0x04000200u);
+      const uint16_t iflags = ReadIO16(0x04000202u);
+      if ((ie & iflags) == 0) return;
+      cpu_.halted = false;
+    }
   }
   auto is_exec_addr_valid = [&](uint32_t addr) -> bool {
     if (bios_loaded_ && addr < 0x00004000u) return true;  // BIOS
@@ -1740,6 +1744,7 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
 void GBACore::DebugStepCpuInstructions(uint32_t count) {
   for (uint32_t i = 0; i < count; ++i) {
     if (cpu_.halted) {
+      bool woke_from_intrwait = false;
       if (swi_intrwait_active_) {
         const uint16_t iflags = ReadIO16(0x04000202u);
         const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
@@ -1748,11 +1753,14 @@ void GBACore::DebugStepCpuInstructions(uint32_t count) {
         swi_intrwait_active_ = false;
         swi_intrwait_mask_ = 0;
         cpu_.halted = false;
+        woke_from_intrwait = true;
       }
-      const uint16_t ie = ReadIO16(0x04000200u);
-      const uint16_t iflags = ReadIO16(0x04000202u);
-      if ((ie & iflags) == 0) return;
-      cpu_.halted = false;
+      if (!woke_from_intrwait) {
+        const uint16_t ie = ReadIO16(0x04000200u);
+        const uint16_t iflags = ReadIO16(0x04000202u);
+        if ((ie & iflags) == 0) return;
+        cpu_.halted = false;
+      }
     }
     ServiceInterruptIfNeeded();
     if (cpu_.cpsr & (1u << 5)) {
