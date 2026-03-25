@@ -148,6 +148,9 @@
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
             [self.engine reset];
+            // Some titles do not present a visible frame immediately after reset.
+            [self.engine stepFrame];
+            [self.engine stepFrame];
             [self renderCurrentFrame];
             self.statusLabel.text = @"ROMを読み込みました";
         } else {
@@ -201,7 +204,13 @@
 - (void)renderCurrentFrame {
     NSData *frameData = [self.engine copyCurrentFrameData];
     if (frameData.length == 0) {
-        return;
+        // Retry once after advancing one frame to avoid startup black screen.
+        [self.engine stepFrame];
+        frameData = [self.engine copyCurrentFrameData];
+        if (frameData.length == 0) {
+            self.statusLabel.text = @"フレーム取得に失敗しました（ROM/BIOS状態を確認）";
+            return;
+        }
     }
     self.lastFrameData = frameData;
 
