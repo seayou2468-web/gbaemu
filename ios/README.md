@@ -14,3 +14,7 @@
 ## 注意
 このリポジトリには `.xcodeproj` は含めていないため、Xcodeで新規iOS Appターゲット（Storyboardなし）を作成し、
 `ios/GBAEmuApp` 配下のファイルを追加して利用してください。
+
+
+## チェック
+- `ios/scripts/check_objc_mixing.sh` で `.m/.h` に C++ 記法（`std::`, `namespace`, `gba::` など）が混入していないか検査できます。
