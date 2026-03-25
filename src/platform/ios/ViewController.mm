@@ -61,10 +61,10 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   self.activeTouches = [NSMapTable weakToWeakObjectsMapTable];
   self.paused = NO;
 
-  [self buildLayout];
-  [self registerForAppLifecycleNotifications];
-
   _core = std::make_unique<gba::GBACore>();
+
+  [self buildLayout];
+  [self registerForSceneLifecycleNotifications];
   if (![self applyBIOSSelection]) {
     return;
   }
@@ -73,11 +73,7 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   }
 
   self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(onVSync:)];
-  if (@available(iOS 26.0, *)) {
-    self.displayLink.preferredFrameRateRange = CAFrameRateRangeMake(60.0, 120.0, 60.0);
-  } else if (@available(iOS 18.0, *)) {
-    self.displayLink.preferredFrameRateRange = CAFrameRateRangeMake(30.0, 60.0, 60.0);
-  }
+  self.displayLink.preferredFrameRateRange = CAFrameRateRangeMake(60.0, 120.0, 60.0);
   [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSDefaultRunLoopMode];
 }
 
@@ -213,7 +209,9 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   }
   [self.allButtons removeAllObjects];
   [self.activeTouches removeAllObjects];
-  _core->SetKeys(0);
+  if (_core) {
+    _core->SetKeys(0);
+  }
 
   const CGFloat bottomY = CGRectGetMaxY(bounds) - kButtonSize - 20.0;
   const CGFloat dpadX = kDPadInset + kButtonSize;
@@ -300,12 +298,7 @@ constexpr CGFloat kStartButtonHeight = 40.0;
 }
 
 - (void)onPickBios {
-  UIDocumentPickerViewController *picker = nil;
-  if (@available(iOS 14.0, *)) {
-    picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
-  } else {
-    picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.data"] inMode:UIDocumentPickerModeImport];
-  }
+  UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
   picker.view.tag = 1;
   picker.delegate = self;
   picker.allowsMultipleSelection = NO;
@@ -313,12 +306,7 @@ constexpr CGFloat kStartButtonHeight = 40.0;
 }
 
 - (void)onPickRom {
-  UIDocumentPickerViewController *picker = nil;
-  if (@available(iOS 14.0, *)) {
-    picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
-  } else {
-    picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.data"] inMode:UIDocumentPickerModeImport];
-  }
+  UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
   picker.view.tag = 2;
   picker.delegate = self;
   picker.allowsMultipleSelection = NO;
@@ -480,17 +468,17 @@ constexpr CGFloat kStartButtonHeight = 40.0;
   self.statusLabel.text = @"Loaded state.";
 }
 
-- (void)registerForAppLifecycleNotifications {
+- (void)registerForSceneLifecycleNotifications {
   NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
-  [center addObserver:self selector:@selector(onAppWillResignActive) name:UIApplicationWillResignActiveNotification object:nil];
-  [center addObserver:self selector:@selector(onAppWillTerminate) name:UIApplicationWillTerminateNotification object:nil];
+  [center addObserver:self selector:@selector(onSceneWillDeactivate) name:UISceneWillDeactivateNotification object:nil];
+  [center addObserver:self selector:@selector(onSceneDidEnterBackground) name:UISceneDidEnterBackgroundNotification object:nil];
 }
 
-- (void)onAppWillResignActive {
+- (void)onSceneWillDeactivate {
   [self persistSaveRam];
 }
 
-- (void)onAppWillTerminate {
+- (void)onSceneDidEnterBackground {
   [self persistSaveRam];
 }
 

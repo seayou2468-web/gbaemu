@@ -1,15 +1,24 @@
 #import "AppDelegate.h"
-#import "ViewController.h"
+#import "SceneDelegate.h"
 
 @implementation AppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
   (void)application;
   (void)launchOptions;
-  self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-  self.window.rootViewController = [[ViewController alloc] init];
-  [self.window makeKeyAndVisible];
   return YES;
+}
+
+- (UISceneConfiguration *)application:(UIApplication *)application
+    configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession
+                                    options:(UISceneConnectionOptions *)options {
+  (void)application;
+  (void)connectingSceneSession;
+  (void)options;
+  UISceneConfiguration *config = [[UISceneConfiguration alloc] initWithName:@"Default Configuration"
+                                                                 sessionRole:UISceneSessionRoleApplication];
+  config.delegateClass = [SceneDelegate class];
+  return config;
 }
 
 @end
