@@ -40,6 +40,39 @@ uint16_t ReadBackdropBgr(const std::array<uint8_t, 1024>& palette_ram) {
   return static_cast<uint16_t>(palette_ram[0]) |
          static_cast<uint16_t>(palette_ram[1] << 8);
 }
+
+bool IsWithinWindowAxis(int p, int start, int end) {
+  if (start == end) return false;
+  if (start < end) return p >= start && p < end;
+  return p >= start || p < end;
+}
+
+bool IsBgVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                         uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                         int bg, int x, int y) {
+  const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
+  const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
+  if (!win0_enabled && !win1_enabled) return true;
+
+  const int win0_l = std::min<int>(240, (win0h >> 8) & 0xFFu);
+  const int win0_r = std::min<int>(240, win0h & 0xFFu);
+  const int win0_t = std::min<int>(160, (win0v >> 8) & 0xFFu);
+  const int win0_b = std::min<int>(160, win0v & 0xFFu);
+  const int win1_l = std::min<int>(240, (win1h >> 8) & 0xFFu);
+  const int win1_r = std::min<int>(240, win1h & 0xFFu);
+  const int win1_t = std::min<int>(160, (win1v >> 8) & 0xFFu);
+  const int win1_b = std::min<int>(160, win1v & 0xFFu);
+
+  const bool in_win0 = win0_enabled && IsWithinWindowAxis(x, win0_l, win0_r) &&
+                       IsWithinWindowAxis(y, win0_t, win0_b);
+  const bool in_win1 = win1_enabled && IsWithinWindowAxis(x, win1_l, win1_r) &&
+                       IsWithinWindowAxis(y, win1_t, win1_b);
+
+  uint8_t control = static_cast<uint8_t>(winout & 0xFFu);  // outside window
+  if (in_win0) control = static_cast<uint8_t>(winin & 0xFFu);
+  else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
+  return (control & (1u << bg)) != 0;
+}
 }  // namespace
 void GBACore::RenderMode3Frame() {
   // Mode 3: 240x160 direct color (BGR555) in VRAM.
@@ -366,6 +399,12 @@ void GBACore::RenderMode0Frame() {
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
     const size_t off = static_cast<size_t>((idx & 0x1FFu) * 2u);
@@ -447,6 +486,9 @@ void GBACore::RenderMode0Frame() {
       bool have_bg = false;
       for (int bg = 0; bg < 4; ++bg) {
         if ((dispcnt & (1u << (8 + bg))) == 0) continue;
+        if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) {
+          continue;
+        }
         const uint16_t bgcnt = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2));
         const int prio = bgcnt & 0x3u;
         uint16_t idx = 0;
@@ -470,6 +512,12 @@ void GBACore::RenderMode1Frame() {
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
     const size_t off = static_cast<size_t>((idx & 0x1FFu) * 2u);
@@ -606,7 +654,8 @@ void GBACore::RenderMode1Frame() {
       int best_prio = 4;
       bool have_bg = false;
 
-      if ((dispcnt & (1u << 8)) != 0) {
+      if ((dispcnt & (1u << 8)) != 0 &&
+          IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 0, x, y)) {
         uint16_t idx = 0;
         bool opaque = false;
         sample_text_bg(0, x, y, &idx, &opaque);
@@ -617,7 +666,8 @@ void GBACore::RenderMode1Frame() {
           have_bg = true;
         }
       }
-      if ((dispcnt & (1u << 9)) != 0) {
+      if ((dispcnt & (1u << 9)) != 0 &&
+          IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 1, x, y)) {
         uint16_t idx = 0;
         bool opaque = false;
         sample_text_bg(1, x, y, &idx, &opaque);
@@ -630,7 +680,8 @@ void GBACore::RenderMode1Frame() {
           }
         }
       }
-      if ((dispcnt & (1u << 10)) != 0) {
+      if ((dispcnt & (1u << 10)) != 0 &&
+          IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         uint16_t idx = 0;
         bool opaque = false;
         sample_affine_bg2(x, y, &idx, &opaque);
@@ -654,6 +705,12 @@ void GBACore::RenderMode2Frame() {
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
     const size_t off = static_cast<size_t>((idx & 0x1FFu) * 2u);
@@ -735,7 +792,8 @@ void GBACore::RenderMode2Frame() {
       int best_prio = 4;
       bool have_bg = false;
 
-      if ((dispcnt & (1u << 10)) != 0) {
+      if ((dispcnt & (1u << 10)) != 0 &&
+          IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         uint16_t idx = 0;
         bool opaque = false;
         sample_affine_bg(2, x, y, &idx, &opaque);
@@ -746,7 +804,8 @@ void GBACore::RenderMode2Frame() {
           have_bg = true;
         }
       }
-      if ((dispcnt & (1u << 11)) != 0) {
+      if ((dispcnt & (1u << 11)) != 0 &&
+          IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 3, x, y)) {
         uint16_t idx = 0;
         bool opaque = false;
         sample_affine_bg(3, x, y, &idx, &opaque);
