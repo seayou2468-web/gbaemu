@@ -4,14 +4,14 @@
 #import "../../../src/core/rom_loader.h"
 
 @implementation GBAEngine {
-    gbemu::GBACore *_core;
+    gba::GBACore *_core;
     std::vector<uint8_t> _romBuffer;
 }
 
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _core = new gbemu::GBACore();
+        _core = new gba::GBACore();
     }
     return self;
 }
@@ -23,18 +23,26 @@
 
 - (BOOL)loadROMAtPath:(NSString *)path error:(NSError * _Nullable * _Nullable)error {
     std::string romPath(path.UTF8String ?: "");
-    _romBuffer = gbemu::loadROM(romPath);
-    if (_romBuffer.empty()) {
+    std::string loadError;
+
+    if (!gba::LoadFile(romPath, &_romBuffer, &loadError) || _romBuffer.empty()) {
         if (error != nil) {
-            NSDictionary *info = @{NSLocalizedDescriptionKey: @"ROMの読み込みに失敗しました"};
+            NSString *message = loadError.empty()
+                ? @"ROMの読み込みに失敗しました"
+                : [NSString stringWithUTF8String:loadError.c_str()];
+            NSDictionary *info = @{NSLocalizedDescriptionKey: message};
             *error = [NSError errorWithDomain:@"GBAEngine" code:1001 userInfo:info];
         }
         return NO;
     }
 
-    if (!_core->loadROM(_romBuffer)) {
+    loadError.clear();
+    if (!_core->LoadROM(_romBuffer, &loadError)) {
         if (error != nil) {
-            NSDictionary *info = @{NSLocalizedDescriptionKey: @"GBAコアへのROMロードに失敗しました"};
+            NSString *message = loadError.empty()
+                ? @"GBAコアへのROMロードに失敗しました"
+                : [NSString stringWithUTF8String:loadError.c_str()];
+            NSDictionary *info = @{NSLocalizedDescriptionKey: message};
             *error = [NSError errorWithDomain:@"GBAEngine" code:1002 userInfo:info];
         }
         return NO;
@@ -45,13 +53,13 @@
 
 - (void)reset {
     if (_core != nullptr) {
-        _core->reset();
+        _core->Reset();
     }
 }
 
 - (void)stepFrame {
     if (_core != nullptr) {
-        _core->runFrame();
+        _core->StepFrame();
     }
 }
 
