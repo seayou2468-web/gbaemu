@@ -225,7 +225,8 @@
                                         32,
                                         bytesPerRow,
                                         colorSpace,
-                                        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst,
+                                        static_cast<CGBitmapInfo>(kCGBitmapByteOrder32Little |
+                                                                  static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedFirst)),
                                         provider,
                                         NULL,
                                         false,
