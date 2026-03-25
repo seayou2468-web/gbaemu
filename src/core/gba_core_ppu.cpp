@@ -1870,6 +1870,24 @@ void GBACore::ServiceInterruptIfNeeded() {
   const uint16_t iflags = ReadIO16(0x04000202u);
   const uint16_t pending = static_cast<uint16_t>(ie & iflags);
   if (pending == 0) return;
+  // Keep BIOS-style IRQ flags mirror in IWRAM for IntrWait/VBlankIntrWait users.
+  const uint32_t irq_flags_addr = 0x03007FF8u;
+  const uint32_t old_irq_flags = Read32(irq_flags_addr);
+  Write32(irq_flags_addr, old_irq_flags | pending);
+
+  // Some built-in/minimal BIOS images do not provide a full IRQ trampoline.
+  // Prefer dispatching to the cartridge-provided IRQ vector (0x03007FFC),
+  // while still entering IRQ mode so return semantics remain compatible.
+  const uint32_t irq_vector = Read32(0x03007FFCu);
+  const bool vector_thumb = (irq_vector & 1u) != 0;
+  const uint32_t vector_addr = irq_vector & ~1u;
+  const bool vector_valid =
+      (vector_addr >= 0x02000000u && vector_addr <= 0x03FFFFFFu) ||
+      (vector_addr >= 0x08000000u && vector_addr <= 0x0DFFFFFFu);
+  if (vector_valid) {
+    EnterException(vector_addr, 0x12u, true, vector_thumb);
+    return;
+  }
   EnterException(0x00000018u, 0x12u, true, false);  // IRQ mode
 }
 

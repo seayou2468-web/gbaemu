@@ -187,7 +187,14 @@ uint32_t GBACore::EstimateThumbCycles(uint16_t opcode) const {
 void GBACore::HandleRegisterRamReset(uint8_t flags) {
   // SWI 01h RegisterRamReset
   if (flags & 0x01u) std::fill(ewram_.begin(), ewram_.end(), 0);
-  if (flags & 0x02u) std::fill(iwram_.begin(), iwram_.end(), 0);
+  if (flags & 0x02u) {
+    // BIOS keeps the top 0x200 bytes of IWRAM (0x03007E00-0x03007FFF)
+    // intact because they are used for IRQ vectors/stacks/work area.
+    constexpr size_t kIwramReservedTail = 0x200u;
+    if (iwram_.size() > kIwramReservedTail) {
+      std::fill(iwram_.begin(), iwram_.end() - static_cast<std::ptrdiff_t>(kIwramReservedTail), 0);
+    }
+  }
   if (flags & 0x04u) std::fill(palette_ram_.begin(), palette_ram_.end(), 0);
   if (flags & 0x08u) std::fill(vram_.begin(), vram_.end(), 0);
   if (flags & 0x10u) std::fill(oam_.begin(), oam_.end(), 0);
@@ -1698,12 +1705,13 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
     if (swi_intrwait_active_) {
       const uint16_t iflags = ReadIO16(0x04000202u);
       const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
-      if (matched == 0u) return;
-      WriteIO16(0x04000202u, matched);
-      swi_intrwait_active_ = false;
-      swi_intrwait_mask_ = 0;
-      cpu_.halted = false;
-      woke_from_intrwait = true;
+      if (matched != 0u) {
+        WriteIO16(0x04000202u, matched);
+        swi_intrwait_active_ = false;
+        swi_intrwait_mask_ = 0;
+        cpu_.halted = false;
+        woke_from_intrwait = true;
+      }
     }
     if (!woke_from_intrwait) {
       const uint16_t ie = ReadIO16(0x04000200u);
@@ -1748,12 +1756,13 @@ void GBACore::DebugStepCpuInstructions(uint32_t count) {
       if (swi_intrwait_active_) {
         const uint16_t iflags = ReadIO16(0x04000202u);
         const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
-        if (matched == 0u) return;
-        WriteIO16(0x04000202u, matched);
-        swi_intrwait_active_ = false;
-        swi_intrwait_mask_ = 0;
-        cpu_.halted = false;
-        woke_from_intrwait = true;
+        if (matched != 0u) {
+          WriteIO16(0x04000202u, matched);
+          swi_intrwait_active_ = false;
+          swi_intrwait_mask_ = 0;
+          cpu_.halted = false;
+          woke_from_intrwait = true;
+        }
       }
       if (!woke_from_intrwait) {
         const uint16_t ie = ReadIO16(0x04000200u);
