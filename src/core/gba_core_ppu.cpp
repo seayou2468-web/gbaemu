@@ -73,12 +73,45 @@ bool IsBgVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
   else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
   return (control & (1u << bg)) != 0;
 }
+
+bool IsObjVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                          uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                          int x, int y) {
+  const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
+  const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
+  if (!win0_enabled && !win1_enabled) return true;
+
+  const int win0_l = std::min<int>(240, (win0h >> 8) & 0xFFu);
+  const int win0_r = std::min<int>(240, win0h & 0xFFu);
+  const int win0_t = std::min<int>(160, (win0v >> 8) & 0xFFu);
+  const int win0_b = std::min<int>(160, win0v & 0xFFu);
+  const int win1_l = std::min<int>(240, (win1h >> 8) & 0xFFu);
+  const int win1_r = std::min<int>(240, win1h & 0xFFu);
+  const int win1_t = std::min<int>(160, (win1v >> 8) & 0xFFu);
+  const int win1_b = std::min<int>(160, win1v & 0xFFu);
+
+  const bool in_win0 = win0_enabled && IsWithinWindowAxis(x, win0_l, win0_r) &&
+                       IsWithinWindowAxis(y, win0_t, win0_b);
+  const bool in_win1 = win1_enabled && IsWithinWindowAxis(x, win1_l, win1_r) &&
+                       IsWithinWindowAxis(y, win1_t, win1_b);
+
+  uint8_t control = static_cast<uint8_t>(winout & 0xFFu);
+  if (in_win0) control = static_cast<uint8_t>(winin & 0xFFu);
+  else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
+  return (control & (1u << 4)) != 0;
+}
 }  // namespace
 void GBACore::RenderMode3Frame() {
   // Mode 3: 240x160 direct color (BGR555) in VRAM.
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
   const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
   const uint8_t bg2_priority = static_cast<uint8_t>(ReadIO16(0x0400000Cu) & 0x3u);
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
@@ -107,6 +140,11 @@ void GBACore::RenderMode3Frame() {
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
+        frame_buffer_[fb_off] = backdrop;
+        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        continue;
+      }
       const int64_t tex_x_fp =
           static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * x + static_cast<int64_t>(pb) * y;
       const int64_t tex_y_fp =
@@ -136,6 +174,12 @@ void GBACore::RenderMode4Frame() {
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
   const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
   const uint8_t bg2_priority = static_cast<uint8_t>(ReadIO16(0x0400000Cu) & 0x3u);
   const bool page1 = (dispcnt & (1u << 4)) != 0;
@@ -176,6 +220,11 @@ void GBACore::RenderMode4Frame() {
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
+        frame_buffer_[fb_off] = backdrop;
+        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        continue;
+      }
       const int64_t tex_x_fp =
           static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * x + static_cast<int64_t>(pb) * y;
       const int64_t tex_y_fp =
@@ -199,6 +248,12 @@ void GBACore::RenderMode5Frame() {
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
   const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
   const uint8_t bg2_priority = static_cast<uint8_t>(ReadIO16(0x0400000Cu) & 0x3u);
   const bool page1 = (dispcnt & (1u << 4)) != 0;
@@ -230,6 +285,9 @@ void GBACore::RenderMode5Frame() {
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
+        continue;
+      }
       const int64_t tex_x_fp =
           static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * x + static_cast<int64_t>(pb) * y;
       const int64_t tex_y_fp =
@@ -250,6 +308,12 @@ void GBACore::RenderMode5Frame() {
 void GBACore::RenderSprites() {
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   if ((dispcnt & (1u << 12)) == 0) return;  // OBJ disable
+  const uint16_t winin = ReadIO16(0x04000048u);
+  const uint16_t winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u);
+  const uint16_t win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u);
+  const uint16_t win1v = ReadIO16(0x04000046u);
 
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
@@ -336,6 +400,9 @@ void GBACore::RenderSprites() {
       for (int px = 0; px < draw_w; ++px) {
         const int sx = x + px;
         if (sx < 0 || sx >= kScreenWidth) continue;
+        if (!IsObjVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, sx, sy)) {
+          continue;
+        }
 
         int tx = 0;
         int ty = 0;
