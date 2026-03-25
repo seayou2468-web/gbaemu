@@ -189,6 +189,22 @@ class GBACore {
   uint32_t apu_phase_sq2_ = 0;
   uint32_t apu_phase_wave_ = 0;
   uint16_t apu_noise_lfsr_ = 0x7FFFu;
+  uint32_t apu_frame_seq_cycles_ = 0;
+  uint8_t apu_frame_seq_step_ = 0;
+  uint8_t apu_env_ch1_ = 0;
+  uint8_t apu_env_ch2_ = 0;
+  uint8_t apu_env_ch4_ = 0;
+  uint8_t apu_env_timer_ch1_ = 0;
+  uint8_t apu_env_timer_ch2_ = 0;
+  uint8_t apu_env_timer_ch4_ = 0;
+  uint8_t apu_len_ch1_ = 0;
+  uint8_t apu_len_ch2_ = 0;
+  uint16_t apu_len_ch3_ = 0;
+  uint8_t apu_len_ch4_ = 0;
+  bool apu_ch1_active_ = false;
+  bool apu_ch2_active_ = false;
+  bool apu_ch3_active_ = false;
+  bool apu_ch4_active_ = false;
 
   struct TimerState {
     uint16_t reload = 0;

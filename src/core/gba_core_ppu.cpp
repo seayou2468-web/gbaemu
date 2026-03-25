@@ -1258,7 +1258,72 @@ void GBACore::StepApu(uint32_t cycles) {
   const uint16_t master = (soundcnt_x & 0x0080u) ? 1u : 0u;
   if (!master) {
     audio_mix_level_ = 0;
+    apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
     return;
+  }
+
+  // Handle trigger edges (bit7 of NRx4 high byte).
+  auto consume_trigger = [&](uint32_t addr) -> bool {
+    const uint8_t v = Read8(addr);
+    if ((v & 0x80u) == 0) return false;
+    Write8(addr, static_cast<uint8_t>(v & 0x7Fu));
+    return true;
+  };
+  if (consume_trigger(0x04000065u)) {
+    apu_ch1_active_ = true;
+    apu_len_ch1_ = static_cast<uint8_t>(64u - (Read8(0x04000062u) & 0x3Fu));
+    apu_env_ch1_ = static_cast<uint8_t>((Read8(0x04000063u) >> 4) & 0xFu);
+    apu_env_timer_ch1_ = static_cast<uint8_t>(Read8(0x04000063u) & 0x7u);
+  }
+  if (consume_trigger(0x0400006Du)) {
+    apu_ch2_active_ = true;
+    apu_len_ch2_ = static_cast<uint8_t>(64u - (Read8(0x04000068u) & 0x3Fu));
+    apu_env_ch2_ = static_cast<uint8_t>((Read8(0x04000069u) >> 4) & 0xFu);
+    apu_env_timer_ch2_ = static_cast<uint8_t>(Read8(0x04000069u) & 0x7u);
+  }
+  if (consume_trigger(0x04000075u)) {
+    apu_ch3_active_ = true;
+    apu_len_ch3_ = static_cast<uint16_t>(256u - Read8(0x04000071u));
+  }
+  if (consume_trigger(0x0400007Du)) {
+    apu_ch4_active_ = true;
+    apu_len_ch4_ = static_cast<uint8_t>(64u - (Read8(0x04000079u) & 0x3Fu));
+    apu_env_ch4_ = static_cast<uint8_t>((Read8(0x04000077u) >> 4) & 0xFu);
+    apu_env_timer_ch4_ = static_cast<uint8_t>(Read8(0x04000077u) & 0x7u);
+  }
+
+  // 512Hz frame sequencer (16777216 / 512 = 32768 cycles).
+  apu_frame_seq_cycles_ += cycles;
+  while (apu_frame_seq_cycles_ >= 32768u) {
+    apu_frame_seq_cycles_ -= 32768u;
+    apu_frame_seq_step_ = static_cast<uint8_t>((apu_frame_seq_step_ + 1u) & 7u);
+    const bool length_tick = (apu_frame_seq_step_ % 2u) == 0u;
+    const bool envelope_tick = apu_frame_seq_step_ == 7u;
+
+    if (length_tick) {
+      if ((Read8(0x04000065u) & 0x40u) && apu_ch1_active_ && apu_len_ch1_ > 0 && --apu_len_ch1_ == 0) apu_ch1_active_ = false;
+      if ((Read8(0x0400006Du) & 0x40u) && apu_ch2_active_ && apu_len_ch2_ > 0 && --apu_len_ch2_ == 0) apu_ch2_active_ = false;
+      if ((Read8(0x04000075u) & 0x40u) && apu_ch3_active_ && apu_len_ch3_ > 0 && --apu_len_ch3_ == 0) apu_ch3_active_ = false;
+      if ((Read8(0x0400007Du) & 0x40u) && apu_ch4_active_ && apu_len_ch4_ > 0 && --apu_len_ch4_ == 0) apu_ch4_active_ = false;
+    }
+    if (envelope_tick) {
+      auto step_env = [](uint8_t* vol, uint8_t* timer, uint8_t reg) {
+        const uint8_t period = reg & 0x7u;
+        if (period == 0) return;
+        if (*timer == 0) *timer = period;
+        if (--(*timer) != 0) return;
+        *timer = period;
+        const bool inc = (reg & 0x8u) != 0;
+        if (inc) {
+          if (*vol < 15u) ++(*vol);
+        } else {
+          if (*vol > 0u) --(*vol);
+        }
+      };
+      if (apu_ch1_active_) step_env(&apu_env_ch1_, &apu_env_timer_ch1_, Read8(0x04000063u));
+      if (apu_ch2_active_) step_env(&apu_env_ch2_, &apu_env_timer_ch2_, Read8(0x04000069u));
+      if (apu_ch4_active_) step_env(&apu_env_ch4_, &apu_env_timer_ch4_, Read8(0x04000077u));
+    }
   }
 
   auto duty_high_steps = [](uint16_t duty) -> int {
@@ -1283,25 +1348,25 @@ void GBACore::StepApu(uint32_t cycles) {
   int ch2 = 0;
   int ch3 = 0;
   int ch4 = 0;
-  if (soundcnt_x & 0x0001u) {  // CH1
+  if ((soundcnt_x & 0x0001u) && apu_ch1_active_) {  // CH1
     const uint16_t nr11 = ReadIO16(0x04000062u);
     const uint16_t nr12 = ReadIO16(0x04000063u);
     const uint16_t nr13 = ReadIO16(0x04000064u);
     const uint16_t nr14 = ReadIO16(0x04000065u);
     const uint16_t freq = static_cast<uint16_t>(nr13 | ((nr14 & 0x7u) << 8));
-    const int init_vol = static_cast<int>((nr12 >> 4) & 0xFu);
-    ch1 = (square_sample(&apu_phase_sq1_, freq, nr11) * init_vol) / 15;
+    const int env_vol = std::max<int>(0, std::min<int>(15, apu_env_ch1_));
+    ch1 = (square_sample(&apu_phase_sq1_, freq, nr11) * env_vol) / 15;
   }
-  if (soundcnt_x & 0x0002u) {  // CH2
+  if ((soundcnt_x & 0x0002u) && apu_ch2_active_) {  // CH2
     const uint16_t nr21 = ReadIO16(0x04000068u);
     const uint16_t nr22 = ReadIO16(0x04000069u);
     const uint16_t nr23 = ReadIO16(0x0400006Cu);
     const uint16_t nr24 = ReadIO16(0x0400006Du);
     const uint16_t freq = static_cast<uint16_t>(nr23 | ((nr24 & 0x7u) << 8));
-    const int init_vol = static_cast<int>((nr22 >> 4) & 0xFu);
-    ch2 = (square_sample(&apu_phase_sq2_, freq, nr21) * init_vol) / 15;
+    const int env_vol = std::max<int>(0, std::min<int>(15, apu_env_ch2_));
+    ch2 = (square_sample(&apu_phase_sq2_, freq, nr21) * env_vol) / 15;
   }
-  if (soundcnt_x & 0x0004u) {  // CH3 wave
+  if ((soundcnt_x & 0x0004u) && apu_ch3_active_) {  // CH3 wave
     const uint16_t nr30 = ReadIO16(0x04000070u);
     const uint16_t nr32 = ReadIO16(0x04000072u);
     if (nr30 & 0x0080u) {
@@ -1324,7 +1389,7 @@ void GBACore::StepApu(uint32_t cycles) {
       ch3 = static_cast<int>(sample4) * 8 - 60;
     }
   }
-  if (soundcnt_x & 0x0008u) {  // CH4 noise
+  if ((soundcnt_x & 0x0008u) && apu_ch4_active_) {  // CH4 noise
     const uint16_t nr42 = ReadIO16(0x04000077u);
     const uint16_t nr43 = ReadIO16(0x04000078u);
     const uint32_t div = (nr43 & 0x7u) == 0 ? 8u : (nr43 & 0x7u) * 16u;
@@ -1338,8 +1403,8 @@ void GBACore::StepApu(uint32_t cycles) {
         apu_noise_lfsr_ = static_cast<uint16_t>((apu_noise_lfsr_ & ~0x40u) | (x << 6));
       }
     }
-    const int init_vol = static_cast<int>((nr42 >> 4) & 0xFu);
-    ch4 = ((apu_noise_lfsr_ & 1u) ? 28 : -28) * init_vol / 15;
+    const int env_vol = std::max<int>(0, std::min<int>(15, apu_env_ch4_));
+    ch4 = ((apu_noise_lfsr_ & 1u) ? 28 : -28) * env_vol / 15;
   }
 
   const bool right_ch1 = (soundcnt_l & (1u << 0)) != 0;

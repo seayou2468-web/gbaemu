@@ -152,6 +152,22 @@ void GBACore::Reset() {
   apu_phase_sq2_ = 0;
   apu_phase_wave_ = 0;
   apu_noise_lfsr_ = 0x7FFFu;
+  apu_frame_seq_cycles_ = 0;
+  apu_frame_seq_step_ = 0;
+  apu_env_ch1_ = 0;
+  apu_env_ch2_ = 0;
+  apu_env_ch4_ = 0;
+  apu_env_timer_ch1_ = 0;
+  apu_env_timer_ch2_ = 0;
+  apu_env_timer_ch4_ = 0;
+  apu_len_ch1_ = 0;
+  apu_len_ch2_ = 0;
+  apu_len_ch3_ = 0;
+  apu_len_ch4_ = 0;
+  apu_ch1_active_ = false;
+  apu_ch2_active_ = false;
+  apu_ch3_active_ = false;
+  apu_ch4_active_ = false;
   bios_latch_ = 0;
   cpu_ = CpuState{};
   cpu_.active_mode = cpu_.cpsr & 0x1Fu;
@@ -332,6 +348,13 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
     return false;
   }
   audio_mix_level_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
+  apu_frame_seq_cycles_ = 0;
+  apu_frame_seq_step_ = 0;
+  apu_env_ch1_ = apu_env_ch2_ = apu_env_ch4_ = 0;
+  apu_env_timer_ch1_ = apu_env_timer_ch2_ = apu_env_timer_ch4_ = 0;
+  apu_len_ch1_ = apu_len_ch2_ = apu_len_ch4_ = 0;
+  apu_len_ch3_ = 0;
+  apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
   if (version >= 6u) {
     if (!read_u32(&off, &bios_latch_)) return false;
   } else {
