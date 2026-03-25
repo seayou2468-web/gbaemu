@@ -14,6 +14,12 @@ CPP_TOKENS='std::|\bgba::|\bnamespace\b|\btemplate\s*<|<vector>|<string>|\bnew\s
 
 failed=0
 
+if find "$TARGET_DIR" -type f -name "*.mm" | rg -n "." >/dev/null; then
+  echo "[NG] Objective-C++ (.mm) file found under ios app sources." >&2
+  find "$TARGET_DIR" -type f -name "*.mm"
+  exit 3
+fi
+
 while IFS= read -r file; do
   if rg -n -e "$CPP_TOKENS" "$file" >/dev/null; then
     echo "[NG] C++ token found in Objective-C file: ${file#$ROOT_DIR/}"
@@ -22,11 +28,6 @@ while IFS= read -r file; do
   fi
 done < <(find "$TARGET_DIR" -type f \( -name '*.m' -o -name '*.h' \))
 
-while IFS= read -r file; do
-  if rg -n -e '^#import <UIKit/UIKit\.h>' "$file" >/dev/null; then
-    :
-  fi
-done < <(find "$TARGET_DIR" -type f -name '*.mm')
 
 if [[ "$failed" -ne 0 ]]; then
   echo "Objective-C/Objective-C++ extension mixing check failed." >&2

@@ -4,7 +4,7 @@
 
 ## 構成
 - `AppDelegate` / `SceneDelegate` / `ViewController` を Objective-C で実装
-- `GBAEngine`（Objective-C++）で `src/core` の GBA コアに接続
+- `GBAEngine`（Objective-C）から C API 経由で `src/core` の GBA コアに接続
 - `Info.plist` は Scene ベース構成
 
 ## 組み込みの想定
@@ -18,3 +18,4 @@
 
 ## チェック
 - `ios/scripts/check_objc_mixing.sh` で `.m/.h` に C++ 記法（`std::`, `namespace`, `gba::` など）が混入していないか検査できます。
+- C++ 実装は `src/core/gba_core_c_api.cpp` 側に閉じ込め、iOS 側は `.m` だけで利用できます。

@@ -1,0 +1,62 @@
+#import "GBAEngine.h"
+
+#import "../../../src/core/gba_core_c_api.h"
+
+@implementation GBAEngine {
+    GBACoreHandle *_handle;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _handle = GBA_Create();
+    }
+    return self;
+}
+
+- (void)dealloc {
+    if (_handle != NULL) {
+        GBA_Destroy(_handle);
+        _handle = NULL;
+    }
+}
+
+- (BOOL)loadROMAtPath:(NSString *)path error:(NSError * _Nullable * _Nullable)error {
+    if (_handle == NULL) {
+        if (error != nil) {
+            NSDictionary *info = @{NSLocalizedDescriptionKey: @"GBAコアの初期化に失敗しました"};
+            *error = [NSError errorWithDomain:@"GBAEngine" code:1000 userInfo:info];
+        }
+        return NO;
+    }
+
+    const char *romPath = path.UTF8String;
+    BOOL ok = GBA_LoadROMFromPath(_handle, romPath);
+    if (!ok) {
+        if (error != nil) {
+            const char *lastError = GBA_GetLastError(_handle);
+            NSString *message = (lastError != NULL && lastError[0] != '\0')
+                ? [NSString stringWithUTF8String:lastError]
+                : @"ROMの読み込みに失敗しました";
+            NSDictionary *info = @{NSLocalizedDescriptionKey: message};
+            *error = [NSError errorWithDomain:@"GBAEngine" code:1001 userInfo:info];
+        }
+        return NO;
+    }
+
+    return YES;
+}
+
+- (void)reset {
+    if (_handle != NULL) {
+        GBA_Reset(_handle);
+    }
+}
+
+- (void)stepFrame {
+    if (_handle != NULL) {
+        GBA_StepFrame(_handle);
+    }
+}
+
+@end
