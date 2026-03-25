@@ -42,7 +42,9 @@ uint16_t ReadBackdropBgr(const std::array<uint8_t, 1024>& palette_ram) {
 }
 
 bool IsWithinWindowAxis(int p, int start, int end) {
-  if (start == end) return false;
+  // On GBA, equal start/end is commonly treated as full range by software
+  // relying on window registers as pass-through defaults.
+  if (start == end) return true;
   if (start < end) return p >= start && p < end;
   return p >= start || p < end;
 }
