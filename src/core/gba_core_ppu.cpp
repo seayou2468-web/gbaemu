@@ -938,6 +938,11 @@ void GBACore::RenderDebugFrame() {
   }
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  if ((dispcnt & (1u << 7)) != 0) {
+    // Forced blank: display white regardless of BG mode.
+    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
+    return;
+  }
   const uint16_t bg_mode = dispcnt & 0x7u;
   if (bg_mode == 0u) {
     RenderMode0Frame();
