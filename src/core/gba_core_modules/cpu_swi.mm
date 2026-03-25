@@ -1,3 +1,7 @@
+#if __INCLUDE_LEVEL__ == 0
+// Intentionally empty when compiled directly.
+// This module is aggregated via src/core/gba_core.mm.
+#else
 #include "../gba_core.h"
 
 #include <cmath>
@@ -529,3 +533,4 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
 }
 
 }  // namespace gba
+#endif

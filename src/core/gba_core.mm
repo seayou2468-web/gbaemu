@@ -1,6 +1,17 @@
-// This translation unit intentionally stays empty.
-//
-// Historically, it `#include`d files from `gba_core_modules/*.mm` to form a
-// single unified implementation. The current build compiles those module files
-// as independent translation units, so including them here causes duplicate
-// symbol errors at link time.
+// Unified Objective-C++ core implementation split into focused modules.
+
+#include "gba_core_modules/core_bootstrap.mm"
+#include "gba_core_modules/core_reset_state.mm"
+#include "gba_core_modules/core_save_debug.mm"
+#include "gba_core_modules/core_backup_runtime.mm"
+#include "gba_core_modules/cpu_helpers.mm"
+#include "gba_core_modules/cpu_swi.mm"
+#include "gba_core_modules/cpu_arm_execute.mm"
+#include "gba_core_modules/cpu_thumb_run.mm"
+#include "gba_core_modules/memory_bus.mm"
+#include "gba_core_modules/ppu_common.mm"
+#include "gba_core_modules/ppu_bitmap_obj.mm"
+#include "gba_core_modules/ppu_tile_modes.mm"
+#include "gba_core_modules/timing_dma.mm"
+#include "gba_core_modules/apu_interrupts.mm"
+#include "gba_core_modules/render_debug.mm"
