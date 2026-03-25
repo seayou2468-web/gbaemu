@@ -6,8 +6,8 @@
 // - gba_core_ppu.cpp
 
 // ---- BEGIN gba_core.cpp ----
-#include "gba_core.h"
-#include "mgba_hle_bios_blob.h"
+#include "../gba_core.h"
+#include "../mgba_hle_bios_blob.h"
 
 #include <algorithm>
 #include <cstring>

@@ -1,5 +1,5 @@
-#include "gba_core.h"
-#include "ppu_common.mm"
+#include "../gba_core.h"
+#include "./ppu_common.mm"
 
 namespace gba {
 

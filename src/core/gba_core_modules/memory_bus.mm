@@ -1,5 +1,5 @@
 // ---- BEGIN gba_core_memory.cpp ----
-#include "gba_core.h"
+#include "../gba_core.h"
 
 namespace gba {
 namespace {

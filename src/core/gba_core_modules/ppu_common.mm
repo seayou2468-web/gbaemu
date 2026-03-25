@@ -2,7 +2,7 @@
 #define GBA_CORE_PPU_COMMON_IMPL
 
 // ---- BEGIN gba_core_ppu.cpp ----
-#include "gba_core.h"
+#include "../gba_core.h"
 
 #include <algorithm>
 

@@ -2,7 +2,7 @@
 #define GBA_CORE_CPU_HELPERS_IMPL
 
 // ---- BEGIN gba_core_cpu.cpp ----
-#include "gba_core.h"
+#include "../gba_core.h"
 
 #include <algorithm>
 #include <bit>

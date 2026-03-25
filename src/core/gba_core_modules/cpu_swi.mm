@@ -1,9 +1,76 @@
-#include "gba_core.h"
-#include "cpu_helpers.mm"
+#include "../gba_core.h"
 
+#include <cmath>
+#include <cstdlib>
 #include <limits>
 
 namespace gba {
+namespace {
+int16_t BiosArcTanPolyLocal(int32_t i) {
+  const int32_t a = -((i * i) >> 14);
+  int32_t b = ((0xA9 * a) >> 14) + 0x390;
+  b = ((b * a) >> 14) + 0x91C;
+  b = ((b * a) >> 14) + 0xFB6;
+  b = ((b * a) >> 14) + 0x16AA;
+  b = ((b * a) >> 14) + 0x2081;
+  b = ((b * a) >> 14) + 0x3651;
+  b = ((b * a) >> 14) + 0xA2F9;
+  return static_cast<int16_t>((i * b) >> 16);
+}
+
+int16_t BiosArcTan2Local(int32_t x, int32_t y) {
+  if (y == 0) return static_cast<int16_t>(x >= 0 ? 0 : 0x8000);
+  if (x == 0) return static_cast<int16_t>(y >= 0 ? 0x4000 : 0xC000);
+  if (y >= 0) {
+    if (x >= 0) {
+      if (x >= y) return BiosArcTanPolyLocal((y << 14) / x);
+    } else if (-x >= y) {
+      return static_cast<int16_t>(BiosArcTanPolyLocal((y << 14) / x) + 0x8000);
+    }
+    return static_cast<int16_t>(0x4000 - BiosArcTanPolyLocal((x << 14) / y));
+  }
+  if (x <= 0) {
+    if (-x > -y) return static_cast<int16_t>(BiosArcTanPolyLocal((y << 14) / x) + 0x8000);
+  } else if (x >= -y) {
+    return static_cast<int16_t>(BiosArcTanPolyLocal((y << 14) / x) + 0x10000);
+  }
+  return static_cast<int16_t>(0xC000 - BiosArcTanPolyLocal((x << 14) / y));
+}
+
+uint32_t BiosSqrtLocal(uint32_t x) {
+  if (x == 0) return 0;
+  uint32_t upper = x;
+  uint32_t bound = 1;
+  while (bound < upper) {
+    upper >>= 1;
+    bound <<= 1;
+  }
+  while (true) {
+    upper = x;
+    uint32_t accum = 0;
+    uint32_t lower = bound;
+    while (true) {
+      const uint32_t old_lower = lower;
+      if (lower <= upper >> 1) lower <<= 1;
+      if (old_lower >= upper >> 1) break;
+    }
+    while (true) {
+      accum <<= 1;
+      if (upper >= lower) {
+        ++accum;
+        upper -= lower;
+      }
+      if (lower == bound) break;
+      lower >>= 1;
+    }
+    const uint32_t old_bound = bound;
+    bound += accum;
+    bound >>= 1;
+    if (bound >= old_bound) return old_bound;
+  }
+}
+}  // namespace
+
 
 bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
   // When any BIOS image is mapped (external or built-in mGBA HLE BIOS),
@@ -92,20 +159,20 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     }
     case mgba_compat::kSwiSqrt: {  // Sqrt
       const uint32_t x = cpu_.regs[0];
-      cpu_.regs[0] = BiosSqrt(x);
+      cpu_.regs[0] = BiosSqrtLocal(x);
       cpu_.regs[15] = next_pc;
       return true;
     }
     case mgba_compat::kSwiArcTan: {  // ArcTan
       const int32_t tan_q14 = static_cast<int32_t>(cpu_.regs[0]);
-      cpu_.regs[0] = static_cast<uint32_t>(static_cast<uint16_t>(BiosArcTanPoly(tan_q14)));
+      cpu_.regs[0] = static_cast<uint32_t>(static_cast<uint16_t>(BiosArcTanPolyLocal(tan_q14)));
       cpu_.regs[15] = next_pc;
       return true;
     }
     case mgba_compat::kSwiArcTan2: {  // ArcTan2
       const int32_t x = static_cast<int32_t>(cpu_.regs[0]);
       const int32_t y = static_cast<int32_t>(cpu_.regs[1]);
-      cpu_.regs[0] = static_cast<uint32_t>(static_cast<uint16_t>(BiosArcTan2(x, y)));
+      cpu_.regs[0] = static_cast<uint32_t>(static_cast<uint16_t>(BiosArcTan2Local(x, y)));
       cpu_.regs[3] = 0x170u;  // BIOS side-effect observed by many titles.
       cpu_.regs[15] = next_pc;
       return true;

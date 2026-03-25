@@ -1,4 +1,4 @@
-#include "gba_core.h"
+#include "../gba_core.h"
 
 #include <algorithm>
 
