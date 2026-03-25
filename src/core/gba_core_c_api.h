@@ -13,6 +13,8 @@ GBACoreHandle* GBA_Create(void);
 void GBA_Destroy(GBACoreHandle* handle);
 
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* rom_path);
+bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* bios_path);
+void GBA_LoadBuiltInBIOS(GBACoreHandle* handle);
 void GBA_Reset(GBACoreHandle* handle);
 void GBA_StepFrame(GBACoreHandle* handle);
 

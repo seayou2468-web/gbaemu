@@ -44,6 +44,38 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* rom_path) {
   return true;
 }
 
+bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* bios_path) {
+  if (handle == nullptr || bios_path == nullptr) {
+    return false;
+  }
+
+  handle->last_error.clear();
+  std::vector<uint8_t> bios_buffer;
+  if (!gba::LoadFile(std::string(bios_path), &bios_buffer, &handle->last_error) ||
+      bios_buffer.empty()) {
+    if (handle->last_error.empty()) {
+      handle->last_error = "BIOS file loading failed";
+    }
+    return false;
+  }
+
+  if (!handle->core.LoadBIOS(bios_buffer, &handle->last_error)) {
+    if (handle->last_error.empty()) {
+      handle->last_error = "Core BIOS loading failed";
+    }
+    return false;
+  }
+
+  return true;
+}
+
+void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
+  if (handle == nullptr) {
+    return;
+  }
+  handle->core.LoadBuiltInBIOS();
+}
+
 void GBA_Reset(GBACoreHandle* handle) {
   if (handle == nullptr) {
     return;

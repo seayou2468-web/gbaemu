@@ -47,6 +47,38 @@
     return YES;
 }
 
+- (BOOL)loadBIOSAtPath:(NSString *)path error:(NSError * _Nullable * _Nullable)error {
+    if (_handle == NULL) {
+        if (error != nil) {
+            NSDictionary *info = @{NSLocalizedDescriptionKey: @"GBAコアの初期化に失敗しました"};
+            *error = [NSError errorWithDomain:@"GBAEngine" code:1000 userInfo:info];
+        }
+        return NO;
+    }
+
+    const char *biosPath = path.UTF8String;
+    BOOL ok = GBA_LoadBIOSFromPath(_handle, biosPath);
+    if (!ok) {
+        if (error != nil) {
+            const char *lastError = GBA_GetLastError(_handle);
+            NSString *message = (lastError != NULL && lastError[0] != '\0')
+                ? [NSString stringWithUTF8String:lastError]
+                : @"BIOSの読み込みに失敗しました";
+            NSDictionary *info = @{NSLocalizedDescriptionKey: message};
+            *error = [NSError errorWithDomain:@"GBAEngine" code:1002 userInfo:info];
+        }
+        return NO;
+    }
+
+    return YES;
+}
+
+- (void)loadBuiltInBIOS {
+    if (_handle != NULL) {
+        GBA_LoadBuiltInBIOS(_handle);
+    }
+}
+
 - (void)reset {
     if (_handle != NULL) {
         GBA_Reset(_handle);
