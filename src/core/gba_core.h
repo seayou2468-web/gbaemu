@@ -208,6 +208,10 @@ class GBACore {
   bool apu_ch2_active_ = false;
   bool apu_ch3_active_ = false;
   bool apu_ch4_active_ = false;
+  bool apu_prev_trig_ch1_ = false;
+  bool apu_prev_trig_ch2_ = false;
+  bool apu_prev_trig_ch3_ = false;
+  bool apu_prev_trig_ch4_ = false;
 
   struct TimerState {
     uint16_t reload = 0;

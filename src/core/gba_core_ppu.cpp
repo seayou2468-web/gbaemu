@@ -1311,14 +1311,17 @@ void GBACore::StepApu(uint32_t cycles) {
     return;
   }
 
-  // Handle trigger edges (bit7 of NRx4 high byte).
-  auto consume_trigger = [&](uint32_t addr) -> bool {
-    const uint8_t v = Read8(addr);
-    if ((v & 0x80u) == 0) return false;
-    Write8(addr, static_cast<uint8_t>(v & 0x7Fu));
-    return true;
-  };
-  if (consume_trigger(0x04000065u)) {
+  // Handle trigger edges (bit7 write events latched by register shadow).
+  const bool trig_ch1 = ((Read8(0x04000065u) & 0x80u) != 0) && !apu_prev_trig_ch1_;
+  const bool trig_ch2 = ((Read8(0x0400006Du) & 0x80u) != 0) && !apu_prev_trig_ch2_;
+  const bool trig_ch3 = ((Read8(0x04000075u) & 0x80u) != 0) && !apu_prev_trig_ch3_;
+  const bool trig_ch4 = ((Read8(0x0400007Du) & 0x80u) != 0) && !apu_prev_trig_ch4_;
+  apu_prev_trig_ch1_ = (Read8(0x04000065u) & 0x80u) != 0;
+  apu_prev_trig_ch2_ = (Read8(0x0400006Du) & 0x80u) != 0;
+  apu_prev_trig_ch3_ = (Read8(0x04000075u) & 0x80u) != 0;
+  apu_prev_trig_ch4_ = (Read8(0x0400007Du) & 0x80u) != 0;
+
+  if (trig_ch1) {
     apu_ch1_active_ = true;
     apu_len_ch1_ = static_cast<uint8_t>(64u - (Read8(0x04000062u) & 0x3Fu));
     apu_env_ch1_ = static_cast<uint8_t>((Read8(0x04000063u) >> 4) & 0xFu);
@@ -1336,17 +1339,17 @@ void GBACore::StepApu(uint32_t cycles) {
       }
     }
   }
-  if (consume_trigger(0x0400006Du)) {
+  if (trig_ch2) {
     apu_ch2_active_ = true;
     apu_len_ch2_ = static_cast<uint8_t>(64u - (Read8(0x04000068u) & 0x3Fu));
     apu_env_ch2_ = static_cast<uint8_t>((Read8(0x04000069u) >> 4) & 0xFu);
     apu_env_timer_ch2_ = static_cast<uint8_t>(Read8(0x04000069u) & 0x7u);
   }
-  if (consume_trigger(0x04000075u)) {
+  if (trig_ch3) {
     apu_ch3_active_ = true;
     apu_len_ch3_ = static_cast<uint16_t>(256u - Read8(0x04000071u));
   }
-  if (consume_trigger(0x0400007Du)) {
+  if (trig_ch4) {
     apu_ch4_active_ = true;
     apu_len_ch4_ = static_cast<uint8_t>(64u - (Read8(0x04000079u) & 0x3Fu));
     apu_env_ch4_ = static_cast<uint8_t>((Read8(0x04000077u) >> 4) & 0xFu);

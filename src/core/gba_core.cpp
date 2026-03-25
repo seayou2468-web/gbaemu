@@ -171,6 +171,7 @@ void GBACore::Reset() {
   apu_ch2_active_ = false;
   apu_ch3_active_ = false;
   apu_ch4_active_ = false;
+  apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
   bios_latch_ = 0;
   cpu_ = CpuState{};
   cpu_.active_mode = cpu_.cpsr & 0x1Fu;
@@ -380,6 +381,7 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   apu_ch1_sweep_timer_ = 0;
   apu_ch1_sweep_enabled_ = false;
   apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
+  apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
   if (version >= 6u) {
     if (!read_u32(&off, &bios_latch_)) return false;
   } else {
