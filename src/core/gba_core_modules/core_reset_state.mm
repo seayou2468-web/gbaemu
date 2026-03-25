@@ -90,6 +90,7 @@ void GBACore::Reset() {
   Write8(0x04000300u, 0x01u);
   SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
+  forced_blank_streak_ = 0;
   frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
   RenderDebugFrame();
 }
