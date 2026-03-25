@@ -161,13 +161,19 @@
         return;
     }
 
+    BOOL scoped = [url startAccessingSecurityScopedResource];
     NSError *error = nil;
     BOOL loaded = NO;
     if (self.selectingBIOS) {
         loaded = [self.engine loadBIOSAtPath:url.path error:&error];
         if (loaded) {
             self.biosStatusLabel.text = [NSString stringWithFormat:@"BIOS: %@", url.lastPathComponent ?: @"(不明)"];
-            self.statusLabel.text = @"BIOSを読み込みました";
+            if (self.romLoaded) {
+                [self.engine reset];
+                [self.engine stepFrame];
+                [self renderCurrentFrame];
+            }
+            self.statusLabel.text = self.romLoaded ? @"BIOSを読み込み、再初期化しました" : @"BIOSを読み込みました";
             [self appendLog:[NSString stringWithFormat:@"BIOS load ok: %@", url.lastPathComponent ?: @"(unknown)"]];
         } else {
             self.biosStatusLabel.text = @"BIOS: 読み込み失敗（内蔵BIOS継続）";
@@ -195,6 +201,9 @@
         }
     }
 
+    if (scoped) {
+        [url stopAccessingSecurityScopedResource];
+    }
     [self refreshPlayState];
 }
 

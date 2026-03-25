@@ -177,7 +177,7 @@ void GBACore::Reset() {
   cpu_.banked_fiq_r8_r12.fill(0);
   cpu_.banked_sp[cpu_.active_mode] = cpu_.regs[13];
   cpu_.banked_lr[cpu_.active_mode] = cpu_.regs[14];
-  cpu_.regs[15] = 0x08000000u;  // ROM entry area.
+  cpu_.regs[15] = bios_loaded_ ? 0x00000000u : 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
   // VCOUNT
