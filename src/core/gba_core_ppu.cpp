@@ -49,6 +49,21 @@ void GBACore::RenderMode3Frame() {
   const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
   const uint8_t bg2_priority = static_cast<uint8_t>(ReadIO16(0x0400000Cu) & 0x3u);
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
+  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
+  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
+  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
+  auto read_s32_le = [&](uint32_t addr) -> int32_t {
+    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
+                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
+                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
+                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
+    int32_t s = static_cast<int32_t>(v);
+    if ((s & 0x08000000) != 0) s |= static_cast<int32_t>(0xF0000000);
+    return s;
+  };
+  const int32_t refx = read_s32_le(0x04000028u);
+  const int32_t refy = read_s32_le(0x0400002Cu);
 
   if (!bg2_enabled) {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
@@ -58,8 +73,19 @@ void GBACore::RenderMode3Frame() {
 
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
-      const size_t off = static_cast<size_t>((y * kScreenWidth + x) * 2);
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      const int64_t tex_x_fp =
+          static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * x + static_cast<int64_t>(pb) * y;
+      const int64_t tex_y_fp =
+          static_cast<int64_t>(refy) + static_cast<int64_t>(pc) * x + static_cast<int64_t>(pd) * y;
+      const int sx = static_cast<int>(tex_x_fp >> 8);
+      const int sy = static_cast<int>(tex_y_fp >> 8);
+      if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
+        frame_buffer_[fb_off] = backdrop;
+        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        continue;
+      }
+      const size_t off = static_cast<size_t>((sy * kScreenWidth + sx) * 2);
       if (off + 1 >= vram_.size()) {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
@@ -81,6 +107,21 @@ void GBACore::RenderMode4Frame() {
   const uint8_t bg2_priority = static_cast<uint8_t>(ReadIO16(0x0400000Cu) & 0x3u);
   const bool page1 = (dispcnt & (1u << 4)) != 0;
   const size_t page_base = page1 ? 0xA000u : 0u;
+  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
+  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
+  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
+  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
+  auto read_s32_le = [&](uint32_t addr) -> int32_t {
+    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
+                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
+                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
+                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
+    int32_t s = static_cast<int32_t>(v);
+    if ((s & 0x08000000) != 0) s |= static_cast<int32_t>(0xF0000000);
+    return s;
+  };
+  const int32_t refx = read_s32_le(0x04000028u);
+  const int32_t refy = read_s32_le(0x0400002Cu);
 
   const uint16_t backdrop_bgr = ReadBackdropBgr(palette_ram_);
   const uint32_t backdrop = Bgr555ToRgba8888(backdrop_bgr);
@@ -101,11 +142,22 @@ void GBACore::RenderMode4Frame() {
 
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
-      const size_t off = page_base + static_cast<size_t>(y * kScreenWidth + x);
-      const uint8_t index = (off < vram_.size()) ? vram_[off] : 0;
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      const int64_t tex_x_fp =
+          static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * x + static_cast<int64_t>(pb) * y;
+      const int64_t tex_y_fp =
+          static_cast<int64_t>(refy) + static_cast<int64_t>(pc) * x + static_cast<int64_t>(pd) * y;
+      const int sx = static_cast<int>(tex_x_fp >> 8);
+      const int sy = static_cast<int>(tex_y_fp >> 8);
+      if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
+        frame_buffer_[fb_off] = backdrop;
+        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
+        continue;
+      }
+      const size_t off = page_base + static_cast<size_t>(sy * kScreenWidth + sx);
+      const uint8_t index = (off < vram_.size()) ? vram_[off] : 0;
       frame_buffer_[fb_off] = palette_color(index);
-      bg_priority[fb_off] = (index == 0u) ? static_cast<uint8_t>(kBackdropPriority) : bg2_priority;
+      bg_priority[fb_off] = bg2_priority;
     }
   }
 }
@@ -121,19 +173,41 @@ void GBACore::RenderMode5Frame() {
   constexpr int kMode5Width = 160;
   constexpr int kMode5Height = 128;
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
+  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
+  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
+  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
+  auto read_s32_le = [&](uint32_t addr) -> int32_t {
+    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
+                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
+                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
+                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
+    int32_t s = static_cast<int32_t>(v);
+    if ((s & 0x08000000) != 0) s |= static_cast<int32_t>(0xF0000000);
+    return s;
+  };
+  const int32_t refx = read_s32_le(0x04000028u);
+  const int32_t refy = read_s32_le(0x0400002Cu);
 
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
   std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
 
   if (!bg2_enabled) return;
 
-  for (int y = 0; y < kMode5Height; ++y) {
-    for (int x = 0; x < kMode5Width; ++x) {
-      const size_t off = page_base + static_cast<size_t>((y * kMode5Width + x) * 2);
+  for (int y = 0; y < kScreenHeight; ++y) {
+    for (int x = 0; x < kScreenWidth; ++x) {
+      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
+      const int64_t tex_x_fp =
+          static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * x + static_cast<int64_t>(pb) * y;
+      const int64_t tex_y_fp =
+          static_cast<int64_t>(refy) + static_cast<int64_t>(pc) * x + static_cast<int64_t>(pd) * y;
+      const int sx = static_cast<int>(tex_x_fp >> 8);
+      const int sy = static_cast<int>(tex_y_fp >> 8);
+      if (sx < 0 || sy < 0 || sx >= kMode5Width || sy >= kMode5Height) continue;
+      const size_t off = page_base + static_cast<size_t>((sy * kMode5Width + sx) * 2);
       if (off + 1 >= vram_.size()) continue;
       const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
                               static_cast<uint16_t>(vram_[off + 1] << 8);
-      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
       bg_priority[fb_off] = bg2_priority;
     }
