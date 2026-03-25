@@ -1698,41 +1698,6 @@ void GBACore::RenderDebugFrame() {
   }
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
-  auto apply_fallback_if_blank = [&]() {
-    if (!loaded_ || frame_buffer_.empty()) return;
-    const uint32_t first = frame_buffer_.front();
-    bool all_same = true;
-    for (uint32_t px : frame_buffer_) {
-      if (px != first) {
-        all_same = false;
-        break;
-      }
-    }
-    if (!all_same) return;
-    // Fallback visualization to indicate ROM is loaded even if current core
-    // emulation path has not produced visible VRAM output yet.
-    const uint32_t bg = 0xFF101018u;
-    const uint32_t bar = 0xFF2E7DFFu;
-    std::fill(frame_buffer_.begin(), frame_buffer_.end(), bg);
-    const int cx = kScreenWidth / 2;
-    const int cy = kScreenHeight / 2;
-    for (int y = cy - 20; y <= cy + 20; ++y) {
-      if (y < 0 || y >= kScreenHeight) continue;
-      for (int x = 20; x < kScreenWidth - 20; ++x) {
-        frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = bar;
-      }
-    }
-    const std::string title = rom_info_.title.empty() ? "ROM" : rom_info_.title;
-    for (size_t i = 0; i < title.size() && i < 24; ++i) {
-      const uint32_t c = 0xFF202020u + (static_cast<uint32_t>(title[i]) * 131u);
-      const int x0 = 24 + static_cast<int>(i) * 8;
-      for (int y = 24; y < 36; ++y) {
-        for (int x = x0; x < x0 + 6 && x < kScreenWidth; ++x) {
-          frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = c;
-        }
-      }
-    }
-  };
   if ((dispcnt & (1u << 7)) != 0) {
     // Forced blank: display white regardless of BG mode.
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
@@ -1747,42 +1712,36 @@ void GBACore::RenderDebugFrame() {
     RenderMode0Frame();
     RenderSprites();
     ApplyColorEffects();
-    apply_fallback_if_blank();
     return;
   }
   if (bg_mode == 1u) {
     RenderMode1Frame();
     RenderSprites();
     ApplyColorEffects();
-    apply_fallback_if_blank();
     return;
   }
   if (bg_mode == 2u) {
     RenderMode2Frame();
     RenderSprites();
     ApplyColorEffects();
-    apply_fallback_if_blank();
     return;
   }
   if (bg_mode == 3u) {
     RenderMode3Frame();
     RenderSprites();
     ApplyColorEffects();
-    apply_fallback_if_blank();
     return;
   }
   if (bg_mode == 4u) {
     RenderMode4Frame();
     RenderSprites();
     ApplyColorEffects();
-    apply_fallback_if_blank();
     return;
   }
   if (bg_mode == 5u) {
     RenderMode5Frame();
     RenderSprites();
     ApplyColorEffects();
-    apply_fallback_if_blank();
     return;
   }
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
