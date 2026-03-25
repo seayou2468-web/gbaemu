@@ -30,6 +30,21 @@ std::vector<uint8_t>& ObjWindowMaskBuffer() {
   return buffer;
 }
 
+std::vector<uint8_t>& ObjDrawnMaskBuffer() {
+  static std::vector<uint8_t> buffer;
+  return buffer;
+}
+
+void EnsureObjDrawnMaskBufferSize() {
+  auto& buffer = ObjDrawnMaskBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0u);
+  }
+}
+
 void EnsureObjWindowMaskBufferSize() {
   auto& buffer = ObjWindowMaskBuffer();
   const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
@@ -191,6 +206,8 @@ void GBACore::RenderMode3Frame() {
 void GBACore::RenderMode4Frame() {
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
+  EnsureObjDrawnMaskBufferSize();
+  auto& obj_drawn = ObjDrawnMaskBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u);
   const uint16_t winout = ReadIO16(0x0400004Au);
@@ -476,6 +493,8 @@ void GBACore::RenderSprites() {
 
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
+  EnsureObjDrawnMaskBufferSize();
+  auto& obj_drawn = ObjDrawnMaskBuffer();
 
   static constexpr int kObjDim[3][4][2] = {
       {{8, 8}, {16, 16}, {32, 32}, {64, 64}},     // square
@@ -629,9 +648,18 @@ void GBACore::RenderSprites() {
           const uint8_t window_control = ResolveWindowControl(
               dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), sx, sy);
           const bool effects_enabled = (window_control & (1u << 5)) != 0;
-          if (!(effects_enabled && obj_is_1st_target && any_2nd_target)) {
+          bool second_target_ok = false;
+          if (obj_drawn[fb_off] != 0u) {
+            second_target_ok = (bldcnt & (1u << (8 + 4))) != 0;  // OBJ as 2nd target
+          } else if (bg_priority[fb_off] == kBackdropPriority) {
+            second_target_ok = (bldcnt & (1u << (8 + 5))) != 0;  // BD as 2nd target
+          } else {
+            second_target_ok = (bldcnt & 0x0F00u) != 0;  // any BG as 2nd target
+          }
+          if (!(effects_enabled && obj_is_1st_target && any_2nd_target && second_target_ok)) {
             frame_buffer_[fb_off] = obj_px;
             bg_priority[fb_off] = obj_priority;
+            obj_drawn[fb_off] = 1u;
             continue;
           }
           // Semi-transparent OBJ: approximate hardware blend using current
@@ -651,6 +679,7 @@ void GBACore::RenderSprites() {
         }
         frame_buffer_[fb_off] = obj_px;
         bg_priority[fb_off] = obj_priority;
+        obj_drawn[fb_off] = 1u;
       }
     }
   }
@@ -1299,6 +1328,13 @@ void GBACore::StepApu(uint32_t cycles) {
     const uint8_t nr10 = Read8(0x04000060u);
     apu_ch1_sweep_timer_ = static_cast<uint8_t>((nr10 >> 4) & 0x7u);
     apu_ch1_sweep_enabled_ = (nr10 & 0x7u) != 0 || apu_ch1_sweep_timer_ != 0;
+    const uint8_t shift = nr10 & 0x7u;
+    if (apu_ch1_sweep_enabled_ && shift != 0u && (nr10 & 0x8u) == 0) {
+      const uint16_t delta = static_cast<uint16_t>(apu_ch1_sweep_freq_ >> shift);
+      if (apu_ch1_sweep_freq_ + delta > 2047u) {
+        apu_ch1_active_ = false;
+      }
+    }
   }
   if (consume_trigger(0x0400006Du)) {
     apu_ch2_active_ = true;
@@ -1373,6 +1409,12 @@ void GBACore::StepApu(uint32_t cycles) {
             Write8(0x04000064u, static_cast<uint8_t>(next & 0xFFu));
             const uint8_t nr14_hi = Read8(0x04000065u);
             Write8(0x04000065u, static_cast<uint8_t>((nr14_hi & ~0x7u) | ((next >> 8) & 0x7u)));
+            if ((nr10 & 0x8u) == 0) {
+              const uint16_t next_delta = static_cast<uint16_t>(next >> shift);
+              if (next + next_delta > 2047u) {
+                apu_ch1_active_ = false;
+              }
+            }
           }
         }
       }
