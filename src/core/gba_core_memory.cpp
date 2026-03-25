@@ -498,6 +498,24 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (addr == 0x04000208u) {
     value &= 0x0001u;
   }
+  // SOUNDCNT_X: only bit7 is writable; bits0-3 are read-only channel-active flags.
+  if (addr == 0x04000084u) {
+    const uint16_t old = ReadIO16(addr);
+    const uint16_t ro_status = static_cast<uint16_t>(old & 0x000Fu);
+    value = static_cast<uint16_t>((value & 0x0080u) | ro_status);
+    const bool master_was_on = (old & 0x0080u) != 0;
+    const bool master_now_on = (value & 0x0080u) != 0;
+    if (master_was_on && !master_now_on) {
+      for (size_t i = 0x60u; i <= 0x81u && i < io_regs_.size(); ++i) io_regs_[i] = 0;
+      apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
+      apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
+      audio_mix_level_ = 0;
+      fifo_a_.clear();
+      fifo_b_.clear();
+      fifo_a_last_sample_ = 0;
+      fifo_b_last_sample_ = 0;
+    }
+  }
   // SOUNDCNT_H FIFO reset bits.
   if (addr == 0x04000082u) {
     if (value & (1u << 11)) {

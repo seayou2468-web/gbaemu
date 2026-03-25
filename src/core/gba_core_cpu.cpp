@@ -298,6 +298,27 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       cpu_.regs[15] = next_pc;
       return true;
     }
+    case 0x09u: {  // ArcTan (approximate fixed-point BIOS behavior)
+      const int32_t tan_q14 = static_cast<int32_t>(cpu_.regs[0]);
+      const double tan_v = static_cast<double>(tan_q14) / 16384.0;
+      const double angle = std::atan(tan_v);  // [-pi/2, pi/2]
+      int32_t units = static_cast<int32_t>(std::lround(angle * (32768.0 / 3.14159265358979323846)));
+      units &= 0xFFFF;
+      cpu_.regs[0] = static_cast<uint32_t>(units);
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x0Au: {  // ArcTan2
+      const int32_t x = static_cast<int32_t>(cpu_.regs[0]);
+      const int32_t y = static_cast<int32_t>(cpu_.regs[1]);
+      double angle = std::atan2(static_cast<double>(y), static_cast<double>(x));  // [-pi, pi]
+      if (angle < 0.0) angle += 2.0 * 3.14159265358979323846;
+      const uint32_t units = static_cast<uint32_t>(
+          std::lround(angle * (65536.0 / (2.0 * 3.14159265358979323846)))) & 0xFFFFu;
+      cpu_.regs[0] = units;
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
     case 0x0Eu: {  // BgAffineSet
       uint32_t src = cpu_.regs[0];
       uint32_t dst = cpu_.regs[1];
@@ -489,6 +510,70 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
         for (uint32_t i = 0; i < out.size(); ++i) {
           Write8(dst + i, out[i]);
         }
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x16u:  // Diff8bitUnFilterWram
+    case 0x17u: {  // Diff8bitUnFilterVram
+      uint32_t src = cpu_.regs[0];
+      const uint32_t dst = cpu_.regs[1];
+      const uint32_t header = Read32(src);
+      src += 4u;
+      if ((header & 0xFFu) != 0x80u) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
+      const uint32_t out_size = header >> 8;
+      std::vector<uint8_t> out;
+      out.reserve(out_size);
+      uint8_t acc = 0;
+      for (uint32_t i = 0; i < out_size; ++i) {
+        const uint8_t delta = Read8(src++);
+        if (i == 0) {
+          acc = delta;
+        } else {
+          acc = static_cast<uint8_t>(acc + delta);
+        }
+        out.push_back(acc);
+      }
+      const bool to_vram = ((swi_imm & 0xFFu) == 0x17u);
+      if (to_vram) {
+        uint32_t i = 0;
+        while (i < out.size()) {
+          const uint16_t lo = out[i];
+          const uint16_t hi = (i + 1 < out.size()) ? static_cast<uint16_t>(out[i + 1]) : 0u;
+          Write16(dst + i, static_cast<uint16_t>(lo | (hi << 8)));
+          i += 2;
+        }
+      } else {
+        for (uint32_t i = 0; i < out.size(); ++i) {
+          Write8(dst + i, out[i]);
+        }
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x18u: {  // Diff16bitUnFilter
+      uint32_t src = cpu_.regs[0];
+      const uint32_t dst = cpu_.regs[1];
+      const uint32_t header = Read32(src);
+      src += 4u;
+      if ((header & 0xFFu) != 0x80u) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
+      const uint32_t out_size = header >> 8;
+      uint16_t acc = 0;
+      for (uint32_t i = 0; i + 1 < out_size; i += 2) {
+        const uint16_t delta = Read16(src);
+        src += 2u;
+        if (i == 0) {
+          acc = delta;
+        } else {
+          acc = static_cast<uint16_t>(acc + delta);
+        }
+        Write16(dst + i, acc);
       }
       cpu_.regs[15] = next_pc;
       return true;
