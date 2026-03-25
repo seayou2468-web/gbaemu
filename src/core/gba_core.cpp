@@ -184,6 +184,7 @@ void GBACore::Reset() {
   apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
   swi_intrwait_active_ = false;
   swi_intrwait_mask_ = 0;
+  forced_blank_streak_ = 0;
   bios_latch_ = 0;
   cpu_ = CpuState{};
   cpu_.active_mode = cpu_.cpsr & 0x1Fu;

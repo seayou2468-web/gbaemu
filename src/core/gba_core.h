@@ -248,6 +248,7 @@ class GBACore {
   bool flash_bank_switch_mode_ = false;
   bool swi_intrwait_active_ = false;
   uint16_t swi_intrwait_mask_ = 0;
+  uint32_t forced_blank_streak_ = 0;
   uint32_t debug_last_exception_vector_ = 0;
   uint32_t debug_last_exception_pc_ = 0;
   uint32_t debug_last_exception_cpsr_ = 0;

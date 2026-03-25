@@ -1985,18 +1985,29 @@ void GBACore::RenderDebugFrame() {
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   if ((dispcnt & (1u << 7)) != 0) {
+    ++forced_blank_streak_;
     // Forced blank is frequently pulsed around mode/setup transitions.
-    // Keep a previously rendered image when available, but avoid getting stuck
-    // on an all-black startup frame forever when bit7 stays sampled as set.
-    const bool has_nonblack_pixel =
+    // Keep a previously rendered image when available. If startup remains in
+    // forced blank for several consecutive snapshots, stop forcing blank here
+    // and render using current BG state to avoid permanent white/black output.
+    const bool has_visible_content =
         std::any_of(frame_buffer_.begin(), frame_buffer_.end(),
-                    [](uint32_t px) { return px != 0xFF000000u; });
-    if (has_nonblack_pixel) return;
-    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
-    EnsureBgPriorityBufferSize();
-    std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-              static_cast<uint8_t>(kBackdropPriority));
-    return;
+                    [](uint32_t px) { return px != 0xFF000000u && px != 0xFFFFFFFFu; });
+    if (has_visible_content) return;
+    if (forced_blank_streak_ <= 3u) {
+      std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
+      EnsureBgPriorityBufferSize();
+      std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
+                static_cast<uint8_t>(kBackdropPriority));
+      return;
+    }
+    // Fallback for non-scanline snapshot mode: if forced blank remains stuck,
+    // clear the latched bit so BG setup can become visible instead of staying
+    // permanently white/black.
+    WriteIO16(0x04000000u, static_cast<uint16_t>(dispcnt & ~(1u << 7)));
+    forced_blank_streak_ = 0;
+  } else {
+    forced_blank_streak_ = 0;
   }
   EnsureObjDrawnMaskBufferSize();
   EnsureBgBaseColorBufferSize();
