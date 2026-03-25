@@ -1,7 +1,3 @@
-#if __INCLUDE_LEVEL__ == 0
-// Intentionally empty when compiled directly.
-// This module is aggregated via src/core/gba_core.mm.
-#else
 #include "../gba_core.h"
 
 #include <algorithm>
@@ -363,4 +359,3 @@ void GBACore::UpdateGameplayFromInput() {
 
 }  // namespace gba
 
-#endif

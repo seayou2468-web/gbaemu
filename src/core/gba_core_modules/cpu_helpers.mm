@@ -1,7 +1,3 @@
-#if __INCLUDE_LEVEL__ == 0
-// Intentionally empty when compiled directly.
-// This module is aggregated via src/core/gba_core.mm.
-#else
 #ifndef GBA_CORE_CPU_HELPERS_IMPL
 #define GBA_CORE_CPU_HELPERS_IMPL
 
@@ -307,4 +303,3 @@ void GBACore::HandleCpuSet(bool fast_mode) {
 }  // namespace gba
 
 #endif  // GBA_CORE_CPU_HELPERS_IMPL
-#endif

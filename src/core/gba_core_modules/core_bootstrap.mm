@@ -1,7 +1,3 @@
-#if __INCLUDE_LEVEL__ == 0
-// Intentionally empty when compiled directly.
-// This module is aggregated via src/core/gba_core.mm.
-#else
 // Unified Objective-C++ core implementation.
 // Merged directly from:
 // - gba_core.cpp
@@ -122,4 +118,3 @@ void GBACore::LoadBuiltInBIOS() {
 }
 
 }  // namespace gba
-#endif

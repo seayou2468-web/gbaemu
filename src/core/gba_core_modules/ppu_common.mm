@@ -1,7 +1,3 @@
-#if __INCLUDE_LEVEL__ == 0
-// Intentionally empty when compiled directly.
-// This module is aggregated via src/core/gba_core.mm.
-#else
 #ifndef GBA_CORE_PPU_COMMON_IMPL
 #define GBA_CORE_PPU_COMMON_IMPL
 
@@ -213,4 +209,3 @@ uint16_t LayerToBlendMask(uint8_t layer, bool top_is_obj) {
 }  // namespace gba
 
 #endif  // GBA_CORE_PPU_COMMON_IMPL
-#endif

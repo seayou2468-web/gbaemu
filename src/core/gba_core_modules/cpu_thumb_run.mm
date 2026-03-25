@@ -1,7 +1,3 @@
-#if __INCLUDE_LEVEL__ == 0
-// Intentionally empty when compiled directly.
-// This module is aggregated via src/core/gba_core.mm.
-#else
 #include "../gba_core.h"
 
 namespace gba {
@@ -547,4 +543,3 @@ void GBACore::DebugStepCpuInstructions(uint32_t count) {
 }  // namespace gba
 
 // ---- END gba_core_cpu.cpp ----
-#endif

@@ -1,7 +1,3 @@
-#if __INCLUDE_LEVEL__ == 0
-// Intentionally empty when compiled directly.
-// This module is aggregated via src/core/gba_core.mm.
-#else
 // ---- BEGIN gba_core_memory.cpp ----
 #include "../gba_core.h"
 
@@ -551,4 +547,3 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
 }  // namespace gba
 
 // ---- END gba_core_memory.cpp ----
-#endif

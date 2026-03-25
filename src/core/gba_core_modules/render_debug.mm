@@ -1,7 +1,3 @@
-#if __INCLUDE_LEVEL__ == 0
-// Intentionally empty when compiled directly.
-// This module is aggregated via src/core/gba_core.mm.
-#else
 #include "../gba_core.h"
 #include "./ppu_common.mm"
 
@@ -223,4 +219,3 @@ bool GBACore::ValidateFrameBuffer(std::string* error) const {
 }  // namespace gba
 
 // ---- END gba_core_ppu.cpp ----
-#endif

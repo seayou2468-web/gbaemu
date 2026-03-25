@@ -1,7 +1,3 @@
-#if __INCLUDE_LEVEL__ == 0
-// Intentionally empty when compiled directly.
-// This module is aggregated via src/core/gba_core.mm.
-#else
 #include "../gba_core.h"
 
 #include <algorithm>
@@ -352,4 +348,3 @@ void GBACore::DebugWrite16(uint32_t addr, uint16_t value) { Write16(addr, value)
 void GBACore::DebugWrite32(uint32_t addr, uint32_t value) { Write32(addr, value); }
 
 }  // namespace gba
-#endif
