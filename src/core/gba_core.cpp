@@ -92,6 +92,11 @@ bool GBACore::LoadBIOS(const std::vector<uint8_t>& bios, std::string* error) {
   }
   std::copy_n(bios.begin(), bios_.size(), bios_.begin());
   bios_loaded_ = true;
+  // If a ROM is already loaded, immediately reinitialize so execution and SWI
+  // handling use the newly loaded BIOS image.
+  if (loaded_) {
+    Reset();
+  }
   return true;
 }
 
@@ -124,6 +129,9 @@ void GBACore::LoadBuiltInBIOS() {
   // Reset handler @0x100: branch to cartridge space 0x08000000
   write32le(0x100, make_branch(0x100u, 0x08000000u));
   bios_loaded_ = true;
+  if (loaded_) {
+    Reset();
+  }
 }
 
 void GBACore::Reset() {
@@ -176,9 +184,18 @@ void GBACore::Reset() {
   cpu_ = CpuState{};
   cpu_.active_mode = cpu_.cpsr & 0x1Fu;
   cpu_.banked_fiq_r8_r12.fill(0);
-  cpu_.banked_sp[cpu_.active_mode] = cpu_.regs[13];
-  cpu_.banked_lr[cpu_.active_mode] = cpu_.regs[14];
-  cpu_.regs[15] = bios_loaded_ ? 0x00000000u : 0x08000000u;
+  // Real hardware leaves post-boot stack pointers at these locations after
+  // BIOS SoftReset (GBATEK "SWI 00h - SoftReset"), then enters game code.
+  cpu_.banked_sp[0x13u] = 0x03007FE0u;  // SVC
+  cpu_.banked_sp[0x12u] = 0x03007FA0u;  // IRQ
+  cpu_.banked_sp[0x1Fu] = 0x03007F00u;  // SYS
+  cpu_.banked_lr[0x13u] = 0;
+  cpu_.banked_lr[0x12u] = 0;
+  cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
+  cpu_.regs[14] = 0;
+  // Start at cartridge entry in a post-BIOS state. This avoids depending on
+  // full BIOS startup emulation while still keeping BIOS mapped for SWI calls.
+  cpu_.regs[15] = 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
   // VCOUNT
@@ -189,6 +206,8 @@ void GBACore::Reset() {
   WriteIO16(0x04000200u, 0x0000u);
   WriteIO16(0x04000202u, 0x0000u);
   WriteIO16(0x04000208u, 0x0001u);
+  // POSTFLG=1 indicates post-boot state when directly entering cartridge code.
+  Write8(0x04000300u, 0x01u);
   SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
   frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
