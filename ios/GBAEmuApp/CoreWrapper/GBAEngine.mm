@@ -6,6 +6,14 @@
     GBACoreHandle *_handle;
 }
 
++ (NSInteger)screenWidth {
+    return 240;
+}
+
++ (NSInteger)screenHeight {
+    return 160;
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {
@@ -89,6 +97,23 @@
     if (_handle != NULL) {
         GBA_StepFrame(_handle);
     }
+}
+
+- (NSData * _Nullable)copyCurrentFrameData {
+    if (_handle == NULL) {
+        return nil;
+    }
+
+    size_t pixels = GBA_GetFrameBufferSize(_handle);
+    if (pixels == 0) {
+        return nil;
+    }
+
+    NSMutableData *data = [NSMutableData dataWithLength:pixels * sizeof(uint32_t)];
+    if (!GBA_CopyFrameBufferRGBA(_handle, data.mutableBytes, pixels)) {
+        return nil;
+    }
+    return data;
 }
 
 @end

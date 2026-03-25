@@ -11,9 +11,10 @@
 @property (nonatomic, strong) UIButton *loadBIOSButton;
 @property (nonatomic, strong) UIButton *loadROMButton;
 @property (nonatomic, strong) UIButton *playPauseButton;
-@property (nonatomic, strong) UIView *frameBufferPlaceholder;
+@property (nonatomic, strong) UIImageView *screenView;
 @property (nonatomic, strong) GBAEngine *engine;
 @property (nonatomic, strong, nullable) CADisplayLink *displayLink;
+@property (nonatomic, strong) NSData *lastFrameData;
 @property (nonatomic, assign) BOOL romLoaded;
 @property (nonatomic, assign) BOOL selectingBIOS;
 @end
@@ -54,10 +55,12 @@
     self.romStatusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     self.romStatusLabel.numberOfLines = 0;
 
-    self.frameBufferPlaceholder = [[UIView alloc] init];
-    self.frameBufferPlaceholder.translatesAutoresizingMaskIntoConstraints = NO;
-    self.frameBufferPlaceholder.backgroundColor = UIColor.blackColor;
-    self.frameBufferPlaceholder.layer.cornerRadius = 12.0;
+    self.screenView = [[UIImageView alloc] init];
+    self.screenView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.screenView.backgroundColor = UIColor.blackColor;
+    self.screenView.layer.cornerRadius = 12.0;
+    self.screenView.layer.masksToBounds = YES;
+    self.screenView.contentMode = UIViewContentModeScaleAspectFit;
 
     self.loadBIOSButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.loadBIOSButton.translatesAutoresizingMaskIntoConstraints = NO;
@@ -75,7 +78,7 @@
     [self.playPauseButton addTarget:self action:@selector(togglePlayback) forControlEvents:UIControlEventTouchUpInside];
 
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        self.frameBufferPlaceholder,
+        self.screenView,
         self.statusLabel,
         self.biosStatusLabel,
         self.romStatusLabel,
@@ -95,7 +98,7 @@
         [stack.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-20.0],
         [stack.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:20.0],
 
-        [self.frameBufferPlaceholder.heightAnchor constraintEqualToAnchor:self.frameBufferPlaceholder.widthAnchor multiplier:160.0/240.0]
+        [self.screenView.heightAnchor constraintEqualToAnchor:self.screenView.widthAnchor multiplier:160.0/240.0]
     ]];
 }
 
@@ -145,6 +148,7 @@
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
             [self.engine reset];
+            [self renderCurrentFrame];
             self.statusLabel.text = @"ROMを読み込みました";
         } else {
             self.romLoaded = NO;
@@ -178,6 +182,7 @@
 - (void)handleDisplayLink:(CADisplayLink *)link {
     (void)link;
     [self.engine stepFrame];
+    [self renderCurrentFrame];
 }
 
 - (void)stopPlayback {
@@ -191,6 +196,47 @@
     if (!self.romLoaded) {
         [self stopPlayback];
     }
+}
+
+- (void)renderCurrentFrame {
+    NSData *frameData = [self.engine copyCurrentFrameData];
+    if (frameData.length == 0) {
+        return;
+    }
+    self.lastFrameData = frameData;
+
+    const size_t width = (size_t)GBAEngine.screenWidth;
+    const size_t height = (size_t)GBAEngine.screenHeight;
+    const size_t bytesPerRow = width * 4;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    if (colorSpace == NULL) {
+        return;
+    }
+
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, self.lastFrameData.bytes, self.lastFrameData.length, NULL);
+    if (provider == NULL) {
+        CGColorSpaceRelease(colorSpace);
+        return;
+    }
+
+    CGImageRef imageRef = CGImageCreate(width,
+                                        height,
+                                        8,
+                                        32,
+                                        bytesPerRow,
+                                        colorSpace,
+                                        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst,
+                                        provider,
+                                        NULL,
+                                        false,
+                                        kCGRenderingIntentDefault);
+    if (imageRef != NULL) {
+        self.screenView.image = [UIImage imageWithCGImage:imageRef];
+        CGImageRelease(imageRef);
+    }
+
+    CGDataProviderRelease(provider);
+    CGColorSpaceRelease(colorSpace);
 }
 
 @end

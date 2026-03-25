@@ -1,5 +1,6 @@
 #include "gba_core_c_api.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -88,6 +89,25 @@ void GBA_StepFrame(GBACoreHandle* handle) {
     return;
   }
   handle->core.StepFrame();
+}
+
+size_t GBA_GetFrameBufferSize(const GBACoreHandle* handle) {
+  if (handle == nullptr) {
+    return 0;
+  }
+  return handle->core.GetFrameBuffer().size();
+}
+
+bool GBA_CopyFrameBufferRGBA(const GBACoreHandle* handle, uint32_t* out_pixels, size_t pixel_count) {
+  if (handle == nullptr || out_pixels == nullptr) {
+    return false;
+  }
+  const std::vector<uint32_t>& frame = handle->core.GetFrameBuffer();
+  if (frame.empty() || pixel_count < frame.size()) {
+    return false;
+  }
+  std::copy(frame.begin(), frame.end(), out_pixels);
+  return true;
 }
 
 const char* GBA_GetLastError(const GBACoreHandle* handle) {
