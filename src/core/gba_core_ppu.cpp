@@ -231,7 +231,6 @@ void GBACore::RenderMode0Frame() {
     *out_opaque = true;
   };
 
-  bool found_nonzero_texel = false;
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       uint16_t best_idx = 0;
@@ -251,24 +250,7 @@ void GBACore::RenderMode0Frame() {
           have_bg = true;
         }
       }
-      if (have_bg) found_nonzero_texel = true;
       frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] = palette_color(have_bg ? best_idx : 0);
-    }
-  }
-
-  // Fallback pattern: many test ROMs leave BG assets zeroed for a while, resulting in
-  // fully black frames that make playability checks impossible. Keep deterministic motion.
-  if (!found_nonzero_texel) {
-    const uint32_t seed = static_cast<uint32_t>((frame_count_ * 1103515245u) + 12345u);
-    for (int y = 0; y < kScreenHeight; ++y) {
-      for (int x = 0; x < kScreenWidth; ++x) {
-        const uint8_t r = static_cast<uint8_t>((x + (seed >> 3)) & 0xFFu);
-        const uint8_t g = static_cast<uint8_t>((y + (seed >> 11)) & 0xFFu);
-        const uint8_t b = static_cast<uint8_t>(((x ^ y) + (seed >> 19)) & 0xFFu);
-        frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] =
-            0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-            (static_cast<uint32_t>(g) << 8) | b;
-      }
     }
   }
 }
@@ -633,29 +615,6 @@ void GBACore::RenderDebugFrame() {
   if (frame_buffer_.empty()) {
     frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
   }
-  auto ensure_non_uniform = [&]() {
-    if (frame_buffer_.empty()) return;
-    const uint32_t first = frame_buffer_[0];
-    bool distinct = false;
-    for (size_t i = 1; i < frame_buffer_.size(); ++i) {
-      if (frame_buffer_[i] != first) {
-        distinct = true;
-        break;
-      }
-    }
-    if (distinct) return;
-    const uint32_t seed = static_cast<uint32_t>((frame_count_ * 1664525u) + 1013904223u);
-    for (int y = 0; y < kScreenHeight; ++y) {
-      for (int x = 0; x < kScreenWidth; ++x) {
-        const uint8_t r = static_cast<uint8_t>((x + (seed >> 4)) & 0xFFu);
-        const uint8_t g = static_cast<uint8_t>((y + (seed >> 12)) & 0xFFu);
-        const uint8_t b = static_cast<uint8_t>(((x + y) + (seed >> 20)) & 0xFFu);
-        frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x] =
-            0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-            (static_cast<uint32_t>(g) << 8) | b;
-      }
-    }
-  };
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t bg_mode = dispcnt & 0x7u;
@@ -663,51 +622,23 @@ void GBACore::RenderDebugFrame() {
     RenderMode0Frame();
     RenderSprites();
     ApplyColorEffects();
-    ensure_non_uniform();
     return;
   }
   if (bg_mode == 3u) {
     RenderMode3Frame();
     RenderSprites();
     ApplyColorEffects();
-    ensure_non_uniform();
     return;
   }
   if (bg_mode == 4u) {
     RenderMode4Frame();
     RenderSprites();
     ApplyColorEffects();
-    ensure_non_uniform();
     return;
   }
-
-  uint32_t seed = 0;
-  for (size_t i = 0; i < std::min<size_t>(rom_.size(), 256); ++i) {
-    seed = (seed * 33u) ^ rom_[i];
-  }
-  seed ^= static_cast<uint32_t>(frame_count_ * 2654435761u);
-
-  for (int y = 0; y < kScreenHeight; ++y) {
-    for (int x = 0; x < kScreenWidth; ++x) {
-      const uint8_t r = static_cast<uint8_t>((x + seed) & 0xFF);
-      const uint8_t g = static_cast<uint8_t>((y + (seed >> 8)) & 0xFF);
-      const uint8_t b = static_cast<uint8_t>(((x ^ y) + (seed >> 16)) & 0xFF);
-      frame_buffer_[y * kScreenWidth + x] = 0xFF000000U | (r << 16) | (g << 8) | b;
-    }
-  }
-
-  for (int dy = -2; dy <= 2; ++dy) {
-    for (int dx = -2; dx <= 2; ++dx) {
-      const int px = gameplay_state_.player_x + dx;
-      const int py = gameplay_state_.player_y + dy;
-      if (px < 0 || py < 0 || px >= kScreenWidth || py >= kScreenHeight) continue;
-      const uint8_t base = ClampToByteLocal(80 + static_cast<int>(gameplay_state_.score % 175));
-      frame_buffer_[py * kScreenWidth + px] =
-          0xFF000000U | (255u << 16) | (base << 8) | static_cast<uint32_t>(255u - base);
-    }
-  }
-  ApplyColorEffects();
-  ensure_non_uniform();
+  // Unimplemented BG modes should remain deterministic and faithful.
+  // Return a blank frame instead of synthetic debug patterns.
+  std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFF000000U);
 }
 
 uint64_t GBACore::ComputeFrameHash() const {
