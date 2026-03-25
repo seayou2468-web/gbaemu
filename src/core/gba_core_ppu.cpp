@@ -253,13 +253,15 @@ void GBACore::RenderSprites() {
     const uint16_t obj_mode = (attr0 >> 8) & 0x3u;
     if (obj_mode == 2u) continue;  // OBJ window unsupported
     const bool affine = (attr0 & (1u << 8)) != 0;
-    if (affine) continue;  // affine sprite path not yet implemented
+    const bool double_size = affine && ((attr0 & (1u << 9)) != 0);
 
     const int shape = (attr0 >> 14) & 0x3;
     const int size = (attr1 >> 14) & 0x3;
     if (shape >= 3) continue;
-    const int w = kObjDim[shape][size][0];
-    const int h = kObjDim[shape][size][1];
+    const int src_w = kObjDim[shape][size][0];
+    const int src_h = kObjDim[shape][size][1];
+    const int draw_w = double_size ? (src_w * 2) : src_w;
+    const int draw_h = double_size ? (src_h * 2) : src_h;
 
     int y = attr0 & 0xFF;
     int x = attr1 & 0x1FF;
@@ -274,14 +276,54 @@ void GBACore::RenderSprites() {
     const uint16_t palbank = static_cast<uint16_t>((attr2 >> 12) & 0xFu);
     const size_t obj_chr_base = 0x10000u;
 
-    for (int py = 0; py < h; ++py) {
+    int16_t pa = 0;
+    int16_t pb = 0;
+    int16_t pc = 0;
+    int16_t pd = 0;
+    if (affine) {
+      const uint16_t affine_idx = static_cast<uint16_t>((attr1 >> 9) & 0x1Fu);
+      const size_t pa_off = static_cast<size_t>(affine_idx) * 0x20u + 0x06u;
+      const size_t pb_off = static_cast<size_t>(affine_idx) * 0x20u + 0x0Eu;
+      const size_t pc_off = static_cast<size_t>(affine_idx) * 0x20u + 0x16u;
+      const size_t pd_off = static_cast<size_t>(affine_idx) * 0x20u + 0x1Eu;
+      if (pd_off + 1 >= oam_.size()) continue;
+      pa = static_cast<int16_t>(static_cast<uint16_t>(oam_[pa_off]) |
+                                static_cast<uint16_t>(oam_[pa_off + 1] << 8));
+      pb = static_cast<int16_t>(static_cast<uint16_t>(oam_[pb_off]) |
+                                static_cast<uint16_t>(oam_[pb_off + 1] << 8));
+      pc = static_cast<int16_t>(static_cast<uint16_t>(oam_[pc_off]) |
+                                static_cast<uint16_t>(oam_[pc_off + 1] << 8));
+      pd = static_cast<int16_t>(static_cast<uint16_t>(oam_[pd_off]) |
+                                static_cast<uint16_t>(oam_[pd_off + 1] << 8));
+    }
+
+    for (int py = 0; py < draw_h; ++py) {
       const int sy = y + py;
       if (sy < 0 || sy >= kScreenHeight) continue;
-      const int ty = vflip ? (h - 1 - py) : py;
-      for (int px = 0; px < w; ++px) {
+      for (int px = 0; px < draw_w; ++px) {
         const int sx = x + px;
         if (sx < 0 || sx >= kScreenWidth) continue;
-        const int tx = hflip ? (w - 1 - px) : px;
+
+        int tx = 0;
+        int ty = 0;
+        if (affine) {
+          const int cx = draw_w / 2;
+          const int cy = draw_h / 2;
+          const int dx = px - cx;
+          const int dy = py - cy;
+          const int src_cx = src_w / 2;
+          const int src_cy = src_h / 2;
+          tx = src_cx + static_cast<int>((static_cast<int32_t>(pa) * dx +
+                                          static_cast<int32_t>(pb) * dy) >>
+                                         8);
+          ty = src_cy + static_cast<int>((static_cast<int32_t>(pc) * dx +
+                                          static_cast<int32_t>(pd) * dy) >>
+                                         8);
+          if (tx < 0 || ty < 0 || tx >= src_w || ty >= src_h) continue;
+        } else {
+          tx = hflip ? (src_w - 1 - px) : px;
+          ty = vflip ? (src_h - 1 - py) : py;
+        }
 
         uint16_t color_index = 0;
         if (color_256) {
@@ -289,7 +331,7 @@ void GBACore::RenderSprites() {
           const int tile_y = ty / 8;
           const int in_x = tx & 7;
           const int in_y = ty & 7;
-          const int tile_stride = obj_1d ? (w / 8) : 32;
+          const int tile_stride = obj_1d ? (src_w / 8) : 32;
           const size_t chr_off = obj_chr_base +
                                  static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 64 +
                                                      in_y * 8 + in_x);
@@ -300,16 +342,17 @@ void GBACore::RenderSprites() {
           const int tile_y = ty / 8;
           const int in_x = tx & 7;
           const int in_y = ty & 7;
-          const int tile_stride = obj_1d ? (w / 8) : 32;
+          const int tile_stride = obj_1d ? (src_w / 8) : 32;
           const size_t chr_off = obj_chr_base +
                                  static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 32 +
                                                      in_y * 4 + in_x / 2);
           if (chr_off >= vram_.size()) continue;
           const uint8_t packed = vram_[chr_off];
           const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
+          if (nib == 0u) continue;
           color_index = static_cast<uint16_t>(palbank * 16u + nib);
         }
-        if ((color_index & 0xFFu) == 0) continue;  // transparent
+        if (color_256 && color_index == 0u) continue;  // transparent
         const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
         if (obj_priority > bg_priority[fb_off]) continue;
         frame_buffer_[fb_off] = palette_color(color_index);
