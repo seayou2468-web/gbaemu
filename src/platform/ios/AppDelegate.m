@@ -3,20 +3,14 @@
 
 @implementation AppDelegate
 
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-  (void)application;
-  (void)launchOptions;
-  return YES;
-}
-
 - (UISceneConfiguration *)application:(UIApplication *)application
     configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession
                                     options:(UISceneConnectionOptions *)options {
   (void)application;
-  (void)connectingSceneSession;
   (void)options;
-  UISceneConfiguration *config = [[UISceneConfiguration alloc] initWithName:@"Default Configuration"
-                                                                 sessionRole:UISceneSessionRoleApplication];
+
+  UISceneConfiguration *config =
+      [UISceneConfiguration configurationWithName:nil sessionRole:connectingSceneSession.role];
   config.delegateClass = [SceneDelegate class];
   return config;
 }
