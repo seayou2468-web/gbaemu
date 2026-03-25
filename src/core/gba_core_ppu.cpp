@@ -1892,9 +1892,7 @@ void GBACore::ServiceInterruptIfNeeded() {
     EnterException(vector_addr, 0x12u, true, vector_thumb);
     return;
   }
-  // If no usable vector is installed, consume the pending bits to avoid
-  // trapping repeatedly into an invalid BIOS IRQ vector.
-  WriteIO16(0x04000202u, pending);
+  // No safe vector installed; keep pending flags latched for polling code.
 }
 
 void GBACore::ApplyColorEffects() {
