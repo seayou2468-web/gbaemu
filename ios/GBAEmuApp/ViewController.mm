@@ -186,9 +186,11 @@
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
             [self.engine reset];
-            // Some titles do not present a visible frame immediately after reset.
-            [self.engine stepFrame];
-            [self.engine stepFrame];
+            // Many commercial titles need dozens of frames after reset/BIOS init
+            // before first visible draw. Warm up the core once on load.
+            for (NSInteger i = 0; i < 90; i++) {
+                [self.engine stepFrame];
+            }
             [self renderCurrentFrame];
             self.statusLabel.text = @"ROMを読み込みました";
             [self appendLog:[NSString stringWithFormat:@"ROM load ok: %@", url.lastPathComponent ?: @"(unknown)"]];

@@ -183,6 +183,88 @@ uint32_t GBACore::EstimateThumbCycles(uint16_t opcode) const {
   return 1u;                                                          // ALU/other
 }
 
+void GBACore::HandleRegisterRamReset(uint8_t flags) {
+  // SWI 01h RegisterRamReset
+  if (flags & 0x01u) std::fill(ewram_.begin(), ewram_.end(), 0);
+  if (flags & 0x02u) std::fill(iwram_.begin(), iwram_.end(), 0);
+  if (flags & 0x04u) std::fill(palette_ram_.begin(), palette_ram_.end(), 0);
+  if (flags & 0x08u) std::fill(vram_.begin(), vram_.end(), 0);
+  if (flags & 0x10u) std::fill(oam_.begin(), oam_.end(), 0);
+}
+
+void GBACore::HandleCpuSet(bool fast_mode) {
+  const uint32_t src = cpu_.regs[0];
+  const uint32_t dst = cpu_.regs[1];
+  const uint32_t cnt = cpu_.regs[2];
+  const bool fill = (cnt & (1u << 24)) != 0;
+  const bool word32 = fast_mode || ((cnt & (1u << 26)) != 0);
+  uint32_t units = cnt & 0x1FFFFFu;
+  if (fast_mode) units = (cnt & 0x1FFFFFu) * 8u;
+
+  if (units == 0) return;
+
+  if (word32) {
+    const uint32_t value = Read32(src & ~3u);
+    for (uint32_t i = 0; i < units; ++i) {
+      const uint32_t saddr = fill ? (src & ~3u) : ((src + i * 4u) & ~3u);
+      const uint32_t daddr = (dst + i * 4u) & ~3u;
+      Write32(daddr, fill ? value : Read32(saddr));
+    }
+  } else {
+    const uint16_t value = Read16(src & ~1u);
+    for (uint32_t i = 0; i < units; ++i) {
+      const uint32_t saddr = fill ? (src & ~1u) : ((src + i * 2u) & ~1u);
+      const uint32_t daddr = (dst + i * 2u) & ~1u;
+      Write16(daddr, fill ? value : Read16(saddr));
+    }
+  }
+}
+
+bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
+  const uint32_t next_pc = cpu_.regs[15] + (thumb_state ? 2u : 4u);
+  switch (swi_imm & 0xFFu) {
+    case 0x00u:  // SoftReset
+      Reset();
+      return true;
+    case 0x01u:  // RegisterRamReset
+      HandleRegisterRamReset(static_cast<uint8_t>(cpu_.regs[0] & 0xFFu));
+      cpu_.regs[15] = next_pc;
+      return true;
+    case 0x04u:  // IntrWait
+    case 0x05u:  // VBlankIntrWait
+      // Minimal HLE: avoid lockups in polling loops on incomplete IRQ/BIOS flows.
+      cpu_.regs[15] = next_pc;
+      return true;
+    case 0x06u: {  // Div
+      const int32_t num = static_cast<int32_t>(cpu_.regs[0]);
+      const int32_t den = static_cast<int32_t>(cpu_.regs[1]);
+      if (den == 0) {
+        cpu_.regs[0] = 0;
+        cpu_.regs[1] = static_cast<uint32_t>(num);
+        cpu_.regs[3] = 0;
+      } else {
+        const int32_t q = num / den;
+        const int32_t r = num % den;
+        cpu_.regs[0] = static_cast<uint32_t>(q);
+        cpu_.regs[1] = static_cast<uint32_t>(r);
+        cpu_.regs[3] = static_cast<uint32_t>(q < 0 ? -q : q);
+      }
+      cpu_.regs[15] = next_pc;
+      return true;
+    }
+    case 0x0Bu:  // CpuSet
+      HandleCpuSet(false);
+      cpu_.regs[15] = next_pc;
+      return true;
+    case 0x0Cu:  // CpuFastSet
+      HandleCpuSet(true);
+      cpu_.regs[15] = next_pc;
+      return true;
+    default:
+      return false;
+  }
+}
+
 void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   auto arm_reg_value = [&](uint32_t reg) -> uint32_t {
     if ((reg & 0xFu) == 15u) return cpu_.regs[15] + 8u;
@@ -506,6 +588,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
 
   // SWI
   if ((opcode & 0x0F000000u) == 0x0F000000u) {
+    if (HandleSoftwareInterrupt(opcode & 0x00FFFFFFu, false)) return;
     EnterException(0x00000008u, 0x13u, true, false);  // SVC mode
     return;
   }
@@ -1067,6 +1150,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
 
   // Thumb SWI
   if ((opcode & 0xFF00u) == 0xDF00u) {
+    if (HandleSoftwareInterrupt(opcode & 0x00FFu, true)) return;
     EnterException(0x00000008u, 0x13u, true, false);  // SVC mode
     return;
   }
@@ -1123,6 +1207,13 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
   if (cpu_.halted) return;
+  auto is_exec_addr_valid = [&](uint32_t addr) -> bool {
+    if (bios_loaded_ && addr < 0x00004000u) return true;  // BIOS
+    if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) return true;  // EWRAM mirror
+    if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) return true;  // IWRAM mirror
+    if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) return true;  // ROM mirrors
+    return false;
+  };
   uint32_t consumed = 0;
   while (consumed < cycles) {
     ServiceInterruptIfNeeded();
@@ -1136,8 +1227,9 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       consumed += EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
     }
-    // Keep PC sane when branch jumps outside mapped ranges.
-    if (cpu_.regs[15] < 0x02000000u || cpu_.regs[15] > 0x09FFFFFFu) {
+    // Keep PC sane when branch jumps outside executable mapped ranges.
+    // Do not remap valid BIOS/IWRAM/EWRAM/ROM addresses.
+    if (!is_exec_addr_valid(cpu_.regs[15])) {
       const uint32_t mask = (cpu_.cpsr & (1u << 5)) ? 0x1FFFFFEu : 0x1FFFFFCu;
       cpu_.regs[15] = 0x08000000u + static_cast<uint32_t>((cpu_.regs[15] & mask) % std::max<size_t>(4, rom_.size()));
     }
