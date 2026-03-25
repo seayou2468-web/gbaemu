@@ -624,6 +624,15 @@ void GBACore::RenderDebugFrame() {
     ApplyColorEffects();
     return;
   }
+  if (bg_mode == 1u || bg_mode == 2u) {
+    // Temporary compatibility path:
+    // Mode1/2 include affine backgrounds, but reusing text BG sampling keeps
+    // many titles from showing a fully black frame while affine is unimplemented.
+    RenderMode0Frame();
+    RenderSprites();
+    ApplyColorEffects();
+    return;
+  }
   if (bg_mode == 3u) {
     RenderMode3Frame();
     RenderSprites();
