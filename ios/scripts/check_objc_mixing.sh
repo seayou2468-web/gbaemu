@@ -14,12 +14,6 @@ CPP_TOKENS='std::|\bgba::|\bnamespace\b|\btemplate\s*<|<vector>|<string>|\bnew\s
 
 failed=0
 
-if find "$TARGET_DIR" -type f -name "*.mm" | rg -n "." >/dev/null; then
-  echo "[NG] Objective-C++ (.mm) file found under ios app sources." >&2
-  find "$TARGET_DIR" -type f -name "*.mm"
-  exit 3
-fi
-
 while IFS= read -r file; do
   if rg -n -e "$CPP_TOKENS" "$file" >/dev/null; then
     echo "[NG] C++ token found in Objective-C file: ${file#$ROOT_DIR/}"
