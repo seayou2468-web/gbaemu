@@ -1,4 +1,5 @@
 #include "gba_core.h"
+#include "mgba_hle_bios_blob.h"
 
 #include <algorithm>
 #include <cstring>
@@ -90,6 +91,7 @@ bool GBACore::LoadBIOS(const std::vector<uint8_t>& bios, std::string* error) {
   }
   std::copy_n(bios.begin(), bios_.size(), bios_.begin());
   bios_loaded_ = true;
+  bios_is_builtin_ = false;
   // If a ROM is already loaded, immediately reinitialize so execution and SWI
   // handling use the newly loaded BIOS image.
   if (loaded_) {
@@ -99,36 +101,9 @@ bool GBACore::LoadBIOS(const std::vector<uint8_t>& bios, std::string* error) {
 }
 
 void GBACore::LoadBuiltInBIOS() {
-  std::fill(bios_.begin(), bios_.end(), 0);
-  // Minimal built-in BIOS stub:
-  // - default each word to "MOVS PC, LR" so direct BIOS routine calls safely
-  //   return instead of executing zero/undefined instructions.
-  // - vector table entries branch to 0x100 reset trampoline
-  auto write32le = [&](size_t off, uint32_t v) {
-    if (off + 3 >= bios_.size()) return;
-    bios_[off] = static_cast<uint8_t>(v & 0xFF);
-    bios_[off + 1] = static_cast<uint8_t>((v >> 8) & 0xFF);
-    bios_[off + 2] = static_cast<uint8_t>((v >> 16) & 0xFF);
-    bios_[off + 3] = static_cast<uint8_t>((v >> 24) & 0xFF);
-  };
-
-  // ARM B 0x100 from vectors (cond=1110, opcode=1010, imm24)
-  auto make_branch = [](uint32_t from, uint32_t to) -> uint32_t {
-    int32_t delta = static_cast<int32_t>(to) - static_cast<int32_t>(from + 8u);
-    int32_t imm24 = (delta >> 2) & 0x00FFFFFF;
-    return 0xEA000000u | static_cast<uint32_t>(imm24);
-  };
-  for (size_t off = 0; off + 3 < bios_.size(); off += 4) {
-    write32le(off, 0xE1B0F00Eu);  // MOVS PC, LR
-  }
-  for (size_t vec = 0; vec <= 0x1C; vec += 4) {
-    write32le(vec, make_branch(static_cast<uint32_t>(vec), 0x100u));
-  }
-  // IRQ vector at 0x18: SUBS PC, LR, #4
-  write32le(0x18, 0xE25EF004u);
-  // Reset handler @0x100: branch to cartridge space 0x08000000
-  write32le(0x100, make_branch(0x100u, 0x08000000u));
+  bios_ = kMgbaHleBios;
   bios_loaded_ = true;
+  bios_is_builtin_ = true;
   if (loaded_) {
     Reset();
   }
@@ -152,6 +127,8 @@ void GBACore::Reset() {
   timers_ = {};
   dma_was_in_vblank_ = false;
   dma_was_in_hblank_ = false;
+  dma_fifo_a_request_ = false;
+  dma_fifo_b_request_ = false;
   ppu_cycle_accum_ = 0;
   audio_mix_level_ = 0;
   fifo_a_.clear();
@@ -184,7 +161,6 @@ void GBACore::Reset() {
   apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
   swi_intrwait_active_ = false;
   swi_intrwait_mask_ = 0;
-  forced_blank_streak_ = 0;
   bios_latch_ = 0;
   cpu_ = CpuState{};
   cpu_.active_mode = cpu_.cpsr & 0x1Fu;
@@ -198,9 +174,10 @@ void GBACore::Reset() {
   cpu_.banked_lr[0x12u] = 0;
   cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
   cpu_.regs[14] = 0;
-  // Start at cartridge entry in a post-BIOS state. This avoids depending on
-  // full BIOS startup emulation while still keeping BIOS mapped for SWI calls.
-  cpu_.regs[15] = 0x08000000u;
+  // Real boot executes from BIOS reset vector only for externally supplied BIOS.
+  // Built-in BIOS is a compatibility stub and still uses direct cartridge entry.
+  const bool use_real_bios_boot = bios_loaded_ && !bios_is_builtin_;
+  cpu_.regs[15] = use_real_bios_boot ? 0x00000000u : 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
   // VCOUNT
@@ -211,8 +188,8 @@ void GBACore::Reset() {
   WriteIO16(0x04000200u, 0x0000u);
   WriteIO16(0x04000202u, 0x0000u);
   WriteIO16(0x04000208u, 0x0001u);
-  // POSTFLG=1 indicates post-boot state when directly entering cartridge code.
-  Write8(0x04000300u, 0x01u);
+  // POSTFLG remains 0 during real BIOS boot, and is 1 for direct cartridge fallback.
+  Write8(0x04000300u, use_real_bios_boot ? 0x00u : 0x01u);
   SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
   frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
@@ -851,7 +828,7 @@ void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   executed_cycles_ += cycles;
   uint32_t remaining = cycles;
-  constexpr uint32_t kSchedulerSliceCycles = 64;
+  constexpr uint32_t kSchedulerSliceCycles = 4;
   while (remaining > 0) {
     const uint32_t slice = std::min<uint32_t>(remaining, kSchedulerSliceCycles);
     RunCpuSlice(slice);

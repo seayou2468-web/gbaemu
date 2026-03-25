@@ -179,6 +179,7 @@ class GBACore {
   std::array<uint8_t, 16 * 1024> bios_{};
   mutable uint32_t bios_latch_ = 0;
   bool bios_loaded_ = false;
+  bool bios_is_builtin_ = false;
   std::array<uint8_t, 256 * 1024> ewram_{};
   std::array<uint8_t, 32 * 1024> iwram_{};
   std::array<uint8_t, 1024> io_regs_{};
@@ -232,6 +233,8 @@ class GBACore {
   std::array<TimerState, 4> timers_{};
   bool dma_was_in_vblank_ = false;
   bool dma_was_in_hblank_ = false;
+  bool dma_fifo_a_request_ = false;
+  bool dma_fifo_b_request_ = false;
 
   CpuState cpu_{};
   GameplayState gameplay_state_{};
@@ -248,7 +251,6 @@ class GBACore {
   bool flash_bank_switch_mode_ = false;
   bool swi_intrwait_active_ = false;
   uint16_t swi_intrwait_mask_ = 0;
-  uint32_t forced_blank_streak_ = 0;
   uint32_t debug_last_exception_vector_ = 0;
   uint32_t debug_last_exception_pc_ = 0;
   uint32_t debug_last_exception_cpsr_ = 0;

@@ -1,10 +1,79 @@
 #include "gba_core.h"
+#include "mgba_compat.h"
 
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
+#include <limits>
 
 namespace gba {
+namespace {
+int16_t BiosArcTanPoly(int32_t i) {
+  const int32_t a = -((i * i) >> 14);
+  int32_t b = ((0xA9 * a) >> 14) + 0x390;
+  b = ((b * a) >> 14) + 0x91C;
+  b = ((b * a) >> 14) + 0xFB6;
+  b = ((b * a) >> 14) + 0x16AA;
+  b = ((b * a) >> 14) + 0x2081;
+  b = ((b * a) >> 14) + 0x3651;
+  b = ((b * a) >> 14) + 0xA2F9;
+  return static_cast<int16_t>((i * b) >> 16);
+}
+
+int16_t BiosArcTan2(int32_t x, int32_t y) {
+  if (y == 0) return static_cast<int16_t>(x >= 0 ? 0 : 0x8000);
+  if (x == 0) return static_cast<int16_t>(y >= 0 ? 0x4000 : 0xC000);
+  if (y >= 0) {
+    if (x >= 0) {
+      if (x >= y) return BiosArcTanPoly((y << 14) / x);
+    } else if (-x >= y) {
+      return static_cast<int16_t>(BiosArcTanPoly((y << 14) / x) + 0x8000);
+    }
+    return static_cast<int16_t>(0x4000 - BiosArcTanPoly((x << 14) / y));
+  }
+  if (x <= 0) {
+    if (-x > -y) return static_cast<int16_t>(BiosArcTanPoly((y << 14) / x) + 0x8000);
+  } else if (x >= -y) {
+    return static_cast<int16_t>(BiosArcTanPoly((y << 14) / x) + 0x10000);
+  }
+  return static_cast<int16_t>(0xC000 - BiosArcTanPoly((x << 14) / y));
+}
+
+uint32_t BiosSqrt(uint32_t x) {
+  if (x == 0) return 0;
+  uint32_t upper = x;
+  uint32_t bound = 1;
+  while (bound < upper) {
+    upper >>= 1;
+    bound <<= 1;
+  }
+  while (true) {
+    upper = x;
+    uint32_t accum = 0;
+    uint32_t lower = bound;
+    while (true) {
+      const uint32_t old_lower = lower;
+      if (lower <= upper >> 1) lower <<= 1;
+      if (old_lower >= upper >> 1) break;
+    }
+    while (true) {
+      accum <<= 1;
+      if (upper >= lower) {
+        ++accum;
+        upper -= lower;
+      }
+      if (lower == bound) break;
+      lower >>= 1;
+    }
+    const uint32_t old_bound = bound;
+    bound += accum;
+    bound >>= 1;
+    if (bound >= old_bound) return old_bound;
+  }
+}
+}  // namespace
+
 uint32_t GBACore::RotateRight(uint32_t value, unsigned bits) const {
   bits &= 31u;
   if (bits == 0) return value;
@@ -229,6 +298,10 @@ void GBACore::HandleCpuSet(bool fast_mode) {
 }
 
 bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
+  // When any BIOS image is mapped (external or built-in mGBA HLE BIOS),
+  // dispatch SWI via SVC exception and let BIOS code execute the service.
+  if (bios_loaded_) return false;
+
   const uint32_t next_pc = cpu_.regs[15] + (thumb_state ? 2u : 4u);
   switch (swi_imm & 0xFFu) {
     case 0x00u:  // SoftReset
@@ -265,16 +338,21 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       cpu_.halted = true;
       cpu_.regs[15] = next_pc;
       return true;
-    case 0x06u: {  // Div
+    case mgba_compat::kSwiDiv: {  // Div
       const int32_t num = static_cast<int32_t>(cpu_.regs[0]);
       const int32_t den = static_cast<int32_t>(cpu_.regs[1]);
       if (den == 0) {
-        cpu_.regs[0] = 0;
+        cpu_.regs[0] = static_cast<uint32_t>((num < 0) ? -1 : 1);
         cpu_.regs[1] = static_cast<uint32_t>(num);
-        cpu_.regs[3] = 0;
+        cpu_.regs[3] = 1;
+      } else if (den == -1 && num == std::numeric_limits<int32_t>::min()) {
+        cpu_.regs[0] = static_cast<uint32_t>(std::numeric_limits<int32_t>::min());
+        cpu_.regs[1] = 0;
+        cpu_.regs[3] = static_cast<uint32_t>(std::numeric_limits<int32_t>::min());
       } else {
-        const int32_t q = num / den;
-        const int32_t r = num % den;
+        const std::div_t qr = std::div(num, den);
+        const int32_t q = qr.quot;
+        const int32_t r = qr.rem;
         cpu_.regs[0] = static_cast<uint32_t>(q);
         cpu_.regs[1] = static_cast<uint32_t>(r);
         cpu_.regs[3] = static_cast<uint32_t>(q < 0 ? -q : q);
@@ -282,16 +360,21 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       cpu_.regs[15] = next_pc;
       return true;
     }
-    case 0x07u: {  // DivArm (R0=denom, R1=numer)
+    case mgba_compat::kSwiDivArm: {  // DivArm (R0=denom, R1=numer)
       const int32_t den = static_cast<int32_t>(cpu_.regs[0]);
       const int32_t num = static_cast<int32_t>(cpu_.regs[1]);
       if (den == 0) {
-        cpu_.regs[0] = 0;
+        cpu_.regs[0] = static_cast<uint32_t>((num < 0) ? -1 : 1);
         cpu_.regs[1] = static_cast<uint32_t>(num);
-        cpu_.regs[3] = 0;
+        cpu_.regs[3] = 1;
+      } else if (den == -1 && num == std::numeric_limits<int32_t>::min()) {
+        cpu_.regs[0] = static_cast<uint32_t>(std::numeric_limits<int32_t>::min());
+        cpu_.regs[1] = 0;
+        cpu_.regs[3] = static_cast<uint32_t>(std::numeric_limits<int32_t>::min());
       } else {
-        const int32_t q = num / den;
-        const int32_t r = num % den;
+        const std::div_t qr = std::div(num, den);
+        const int32_t q = qr.quot;
+        const int32_t r = qr.rem;
         cpu_.regs[0] = static_cast<uint32_t>(q);
         cpu_.regs[1] = static_cast<uint32_t>(r);
         cpu_.regs[3] = static_cast<uint32_t>(q < 0 ? -q : q);
@@ -299,30 +382,23 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       cpu_.regs[15] = next_pc;
       return true;
     }
-    case 0x08u: {  // Sqrt
+    case mgba_compat::kSwiSqrt: {  // Sqrt
       const uint32_t x = cpu_.regs[0];
-      cpu_.regs[0] = static_cast<uint32_t>(std::sqrt(static_cast<double>(x)));
+      cpu_.regs[0] = BiosSqrt(x);
       cpu_.regs[15] = next_pc;
       return true;
     }
-    case 0x09u: {  // ArcTan (approximate fixed-point BIOS behavior)
+    case mgba_compat::kSwiArcTan: {  // ArcTan
       const int32_t tan_q14 = static_cast<int32_t>(cpu_.regs[0]);
-      const double tan_v = static_cast<double>(tan_q14) / 16384.0;
-      const double angle = std::atan(tan_v);  // [-pi/2, pi/2]
-      int32_t units = static_cast<int32_t>(std::lround(angle * (32768.0 / 3.14159265358979323846)));
-      units &= 0xFFFF;
-      cpu_.regs[0] = static_cast<uint32_t>(units);
+      cpu_.regs[0] = static_cast<uint32_t>(static_cast<uint16_t>(BiosArcTanPoly(tan_q14)));
       cpu_.regs[15] = next_pc;
       return true;
     }
-    case 0x0Au: {  // ArcTan2
+    case mgba_compat::kSwiArcTan2: {  // ArcTan2
       const int32_t x = static_cast<int32_t>(cpu_.regs[0]);
       const int32_t y = static_cast<int32_t>(cpu_.regs[1]);
-      double angle = std::atan2(static_cast<double>(y), static_cast<double>(x));  // [-pi, pi]
-      if (angle < 0.0) angle += 2.0 * 3.14159265358979323846;
-      const uint32_t units = static_cast<uint32_t>(
-          std::lround(angle * (65536.0 / (2.0 * 3.14159265358979323846)))) & 0xFFFFu;
-      cpu_.regs[0] = units;
+      cpu_.regs[0] = static_cast<uint32_t>(static_cast<uint16_t>(BiosArcTan2(x, y)));
+      cpu_.regs[3] = 0x170u;  // BIOS side-effect observed by many titles.
       cpu_.regs[15] = next_pc;
       return true;
     }
@@ -666,12 +742,14 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       HandleCpuSet(true);
       cpu_.regs[15] = next_pc;
       return true;
-    default:
-      // Keep execution alive for currently unmodeled BIOS calls.
-      // Many commercial titles call a wider SWI surface during init;
-      // raising an undefined exception here often hard-locks boot.
+    case mgba_compat::kSwiGetBiosChecksum:  // GetBiosChecksum
+      cpu_.regs[0] = mgba_compat::kBiosChecksum;
+      cpu_.regs[1] = 1u;
+      cpu_.regs[3] = 0x4000u;
       cpu_.regs[15] = next_pc;
       return true;
+    default:
+      return false;
   }
 }
 
@@ -755,8 +833,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
           value = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(Read16(addr))));
         }
       } else {
-        // Reserved encoding; treat as no-op-like unknown transfer.
-        cpu_.regs[15] += 4;
+        EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
         return;
       }
       cpu_.regs[rd] = value;
@@ -1210,8 +1287,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         break;
       }
       default:
-        writes_result = false;
-        cpu_.regs[15] += 4;
+        EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
         return;
     }
 
@@ -1238,8 +1314,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     return;
   }
 
-  // Unknown ARM instruction: skip defensively.
-  cpu_.regs[15] += 4;
+  EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
   return;
 }
 
@@ -1695,8 +1770,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     return;
   }
 
-  // Unknown Thumb instruction: skip defensively.
-  cpu_.regs[15] += 2;
+  EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {

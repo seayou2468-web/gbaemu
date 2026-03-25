@@ -1,4 +1,5 @@
 #include "gba_core.h"
+#include "mgba_compat.h"
 
 #include <algorithm>
 
@@ -1366,59 +1367,67 @@ void GBACore::RenderMode2Frame() {
 }
 
 void GBACore::StepPpu(uint32_t cycles) {
-  constexpr uint32_t kHBlankStartCycle = 1006u;
+  constexpr uint32_t kHBlankStartCycle = mgba_compat::kVideoHDrawCycles;
   auto write_io_raw16 = [&](uint32_t addr, uint16_t value) {
     const size_t off = static_cast<size_t>(addr - 0x04000000u);
     if (off + 1 >= io_regs_.size()) return;
     io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
     io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
   };
-  ppu_cycle_accum_ += cycles;
-  uint16_t dispstat = ReadIO16(0x04000004u);
-  const bool was_hblank = (dispstat & 0x0002u) != 0;
-  const bool now_hblank = ppu_cycle_accum_ >= kHBlankStartCycle;
-  if (now_hblank) {
-    dispstat |= 0x0002u;
-  } else {
-    dispstat &= static_cast<uint16_t>(~0x0002u);
-  }
-  if (!was_hblank && now_hblank && (dispstat & (1u << 4))) {
-    RaiseInterrupt(1u << 1);  // HBlank IRQ
-  }
-  write_io_raw16(0x04000004u, dispstat);
+  uint32_t remaining = cycles;
+  while (remaining > 0) {
+    uint16_t dispstat = ReadIO16(0x04000004u);
+    const bool in_hblank = (dispstat & 0x0002u) != 0;
+    const uint32_t boundary = in_hblank ? kCyclesPerScanline : kHBlankStartCycle;
+    const uint32_t until_boundary = (ppu_cycle_accum_ < boundary) ? (boundary - ppu_cycle_accum_) : 0u;
+    const uint32_t advance = std::min<uint32_t>(remaining, std::max<uint32_t>(1u, until_boundary));
+    ppu_cycle_accum_ += advance;
+    remaining -= advance;
 
-  while (ppu_cycle_accum_ >= kCyclesPerScanline) {
-    ppu_cycle_accum_ -= kCyclesPerScanline;
-    uint16_t vcount = ReadIO16(0x04000006u);
-    vcount = static_cast<uint16_t>((vcount + 1u) % kTotalScanlines);
-    write_io_raw16(0x04000006u, vcount);
-
-    dispstat = ReadIO16(0x04000004u);
-    const bool was_vblank = (dispstat & 0x0001u) != 0;
-    const bool in_vblank = vcount >= kVisibleScanlines;
-    if (in_vblank) {
-      dispstat |= 0x0001u;
-      if (!was_vblank && (dispstat & (1u << 3))) {
-        RaiseInterrupt(0x0001u);  // VBlank IRQ
+    // HBlank edge
+    if (!in_hblank && ppu_cycle_accum_ >= kHBlankStartCycle) {
+      dispstat = static_cast<uint16_t>(dispstat | 0x0002u);
+      if (dispstat & (1u << 4)) {
+        RaiseInterrupt(1u << 1);  // HBlank IRQ
       }
-    } else {
-      dispstat &= static_cast<uint16_t>(~0x0001u);
+      write_io_raw16(0x04000004u, dispstat);
     }
 
-    const uint16_t vcount_compare = static_cast<uint16_t>((dispstat >> 8) & 0x00FFu);
-    const bool vcount_match = (vcount == vcount_compare);
-    if (vcount_match) {
-      if ((dispstat & 0x0004u) == 0u && (dispstat & (1u << 5))) {
-        RaiseInterrupt(1u << 2);  // VCount IRQ
-      }
-      dispstat |= 0x0004u;
-    } else {
-      dispstat &= static_cast<uint16_t>(~0x0004u);
-    }
+    // End-of-scanline edge
+    if (ppu_cycle_accum_ >= kCyclesPerScanline) {
+      ppu_cycle_accum_ -= kCyclesPerScanline;
 
-    // New scanline starts outside HBlank.
-    dispstat &= static_cast<uint16_t>(~0x0002u);
-    write_io_raw16(0x04000004u, dispstat);
+      uint16_t vcount = ReadIO16(0x04000006u);
+      vcount = static_cast<uint16_t>((vcount + 1u) % mgba_compat::kVideoTotalLines);
+      write_io_raw16(0x04000006u, vcount);
+
+      dispstat = ReadIO16(0x04000004u);
+      const bool was_vblank = (dispstat & 0x0001u) != 0;
+      const bool now_vblank = vcount >= mgba_compat::kVideoVisibleLines;
+      if (now_vblank) {
+        dispstat = static_cast<uint16_t>(dispstat | 0x0001u);
+        if (!was_vblank && (dispstat & (1u << 3))) {
+          RaiseInterrupt(0x0001u);  // VBlank IRQ
+        }
+      } else {
+        dispstat = static_cast<uint16_t>(dispstat & ~0x0001u);
+      }
+
+      const uint16_t vcount_compare = static_cast<uint16_t>((dispstat >> 8) & 0x00FFu);
+      const bool vcount_match = (vcount == vcount_compare);
+      if (vcount_match) {
+        if ((dispstat & 0x0004u) == 0u && (dispstat & (1u << 5))) {
+          RaiseInterrupt(1u << 2);  // VCount IRQ
+        }
+        dispstat = static_cast<uint16_t>(dispstat | 0x0004u);
+      } else {
+        dispstat = static_cast<uint16_t>(dispstat & ~0x0004u);
+      }
+
+      // New scanline starts outside HBlank.
+      dispstat = static_cast<uint16_t>(dispstat & ~0x0002u);
+      write_io_raw16(0x04000004u, dispstat);
+    }
   }
 }
 
@@ -1484,15 +1493,32 @@ void GBACore::StepDma() {
     if (start_timing == 0u) fire_now = true;                      // Immediate
     if (start_timing == 1u && vblank_rising) fire_now = true;     // VBlank edge
     if (start_timing == 2u && hblank_rising) fire_now = true;     // HBlank edge
-    if (start_timing == 3u) continue;                              // Special timing not modeled yet.
+    if (start_timing == 3u) {
+      // Sound FIFO DMA (DMA1/DMA2) request timing.
+      if (ch != 1 && ch != 2) continue;
+      const uint32_t fifo_addr = dst & ~3u;
+      const bool is_fifo_a = fifo_addr == 0x040000A0u;
+      const bool is_fifo_b = fifo_addr == 0x040000A4u;
+      if (!is_fifo_a && !is_fifo_b) continue;
+      fire_now = is_fifo_a ? dma_fifo_a_request_ : dma_fifo_b_request_;
+      if (!fire_now) continue;
+      if (is_fifo_a) dma_fifo_a_request_ = false;
+      if (is_fifo_b) dma_fifo_b_request_ = false;
+    }
     if (!fire_now) continue;
 
-    const bool word32 = (cnt_h & (1u << 10)) != 0;
+    bool word32 = (cnt_h & (1u << 10)) != 0;
     uint32_t count = cnt_l;
     if (count == 0) count = (ch == 3) ? 0x10000u : 0x4000u;
+    if (start_timing == 3u) {
+      // FIFO DMA always transfers 4 words and keeps destination fixed.
+      word32 = true;
+      count = mgba_compat::kAudioFifoDmaWordsPerBurst;
+    }
 
-    const int dst_ctl = (cnt_h >> 5) & 0x3;
+    int dst_ctl = (cnt_h >> 5) & 0x3;
     const int src_ctl = (cnt_h >> 7) & 0x3;
+    if (start_timing == 3u) dst_ctl = 2;  // fixed destination (FIFO register)
     const int step = word32 ? 4 : 2;
     int dst_step = step;
     int src_step = step;
@@ -1532,8 +1558,9 @@ void GBACore::PushAudioFifo(bool fifo_a, uint32_t value) {
   for (int i = 0; i < 4; ++i) {
     fifo.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFFu));
   }
-  if (fifo.size() > 32u) {
-    fifo.erase(fifo.begin(), fifo.begin() + static_cast<std::ptrdiff_t>(fifo.size() - 32u));
+  if (fifo.size() > mgba_compat::kAudioFifoCapacityBytes) {
+    fifo.erase(fifo.begin(), fifo.begin() + static_cast<std::ptrdiff_t>(
+      fifo.size() - mgba_compat::kAudioFifoCapacityBytes));
   }
 }
 
@@ -1552,9 +1579,11 @@ void GBACore::ConsumeAudioFifoOnTimer(size_t timer_index) {
   };
   if ((timer_index == 0u && !fifo_a_timer1) || (timer_index == 1u && fifo_a_timer1)) {
     pop_fifo(&fifo_a_, &fifo_a_last_sample_);
+    if (fifo_a_.size() <= mgba_compat::kAudioFifoDmaRequestThreshold) dma_fifo_a_request_ = true;
   }
   if ((timer_index == 0u && !fifo_b_timer1) || (timer_index == 1u && fifo_b_timer1)) {
     pop_fifo(&fifo_b_, &fifo_b_last_sample_);
+    if (fifo_b_.size() <= mgba_compat::kAudioFifoDmaRequestThreshold) dma_fifo_b_request_ = true;
   }
 }
 
@@ -1844,6 +1873,7 @@ void GBACore::RaiseInterrupt(uint16_t mask) {
 
 void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode, bool disable_irq, bool thumb_state) {
   const uint32_t old_cpsr = cpu_.cpsr;
+  const uint32_t target_mode = new_mode & 0x1Fu;
   debug_last_exception_vector_ = vector_addr;
   debug_last_exception_pc_ = cpu_.regs[15];
   debug_last_exception_cpsr_ = old_cpsr;
@@ -1853,11 +1883,11 @@ void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode, bool disab
   if (vector_addr == 0x00000018u || vector_addr == 0x0000001Cu) {
     lr_adjust = 4u;
   }
-  SwitchCpuMode(new_mode & 0x1Fu);
-  if (HasSpsr(GetCpuMode())) cpu_.spsr[GetCpuMode()] = old_cpsr;
+  SwitchCpuMode(target_mode);
+  if (HasSpsr(target_mode)) cpu_.spsr[target_mode] = old_cpsr;
   cpu_.regs[14] = cpu_.regs[15] + lr_adjust;
-  cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | (new_mode & 0x1Fu);
-  cpu_.active_mode = new_mode & 0x1Fu;
+  cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | target_mode;
+  cpu_.active_mode = target_mode;
   if (disable_irq) cpu_.cpsr |= (1u << 7);
   if (thumb_state) {
     cpu_.cpsr |= (1u << 5);
@@ -1881,9 +1911,12 @@ void GBACore::ServiceInterruptIfNeeded() {
   const uint32_t old_irq_flags = Read32(irq_flags_addr);
   Write32(irq_flags_addr, old_irq_flags | pending);
 
-  // Some built-in/minimal BIOS images do not provide a full IRQ trampoline.
-  // Prefer dispatching to the cartridge-provided IRQ vector (0x03007FFC),
-  // while still entering IRQ mode so return semantics remain compatible.
+  // If BIOS is available, route through the hardware IRQ vector.
+  if (bios_loaded_) {
+    EnterException(0x00000018u, 0x12u, true, false);
+    return;
+  }
+  // No BIOS: prefer cartridge-provided IRQ vector (0x03007FFC).
   const uint32_t irq_vector = Read32(0x03007FFCu);
   const bool vector_thumb = (irq_vector & 1u) != 0;
   const uint32_t vector_addr = irq_vector & ~1u;
@@ -1985,29 +2018,11 @@ void GBACore::RenderDebugFrame() {
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   if ((dispcnt & (1u << 7)) != 0) {
-    ++forced_blank_streak_;
-    // Forced blank is frequently pulsed around mode/setup transitions.
-    // Keep a previously rendered image when available. If startup remains in
-    // forced blank for several consecutive snapshots, stop forcing blank here
-    // and render using current BG state to avoid permanent white/black output.
-    const bool has_visible_content =
-        std::any_of(frame_buffer_.begin(), frame_buffer_.end(),
-                    [](uint32_t px) { return px != 0xFF000000u && px != 0xFFFFFFFFu; });
-    if (has_visible_content) return;
-    if (forced_blank_streak_ <= 3u) {
-      std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
-      EnsureBgPriorityBufferSize();
-      std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-                static_cast<uint8_t>(kBackdropPriority));
-      return;
-    }
-    // Fallback for non-scanline snapshot mode: if forced blank remains stuck,
-    // clear the latched bit so BG setup can become visible instead of staying
-    // permanently white/black.
-    WriteIO16(0x04000000u, static_cast<uint16_t>(dispcnt & ~(1u << 7)));
-    forced_blank_streak_ = 0;
-  } else {
-    forced_blank_streak_ = 0;
+    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
+    EnsureBgPriorityBufferSize();
+    std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
+              static_cast<uint8_t>(kBackdropPriority));
+    return;
   }
   EnsureObjDrawnMaskBufferSize();
   EnsureBgBaseColorBufferSize();
