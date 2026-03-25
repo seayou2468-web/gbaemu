@@ -639,11 +639,7 @@ void GBACore::RenderSprites() {
     if (off + 1 >= palette_ram_.size()) return 0xFF000000u;
     const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
                          static_cast<uint16_t>(palette_ram_[off + 1] << 8);
-    const uint8_t r = static_cast<uint8_t>(((bgr >> 0) & 0x1Fu) * 255u / 31u);
-    const uint8_t g = static_cast<uint8_t>(((bgr >> 5) & 0x1Fu) * 255u / 31u);
-    const uint8_t b = static_cast<uint8_t>(((bgr >> 10) & 0x1Fu) * 255u / 31u);
-    return 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-           (static_cast<uint32_t>(g) << 8) | b;
+    return Bgr555ToRgba8888(bgr);
   };
 
   for (int obj = 127; obj >= 0; --obj) {
@@ -841,11 +837,7 @@ void GBACore::RenderMode0Frame() {
     if (off + 1 >= palette_ram_.size()) return 0xFF000000u;
     const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
                          static_cast<uint16_t>(palette_ram_[off + 1] << 8);
-    const uint8_t r = static_cast<uint8_t>(((bgr >> 0) & 0x1Fu) * 255u / 31u);
-    const uint8_t g = static_cast<uint8_t>(((bgr >> 5) & 0x1Fu) * 255u / 31u);
-    const uint8_t b = static_cast<uint8_t>(((bgr >> 10) & 0x1Fu) * 255u / 31u);
-    return 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-           (static_cast<uint32_t>(g) << 8) | b;
+    return Bgr555ToRgba8888(bgr);
   };
 
   auto sample_text_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
@@ -982,11 +974,7 @@ void GBACore::RenderMode1Frame() {
     if (off + 1 >= palette_ram_.size()) return 0xFF000000u;
     const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
                          static_cast<uint16_t>(palette_ram_[off + 1] << 8);
-    const uint8_t r = static_cast<uint8_t>(((bgr >> 0) & 0x1Fu) * 255u / 31u);
-    const uint8_t g = static_cast<uint8_t>(((bgr >> 5) & 0x1Fu) * 255u / 31u);
-    const uint8_t b = static_cast<uint8_t>(((bgr >> 10) & 0x1Fu) * 255u / 31u);
-    return 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-           (static_cast<uint32_t>(g) << 8) | b;
+    return Bgr555ToRgba8888(bgr);
   };
 
   auto sample_text_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
@@ -1209,11 +1197,7 @@ void GBACore::RenderMode2Frame() {
     if (off + 1 >= palette_ram_.size()) return 0xFF000000u;
     const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
                          static_cast<uint16_t>(palette_ram_[off + 1] << 8);
-    const uint8_t r = static_cast<uint8_t>(((bgr >> 0) & 0x1Fu) * 255u / 31u);
-    const uint8_t g = static_cast<uint8_t>(((bgr >> 5) & 0x1Fu) * 255u / 31u);
-    const uint8_t b = static_cast<uint8_t>(((bgr >> 10) & 0x1Fu) * 255u / 31u);
-    return 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-           (static_cast<uint32_t>(g) << 8) | b;
+    return Bgr555ToRgba8888(bgr);
   };
 
   auto sample_affine_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
