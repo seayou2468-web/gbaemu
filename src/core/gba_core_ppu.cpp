@@ -246,6 +246,8 @@ void GBACore::RenderMode3Frame() {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
     std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
     std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
+    std::fill(second_color.begin(), second_color.end(), backdrop);
+    std::fill(second_layer.begin(), second_layer.end(), kLayerBackdrop);
     return;
   }
 
@@ -256,6 +258,8 @@ void GBACore::RenderMode3Frame() {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
+        second_color[fb_off] = backdrop;
+        second_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
@@ -274,6 +278,8 @@ void GBACore::RenderMode3Frame() {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
+        second_color[fb_off] = backdrop;
+        second_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const size_t off = static_cast<size_t>((sy * kScreenWidth + sx) * 2);
@@ -281,6 +287,8 @@ void GBACore::RenderMode3Frame() {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
+        second_color[fb_off] = backdrop;
+        second_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
@@ -288,6 +296,8 @@ void GBACore::RenderMode3Frame() {
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
       bg_priority[fb_off] = bg2_priority;
       bg_layer[fb_off] = kLayerBg2;
+      second_color[fb_off] = backdrop;
+      second_layer[fb_off] = kLayerBackdrop;
     }
   }
 }
@@ -295,8 +305,11 @@ void GBACore::RenderMode3Frame() {
 void GBACore::RenderMode4Frame() {
   EnsureBgPriorityBufferSize();
   EnsureBgLayerBufferSize();
+  EnsureBgSecondBuffersSize();
   auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
+  auto& second_color = BgSecondColorBuffer();
+  auto& second_layer = BgSecondLayerBuffer();
   EnsureObjDrawnMaskBufferSize();
   auto& obj_drawn = ObjDrawnMaskBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
@@ -347,6 +360,8 @@ void GBACore::RenderMode4Frame() {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
     std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
     std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
+    std::fill(second_color.begin(), second_color.end(), backdrop);
+    std::fill(second_layer.begin(), second_layer.end(), kLayerBackdrop);
     return;
   }
 
@@ -357,6 +372,8 @@ void GBACore::RenderMode4Frame() {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
+        second_color[fb_off] = backdrop;
+        second_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
@@ -375,6 +392,8 @@ void GBACore::RenderMode4Frame() {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
+        second_color[fb_off] = backdrop;
+        second_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       const size_t off = page_base + static_cast<size_t>(sy * kScreenWidth + sx);
@@ -383,11 +402,15 @@ void GBACore::RenderMode4Frame() {
         frame_buffer_[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
+        second_color[fb_off] = backdrop;
+        second_layer[fb_off] = kLayerBackdrop;
         continue;
       }
       frame_buffer_[fb_off] = palette_color(index);
       bg_priority[fb_off] = bg2_priority;
       bg_layer[fb_off] = kLayerBg2;
+      second_color[fb_off] = backdrop;
+      second_layer[fb_off] = kLayerBackdrop;
     }
   }
 }
@@ -395,8 +418,11 @@ void GBACore::RenderMode4Frame() {
 void GBACore::RenderMode5Frame() {
   EnsureBgPriorityBufferSize();
   EnsureBgLayerBufferSize();
+  EnsureBgSecondBuffersSize();
   auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
+  auto& second_color = BgSecondColorBuffer();
+  auto& second_layer = BgSecondLayerBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
   const uint16_t winin = ReadIO16(0x04000048u);
@@ -436,6 +462,8 @@ void GBACore::RenderMode5Frame() {
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
   std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
   std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
+  std::fill(second_color.begin(), second_color.end(), backdrop);
+  std::fill(second_layer.begin(), second_layer.end(), kLayerBackdrop);
 
   if (!bg2_enabled) return;
 
@@ -465,6 +493,8 @@ void GBACore::RenderMode5Frame() {
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
       bg_priority[fb_off] = bg2_priority;
       bg_layer[fb_off] = kLayerBg2;
+      second_color[fb_off] = backdrop;
+      second_layer[fb_off] = kLayerBackdrop;
     }
   }
 }
