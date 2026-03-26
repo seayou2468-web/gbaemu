@@ -409,8 +409,12 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   }
 
   // Conditional branch
-  if ((opcode & 0xF000u) == 0xD000u && (opcode & 0x0F00u) != 0x0F00u) {
+  if ((opcode & 0xF000u) == 0xD000u) {
     const uint32_t cond = (opcode >> 8) & 0xFu;
+    if (cond >= 0xEu) {
+      HandleUndefinedInstruction(true);
+      return;
+    }
     int32_t offset = static_cast<int32_t>(opcode & 0xFFu);
     if (offset & 0x80) offset |= ~0xFF;
     offset <<= 1;
