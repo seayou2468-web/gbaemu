@@ -176,8 +176,7 @@ bool GBACore::CheckCondition(uint32_t cond) const {
     case 0xB: return n != v;           // LT
     case 0xC: return !z && (n == v);   // GT
     case 0xD: return z || (n != v);    // LE
-    case 0xE: return true;             // AL
-    default: return false;             // NV
+    default: return true;              // mGBA ARMTestCondition behavior
   }
 }
 
