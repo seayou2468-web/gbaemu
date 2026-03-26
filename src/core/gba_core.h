@@ -172,6 +172,7 @@ class GBACore {
   void ExecuteArmInstruction(uint32_t opcode);
   void ExecuteThumbInstruction(uint16_t opcode);
   bool HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state);
+  void HandleUndefinedInstruction(bool thumb_state);
   void HandleRegisterRamReset(uint8_t flags);
   void HandleCpuSet(bool fast_mode);
   void RunCpuSlice(uint32_t cycles);
@@ -205,6 +206,9 @@ class GBACore {
   mutable uint32_t bios_latch_ = 0;
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;
+  bool bios_boot_via_vector_ = false;
+  uint32_t bios_boot_watchdog_frames_ = 0;
+  uint32_t halt_watchdog_frames_ = 0;
   std::array<uint8_t, 256 * 1024> ewram_{};
   std::array<uint8_t, 32 * 1024> iwram_{};
   std::array<uint8_t, 1024> io_regs_{};

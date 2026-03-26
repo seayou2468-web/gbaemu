@@ -1,5 +1,7 @@
 #include "../gba_core.h"
 
+#include <limits>
+
 namespace gba {
 
 void GBACore::ExecuteArmInstruction(uint32_t opcode) {
@@ -45,7 +47,8 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   }
 
   // Halfword/signed data transfer (LDRH/STRH/LDRSB/LDRSH)
-  if ((opcode & 0x0E000090u) == 0x00000090u && (opcode & 0x0FC000F0u) != 0x00000090u) {
+  // Match only when SH!=00 so MUL/MLA, long-mul, and SWP encodings are excluded.
+  if ((opcode & 0x0E000090u) == 0x00000090u && (opcode & 0x00000060u) != 0u) {
     const bool pre = (opcode & (1u << 24)) != 0;
     const bool up = (opcode & (1u << 23)) != 0;
     const bool imm = (opcode & (1u << 22)) != 0;
@@ -82,7 +85,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
           value = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(Read16(addr))));
         }
       } else {
-        EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+        HandleUndefinedInstruction(false);
         return;
       }
       cpu_.regs[rd] = value;
@@ -150,8 +153,11 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     cpu_.regs[rd_lo] = static_cast<uint32_t>(result & 0xFFFFFFFFu);
     cpu_.regs[rd_hi] = static_cast<uint32_t>(result >> 32);
     if (set_flags) {
-      const uint32_t nz = cpu_.regs[rd_hi] | cpu_.regs[rd_lo];
-      SetNZFlags(nz);
+      const bool z = (result == 0);
+      const bool n = (cpu_.regs[rd_hi] & 0x80000000u) != 0;
+      cpu_.cpsr = (cpu_.cpsr & ~((1u << 31) | (1u << 30))) |
+                  (n ? (1u << 31) : 0u) |
+                  (z ? (1u << 30) : 0u);
     }
     cpu_.regs[15] += 4;
     return;
@@ -170,7 +176,9 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       cpu_.regs[rd] = old;
     } else {
       const uint32_t aligned = addr & ~3u;
-      const uint32_t old = Read32(aligned);
+      const uint32_t raw = Read32(aligned);
+      const uint32_t rot = (addr & 3u) * 8u;
+      const uint32_t old = (rot == 0) ? raw : RotateRight(raw, rot);
       Write32(aligned, arm_reg_value(rm));
       cpu_.regs[rd] = old;
     }
@@ -252,40 +260,6 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       }
       return;
     }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // Halfword / signed transfer (LDRH/LDRSH/LDRSB/STRH)
-  if ((opcode & 0x0E000090u) == 0x00000090u && (opcode & 0x0F000000u) == 0x00000000u) {
-    const bool pre = (opcode & (1u << 24)) != 0;
-    const bool up = (opcode & (1u << 23)) != 0;
-    const bool imm = (opcode & (1u << 22)) != 0;
-    const bool write_back = (opcode & (1u << 21)) != 0;
-    const bool load = (opcode & (1u << 20)) != 0;
-    const uint32_t rn = (opcode >> 16) & 0xFu;
-    const uint32_t rd = (opcode >> 12) & 0xFu;
-    const uint32_t sh = (opcode >> 5) & 0x3u;
-    const uint32_t offset = imm ? (((opcode >> 8) & 0xFu) << 4u) | (opcode & 0xFu)
-                                : arm_reg_value(opcode & 0xFu);
-
-    uint32_t addr = arm_reg_value(rn);
-    if (pre) addr = up ? (addr + offset) : (addr - offset);
-
-    if (load) {
-      if (sh == 0x1) {  // LDRH
-        cpu_.regs[rd] = Read16(addr & ~1u);
-      } else if (sh == 0x2) {  // LDRSB
-        cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(Read8(addr))));
-      } else if (sh == 0x3) {  // LDRSH
-        cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(Read16(addr & ~1u))));
-      }
-    } else if (sh == 0x1) {  // STRH only
-      Write16(addr & ~1u, static_cast<uint16_t>(cpu_.regs[rd] & 0xFFFFu));
-    }
-
-    if (!pre) addr = up ? (addr + offset) : (addr - offset);
-    if (write_back || !pre) cpu_.regs[rn] = addr;
     cpu_.regs[15] += 4;
     return;
   }
@@ -422,7 +396,11 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       } else {
         shift_amount = (opcode >> 7) & 0x1Fu;
       }
-      operand2 = ApplyShift(arm_shift_operand_value(rm, reg_shift), shift_type, shift_amount, &shifter_carry);
+      if (reg_shift && shift_amount == 0u) {
+        operand2 = arm_shift_operand_value(rm, true);
+      } else {
+        operand2 = ApplyShift(arm_shift_operand_value(rm, reg_shift), shift_type, shift_amount, &shifter_carry);
+      }
     }
 
     auto set_logic_flags = [&](uint32_t value) {
@@ -432,12 +410,37 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     auto do_add = [&](uint32_t lhs, uint32_t rhs, uint32_t carry_in, uint32_t* out) {
       const uint64_t r64 = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(rhs) + carry_in;
       *out = static_cast<uint32_t>(r64);
-      if (set_flags) SetAddFlags(lhs, rhs + carry_in, r64);
+      if (set_flags) {
+        SetNZFlags(*out);
+        const bool carry = (r64 >> 32) != 0;
+        const int64_t sres = static_cast<int64_t>(static_cast<int32_t>(lhs)) +
+                             static_cast<int64_t>(static_cast<int32_t>(rhs)) +
+                             static_cast<int64_t>(carry_in);
+        const bool overflow =
+            (sres > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) ||
+            (sres < static_cast<int64_t>(std::numeric_limits<int32_t>::min()));
+        cpu_.cpsr = (cpu_.cpsr & ~((1u << 29) | (1u << 28))) |
+                    (carry ? (1u << 29) : 0u) |
+                    (overflow ? (1u << 28) : 0u);
+      }
     };
     auto do_sub = [&](uint32_t lhs, uint32_t rhs, uint32_t borrow, uint32_t* out) {
       const uint64_t r64 = static_cast<uint64_t>(lhs) - static_cast<uint64_t>(rhs) - borrow;
       *out = static_cast<uint32_t>(r64);
-      if (set_flags) SetSubFlags(lhs, rhs + borrow, r64);
+      if (set_flags) {
+        SetNZFlags(*out);
+        const uint64_t subtrahend = static_cast<uint64_t>(rhs) + static_cast<uint64_t>(borrow);
+        const bool carry = static_cast<uint64_t>(lhs) >= subtrahend;  // no borrow
+        const int64_t sres = static_cast<int64_t>(static_cast<int32_t>(lhs)) -
+                             static_cast<int64_t>(static_cast<int32_t>(rhs)) -
+                             static_cast<int64_t>(borrow);
+        const bool overflow =
+            (sres > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) ||
+            (sres < static_cast<int64_t>(std::numeric_limits<int32_t>::min()));
+        cpu_.cpsr = (cpu_.cpsr & ~((1u << 29) | (1u << 28))) |
+                    (carry ? (1u << 29) : 0u) |
+                    (overflow ? (1u << 28) : 0u);
+      }
     };
 
     bool writes_result = true;
@@ -455,21 +458,24 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         break;
       }
       case 0x2: { // SUB
-        const uint64_t r64 = static_cast<uint64_t>(arm_reg_value(rn)) - static_cast<uint64_t>(operand2);
-        cpu_.regs[rd] = static_cast<uint32_t>(r64);
-        if (set_flags) SetSubFlags(arm_reg_value(rn), operand2, r64);
+        const uint32_t rn_val = arm_reg_value(rn);
+        uint32_t r = 0;
+        do_sub(rn_val, operand2, 0u, &r);
+        cpu_.regs[rd] = r;
         break;
       }
       case 0x3: { // RSB
-        const uint64_t r64 = static_cast<uint64_t>(operand2) - static_cast<uint64_t>(arm_reg_value(rn));
-        cpu_.regs[rd] = static_cast<uint32_t>(r64);
-        if (set_flags) SetSubFlags(operand2, arm_reg_value(rn), r64);
+        const uint32_t rn_val = arm_reg_value(rn);
+        uint32_t r = 0;
+        do_sub(operand2, rn_val, 0u, &r);
+        cpu_.regs[rd] = r;
         break;
       }
       case 0x4: { // ADD
-        const uint64_t r64 = static_cast<uint64_t>(arm_reg_value(rn)) + static_cast<uint64_t>(operand2);
-        cpu_.regs[rd] = static_cast<uint32_t>(r64);
-        if (set_flags) SetAddFlags(arm_reg_value(rn), operand2, r64);
+        const uint32_t rn_val = arm_reg_value(rn);
+        uint32_t r = 0;
+        do_add(rn_val, operand2, 0u, &r);
+        cpu_.regs[rd] = r;
         break;
       }
       case 0x5: { // ADC
@@ -502,14 +508,16 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       }
       case 0xA: { // CMP
         writes_result = false;
-        const uint64_t r64 = static_cast<uint64_t>(arm_reg_value(rn)) - static_cast<uint64_t>(operand2);
-        SetSubFlags(arm_reg_value(rn), operand2, r64);
+        const uint32_t rn_val = arm_reg_value(rn);
+        const uint64_t r64 = static_cast<uint64_t>(rn_val) - static_cast<uint64_t>(operand2);
+        SetSubFlags(rn_val, operand2, r64);
         break;
       }
       case 0xB: { // CMN
         writes_result = false;
-        const uint64_t r64 = static_cast<uint64_t>(arm_reg_value(rn)) + static_cast<uint64_t>(operand2);
-        SetAddFlags(arm_reg_value(rn), operand2, r64);
+        const uint32_t rn_val = arm_reg_value(rn);
+        const uint64_t r64 = static_cast<uint64_t>(rn_val) + static_cast<uint64_t>(operand2);
+        SetAddFlags(rn_val, operand2, r64);
         break;
       }
       case 0xC: { // ORR
@@ -536,7 +544,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         break;
       }
       default:
-        EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+        HandleUndefinedInstruction(false);
         return;
     }
 
@@ -563,7 +571,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     return;
   }
 
-  EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+  HandleUndefinedInstruction(false);
   return;
 }
 

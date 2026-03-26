@@ -85,21 +85,24 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
       case 0x1: { cpu_.regs[rd] ^= cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }           // EOR
       case 0x2: {  // LSL reg
         bool c = GetFlagC();
-        cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 0, cpu_.regs[rs] & 0xFFu, &c);
+        const uint32_t amount = cpu_.regs[rs] & 0xFFu;
+        if (amount != 0u) cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 0, amount, &c);
         SetNZFlags(cpu_.regs[rd]);
         SetFlagC(c);
         break;
       }
       case 0x3: {  // LSR reg
         bool c = GetFlagC();
-        cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 1, cpu_.regs[rs] & 0xFFu, &c);
+        const uint32_t amount = cpu_.regs[rs] & 0xFFu;
+        if (amount != 0u) cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 1, amount, &c);
         SetNZFlags(cpu_.regs[rd]);
         SetFlagC(c);
         break;
       }
       case 0x4: {  // ASR reg
         bool c = GetFlagC();
-        cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 2, cpu_.regs[rs] & 0xFFu, &c);
+        const uint32_t amount = cpu_.regs[rs] & 0xFFu;
+        if (amount != 0u) cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 2, amount, &c);
         SetNZFlags(cpu_.regs[rd]);
         SetFlagC(c);
         break;
@@ -125,7 +128,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
       case 0x7: {  // ROR
         bool c = GetFlagC();
         const uint32_t amount = cpu_.regs[rs] & 0xFFu;
-        cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 3, amount, &c);
+        if (amount != 0u) cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 3, amount, &c);
         SetNZFlags(cpu_.regs[rd]);
         SetFlagC(c);
         break;
@@ -173,8 +176,9 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint16_t h2 = (opcode >> 6) & 0x1u;
     const uint16_t rs = ((h2 << 3) | ((opcode >> 3) & 0x7u)) & 0xFu;
     const uint16_t rd = ((h1 << 3) | (opcode & 0x7u)) & 0xFu;
+    const uint32_t rs_value = (rs == 15u) ? (cpu_.regs[15] + 4u) : cpu_.regs[rs];
     if (op == 3) {  // BX
-      const uint32_t target = cpu_.regs[rs];
+      const uint32_t target = rs_value;
       if (target & 1u) {
         cpu_.cpsr |= (1u << 5);
         cpu_.regs[15] = target & ~1u;
@@ -185,16 +189,16 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
       return;
     }
     if (op == 0) {  // ADD
-      cpu_.regs[rd] += cpu_.regs[rs];
+      cpu_.regs[rd] += rs_value;
       if (rd == 15) {
         cpu_.regs[15] &= ~1u;
         return;
       }
     } else if (op == 1) {  // CMP
-      const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - static_cast<uint64_t>(cpu_.regs[rs]);
-      SetSubFlags(cpu_.regs[rd], cpu_.regs[rs], r64);
+      const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - static_cast<uint64_t>(rs_value);
+      SetSubFlags(cpu_.regs[rd], rs_value, r64);
     } else if (op == 2) {  // MOV
-      cpu_.regs[rd] = cpu_.regs[rs];
+      cpu_.regs[rd] = rs_value;
       if (rd == 15) {
         cpu_.regs[15] &= ~1u;
         return;
@@ -386,6 +390,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const bool load = (opcode & (1u << 11)) != 0;
     const uint16_t rb = (opcode >> 8) & 0x7u;
     const uint16_t reg_list = opcode & 0xFFu;
+    const bool rb_in_list = (reg_list & (1u << rb)) != 0;
     uint32_t addr = cpu_.regs[rb];
     for (int i = 0; i < 8; ++i) {
       if ((reg_list & (1u << i)) == 0) continue;
@@ -396,7 +401,9 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
       }
       addr += 4u;
     }
-    cpu_.regs[rb] = addr;
+    if (!(load && rb_in_list)) {
+      cpu_.regs[rb] = addr;
+    }
     cpu_.regs[15] += 2;
     return;
   }
@@ -409,8 +416,12 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   }
 
   // Conditional branch
-  if ((opcode & 0xF000u) == 0xD000u && (opcode & 0x0F00u) != 0x0F00u) {
+  if ((opcode & 0xF000u) == 0xD000u) {
     const uint32_t cond = (opcode >> 8) & 0xFu;
+    if (cond >= 0xEu) {
+      HandleUndefinedInstruction(true);
+      return;
+    }
     int32_t offset = static_cast<int32_t>(opcode & 0xFFu);
     if (offset & 0x80) offset |= ~0xFF;
     offset <<= 1;
@@ -454,7 +465,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     return;
   }
 
-  EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+  HandleUndefinedInstruction(true);
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
@@ -488,8 +499,11 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
   uint32_t consumed = 0;
   while (consumed < cycles) {
     ServiceInterruptIfNeeded();
+    const bool thumb_state = (cpu_.cpsr & (1u << 5)) != 0;
+    // Keep architectural PC aligned to current execution state.
+    cpu_.regs[15] &= thumb_state ? ~1u : ~3u;
     const uint32_t pc = cpu_.regs[15];
-    if (cpu_.cpsr & (1u << 5)) {
+    if (thumb_state) {
       const uint16_t opcode = Read16(pc);
       consumed += EstimateThumbCycles(opcode);
       ExecuteThumbInstruction(opcode);
@@ -498,11 +512,10 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       consumed += EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
     }
-    // Keep PC sane when branch jumps outside executable mapped ranges.
-    // Do not remap valid BIOS/IWRAM/EWRAM/ROM addresses.
+    // Invalid execute address: do not remap to a pseudo-random ROM address.
+    // Use the undefined-instruction path to keep control flow deterministic.
     if (!is_exec_addr_valid(cpu_.regs[15])) {
-      const uint32_t mask = (cpu_.cpsr & (1u << 5)) ? 0x1FFFFFEu : 0x1FFFFFCu;
-      cpu_.regs[15] = 0x08000000u + static_cast<uint32_t>((cpu_.regs[15] & mask) % std::max<size_t>(4, rom_.size()));
+      HandleUndefinedInstruction((cpu_.cpsr & (1u << 5)) != 0);
     }
   }
 }
@@ -530,7 +543,9 @@ void GBACore::DebugStepCpuInstructions(uint32_t count) {
       }
     }
     ServiceInterruptIfNeeded();
-    if (cpu_.cpsr & (1u << 5)) {
+    const bool thumb_state = (cpu_.cpsr & (1u << 5)) != 0;
+    cpu_.regs[15] &= thumb_state ? ~1u : ~3u;
+    if (thumb_state) {
       const uint16_t opcode = Read16(cpu_.regs[15]);
       ExecuteThumbInstruction(opcode);
     } else {

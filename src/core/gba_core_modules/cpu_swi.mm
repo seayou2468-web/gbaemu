@@ -73,9 +73,10 @@ uint32_t BiosSqrtLocal(uint32_t x) {
 
 
 bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
-  // When any BIOS image is mapped (external or built-in mGBA HLE BIOS),
-  // dispatch SWI via SVC exception and let BIOS code execute the service.
-  if (bios_loaded_) return false;
+  // Route SWI to BIOS only while running true BIOS boot flow (POSTFLG==0).
+  // In direct-boot mode (POSTFLG==1), use HLE SWI handlers.
+  const bool use_bios_swi = bios_loaded_ && bios_boot_via_vector_;
+  if (use_bios_swi) return false;
 
   const uint32_t next_pc = cpu_.regs[15] + (thumb_state ? 2u : 4u);
   switch (swi_imm & 0xFFu) {
@@ -95,8 +96,17 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
         request = static_cast<uint16_t>(cpu_.regs[1] & 0x3FFFu);
         if (request == 0) request = 0x0001u;
       }
-      // R0==0: discard already-raised requested IRQ flags before waiting.
+      const uint16_t already_set = static_cast<uint16_t>(ReadIO16(0x04000202u) & request);
+      // R0==0: if requested IRQ is already pending, consume it and return immediately.
       if ((cpu_.regs[0] & 0x1u) == 0u) {
+        if (already_set != 0u) {
+          WriteIO16(0x04000202u, already_set);
+          swi_intrwait_active_ = false;
+          swi_intrwait_mask_ = 0u;
+          cpu_.halted = false;
+          cpu_.regs[15] = next_pc;
+          return true;
+        }
         WriteIO16(0x04000202u, request);
       }
       const uint16_t ie = ReadIO16(0x04000200u);
@@ -293,6 +303,10 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
         return true;
       }
       const uint32_t out_size = header >> 8;
+      if (out_size > (8u * 1024u * 1024u)) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
       std::vector<uint8_t> out;
       out.reserve(out_size);
       while (out.size() < out_size) {
@@ -341,6 +355,10 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
         return true;
       }
       const uint32_t out_size = header >> 8;
+      if (out_size > (8u * 1024u * 1024u)) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
       const uint8_t data_bits = Read8(src++);
       if (data_bits != 4u && data_bits != 8u) {
         cpu_.regs[15] = next_pc;
@@ -415,6 +433,10 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
         return true;
       }
       const uint32_t out_size = header >> 8;
+      if (out_size > (8u * 1024u * 1024u)) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
       std::vector<uint8_t> out;
       out.reserve(out_size);
       while (out.size() < out_size) {
@@ -451,11 +473,15 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       const uint32_t dst = cpu_.regs[1];
       const uint32_t header = Read32(src);
       src += 4u;
-      if ((header & 0xFFu) != 0x80u) {
+      if ((header & 0xFFu) != 0x81u) {
         cpu_.regs[15] = next_pc;
         return true;
       }
       const uint32_t out_size = header >> 8;
+      if (out_size > (8u * 1024u * 1024u)) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
       std::vector<uint8_t> out;
       out.reserve(out_size);
       uint8_t acc = 0;
@@ -490,11 +516,15 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       const uint32_t dst = cpu_.regs[1];
       const uint32_t header = Read32(src);
       src += 4u;
-      if ((header & 0xFFu) != 0x80u) {
+      if ((header & 0xFFu) != 0x82u) {
         cpu_.regs[15] = next_pc;
         return true;
       }
       const uint32_t out_size = header >> 8;
+      if (out_size > (8u * 1024u * 1024u)) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
       uint16_t acc = 0;
       for (uint32_t i = 0; i + 1 < out_size; i += 2) {
         const uint16_t delta = Read16(src);

@@ -276,6 +276,54 @@ void GBACore::StepFrame() {
   if (!loaded_) return;
   RunCycles(kCyclesPerFrame);
   ++frame_count_;
+
+  if (bios_boot_via_vector_) {
+    if (cpu_.regs[15] >= 0x08000000u) {
+      bios_boot_via_vector_ = false;
+      bios_boot_watchdog_frames_ = 0;
+      Write8(0x04000300u, 0x01u);
+    } else {
+      ++bios_boot_watchdog_frames_;
+      // Watchdog fallback: if BIOS init does not hand off to ROM for a long
+      // time, switch to direct cartridge entry to avoid permanent white screen.
+      if (bios_boot_watchdog_frames_ > 240u) {
+        bios_boot_via_vector_ = false;
+        bios_boot_watchdog_frames_ = 0;
+        cpu_.cpsr = static_cast<uint32_t>((cpu_.cpsr & ~0x1Fu) | 0x1Fu);
+        cpu_.cpsr &= ~(1u << 5);
+        cpu_.active_mode = cpu_.cpsr & 0x1Fu;
+        cpu_.halted = false;
+        swi_intrwait_active_ = false;
+        swi_intrwait_mask_ = 0;
+        cpu_.regs[15] = 0x08000000u;
+        Write8(0x04000300u, 0x01u);
+        const uint16_t dispcnt = ReadIO16(0x04000000u);
+        WriteIO16(0x04000000u, static_cast<uint16_t>(dispcnt & ~(1u << 7)));
+      }
+    }
+  }
+
+  // Halt watchdog for HLE/direct mode: avoid permanent hangs when software
+  // enters SWI Halt/IntrWait without a valid interrupt source configured.
+  if (!bios_boot_via_vector_ && cpu_.halted) {
+    const uint16_t ie = ReadIO16(0x04000200u);
+    const uint16_t iflags = ReadIO16(0x04000202u);
+    const uint16_t ime = static_cast<uint16_t>(ReadIO16(0x04000208u) & 0x1u);
+    if (ime == 0u || (ie & iflags) == 0u) {
+      ++halt_watchdog_frames_;
+      if (halt_watchdog_frames_ > 120u) {
+        cpu_.halted = false;
+        swi_intrwait_active_ = false;
+        swi_intrwait_mask_ = 0;
+        halt_watchdog_frames_ = 0;
+      }
+    } else {
+      halt_watchdog_frames_ = 0;
+    }
+  } else {
+    halt_watchdog_frames_ = 0;
+  }
+
   UpdateGameplayFromInput();
   RenderDebugFrame();
 }
