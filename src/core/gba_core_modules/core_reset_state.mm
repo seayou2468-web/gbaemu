@@ -74,6 +74,7 @@ void GBACore::Reset() {
   const bool use_real_bios_boot = bios_loaded_ && !bios_is_builtin_;
   bios_boot_via_vector_ = use_real_bios_boot;
   bios_boot_watchdog_frames_ = 0;
+  halt_watchdog_frames_ = 0;
   cpu_.regs[15] = use_real_bios_boot ? 0x00000000u : 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);

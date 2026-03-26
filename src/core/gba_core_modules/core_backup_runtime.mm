@@ -303,6 +303,27 @@ void GBACore::StepFrame() {
     }
   }
 
+  // Halt watchdog for HLE/direct mode: avoid permanent hangs when software
+  // enters SWI Halt/IntrWait without a valid interrupt source configured.
+  if (!bios_boot_via_vector_ && cpu_.halted) {
+    const uint16_t ie = ReadIO16(0x04000200u);
+    const uint16_t iflags = ReadIO16(0x04000202u);
+    const uint16_t ime = static_cast<uint16_t>(ReadIO16(0x04000208u) & 0x1u);
+    if (ime == 0u || (ie & iflags) == 0u) {
+      ++halt_watchdog_frames_;
+      if (halt_watchdog_frames_ > 120u) {
+        cpu_.halted = false;
+        swi_intrwait_active_ = false;
+        swi_intrwait_mask_ = 0;
+        halt_watchdog_frames_ = 0;
+      }
+    } else {
+      halt_watchdog_frames_ = 0;
+    }
+  } else {
+    halt_watchdog_frames_ = 0;
+  }
+
   UpdateGameplayFromInput();
   RenderDebugFrame();
 }
