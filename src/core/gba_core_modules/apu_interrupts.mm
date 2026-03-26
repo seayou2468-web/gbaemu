@@ -327,8 +327,10 @@ void GBACore::ServiceInterruptIfNeeded() {
   const uint32_t old_irq_flags = Read32(irq_flags_addr);
   Write32(irq_flags_addr, old_irq_flags | pending);
 
-  // If BIOS is available, route through the hardware IRQ vector.
-  if (bios_loaded_) {
+  // Route IRQ through BIOS vector only while running true BIOS flow
+  // (POSTFLG==0). In direct-boot mode, use cartridge IRQ vector in IWRAM.
+  const bool use_bios_irq = bios_loaded_ && bios_boot_via_vector_;
+  if (use_bios_irq) {
     EnterException(0x00000018u, 0x12u, true, false);
     return;
   }

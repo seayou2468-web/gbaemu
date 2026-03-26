@@ -73,9 +73,10 @@ uint32_t BiosSqrtLocal(uint32_t x) {
 
 
 bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
-  // When any BIOS image is mapped (external or built-in mGBA HLE BIOS),
-  // dispatch SWI via SVC exception and let BIOS code execute the service.
-  if (bios_loaded_) return false;
+  // Route SWI to BIOS only while running true BIOS boot flow (POSTFLG==0).
+  // In direct-boot mode (POSTFLG==1), use HLE SWI handlers.
+  const bool use_bios_swi = bios_loaded_ && bios_boot_via_vector_;
+  if (use_bios_swi) return false;
 
   const uint32_t next_pc = cpu_.regs[15] + (thumb_state ? 2u : 4u);
   switch (swi_imm & 0xFFu) {

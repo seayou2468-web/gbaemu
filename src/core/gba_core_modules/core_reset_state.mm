@@ -75,6 +75,7 @@ void GBACore::Reset() {
   //
   // TODO: Re-enable true BIOS-vector boot once BIOS/IRQ startup emulation is
   // complete and validated across bundled test ROMs.
+  bios_boot_via_vector_ = false;
   cpu_.regs[15] = 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
