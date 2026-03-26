@@ -69,28 +69,32 @@ void GBACore::Reset() {
   cpu_.banked_lr[0x12u] = 0;
   cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
   cpu_.regs[14] = 0;
-  // We currently boot directly from cartridge entry even when an external BIOS
-  // file is loaded. The high-level BIOS compatibility path does not yet emulate
-  // enough startup behavior and can get stuck in forced-blank (white screen).
-  //
-  // TODO: Re-enable true BIOS-vector boot once BIOS/IRQ startup emulation is
-  // complete and validated across bundled test ROMs.
-  bios_boot_via_vector_ = false;
-  cpu_.regs[15] = 0x08000000u;
+  // Prefer true BIOS-vector boot when a real external BIOS is loaded.
+  // Built-in BIOS remains HLE/direct-boot oriented.
+  const bool use_real_bios_boot = bios_loaded_ && !bios_is_builtin_;
+  bios_boot_via_vector_ = use_real_bios_boot;
+  bios_boot_watchdog_frames_ = 0;
+  cpu_.regs[15] = use_real_bios_boot ? 0x00000000u : 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
-  // Align direct-boot timing with mGBA skip-BIOS baseline:
-  // VCOUNT starts near line 0x7E and first scanline edge arrives shortly after.
-  WriteIO16(0x04000006u, 0x007Eu);
-  ppu_cycle_accum_ = mgba_compat::kVideoHDrawCycles - 117u;
+  if (use_real_bios_boot) {
+    // BIOS flow starts from line 0 baseline.
+    WriteIO16(0x04000006u, 0x0000u);
+    ppu_cycle_accum_ = 0;
+  } else {
+    // Align direct-boot timing with mGBA skip-BIOS baseline:
+    // VCOUNT starts near line 0x7E and first scanline edge arrives shortly after.
+    WriteIO16(0x04000006u, 0x007Eu);
+    ppu_cycle_accum_ = mgba_compat::kVideoHDrawCycles - 117u;
+  }
   // KEYINPUT: all released (active low)
   WriteIO16(0x04000130u, 0x03FFu);
   // IE/IF/IME
   WriteIO16(0x04000200u, 0x0000u);
   WriteIO16(0x04000202u, 0x0000u);
   WriteIO16(0x04000208u, 0x0001u);
-  // Mark POST boot complete for direct cartridge start path.
-  Write8(0x04000300u, 0x01u);
+  // POSTFLG: 0 during BIOS flow, 1 when skipping to cartridge entry.
+  Write8(0x04000300u, use_real_bios_boot ? 0x00u : 0x01u);
   SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
   frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);

@@ -206,6 +206,7 @@ class GBACore {
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;
   bool bios_boot_via_vector_ = false;
+  uint32_t bios_boot_watchdog_frames_ = 0;
   std::array<uint8_t, 256 * 1024> ewram_{};
   std::array<uint8_t, 32 * 1024> iwram_{};
   std::array<uint8_t, 1024> io_regs_{};
