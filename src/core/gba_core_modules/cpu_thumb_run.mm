@@ -454,7 +454,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     return;
   }
 
-  EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+  HandleUndefinedInstruction(true);
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {

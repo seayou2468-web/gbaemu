@@ -82,7 +82,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
           value = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(Read16(addr))));
         }
       } else {
-        EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+        HandleUndefinedInstruction(false);
         return;
       }
       cpu_.regs[rd] = value;
@@ -536,7 +536,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         break;
       }
       default:
-        EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+        HandleUndefinedInstruction(false);
         return;
     }
 
@@ -563,7 +563,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     return;
   }
 
-  EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+  HandleUndefinedInstruction(false);
   return;
 }
 

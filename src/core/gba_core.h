@@ -172,6 +172,7 @@ class GBACore {
   void ExecuteArmInstruction(uint32_t opcode);
   void ExecuteThumbInstruction(uint16_t opcode);
   bool HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state);
+  void HandleUndefinedInstruction(bool thumb_state);
   void HandleRegisterRamReset(uint8_t flags);
   void HandleCpuSet(bool fast_mode);
   void RunCpuSlice(uint32_t cycles);

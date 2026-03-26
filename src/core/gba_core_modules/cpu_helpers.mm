@@ -300,6 +300,14 @@ void GBACore::HandleCpuSet(bool fast_mode) {
   }
 }
 
+void GBACore::HandleUndefinedInstruction(bool thumb_state) {
+  if (bios_boot_via_vector_) {
+    EnterException(0x00000004u, 0x1Bu, true, false);
+    return;
+  }
+  cpu_.regs[15] += thumb_state ? 2u : 4u;
+}
+
 }  // namespace gba
 
 #endif  // GBA_CORE_CPU_HELPERS_IMPL
