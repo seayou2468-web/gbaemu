@@ -502,11 +502,10 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       consumed += EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
     }
-    // Keep PC sane when branch jumps outside executable mapped ranges.
-    // Do not remap valid BIOS/IWRAM/EWRAM/ROM addresses.
+    // Invalid execute address: do not remap to a pseudo-random ROM address.
+    // Use the undefined-instruction path to keep control flow deterministic.
     if (!is_exec_addr_valid(cpu_.regs[15])) {
-      const uint32_t mask = (cpu_.cpsr & (1u << 5)) ? 0x1FFFFFEu : 0x1FFFFFCu;
-      cpu_.regs[15] = 0x08000000u + static_cast<uint32_t>((cpu_.regs[15] & mask) % std::max<size_t>(4, rom_.size()));
+      HandleUndefinedInstruction((cpu_.cpsr & (1u << 5)) != 0);
     }
   }
 }
