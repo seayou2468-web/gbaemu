@@ -177,7 +177,7 @@ bool GBACore::CheckCondition(uint32_t cond) const {
     case 0xC: return !z && (n == v);   // GT
     case 0xD: return z || (n != v);    // LE
     case 0xE: return true;             // AL
-    default: return false;             // NV
+    default: return false;             // NV / reserved must not execute
   }
 }
 
@@ -298,6 +298,14 @@ void GBACore::HandleCpuSet(bool fast_mode) {
       Write16(daddr, fill ? value : Read16(saddr));
     }
   }
+}
+
+void GBACore::HandleUndefinedInstruction(bool thumb_state) {
+  if (bios_boot_via_vector_) {
+    EnterException(0x00000004u, 0x1Bu, true, false);
+    return;
+  }
+  cpu_.regs[15] += thumb_state ? 2u : 4u;
 }
 
 }  // namespace gba

@@ -1,5 +1,12 @@
-// Unified Objective-C++ core implementation split into focused modules.
+// Optional unified Objective-C++ core implementation entry point.
+//
+// Default behavior keeps this translation unit empty because the build compiles
+// files in src/core/gba_core_modules/*.mm as standalone translation units.
+//
+// If a target wants a single aggregated TU build, define
+// GBA_CORE_USE_AGGREGATED_MODULES for this file.
 
+#if defined(GBA_CORE_USE_AGGREGATED_MODULES)
 #include "gba_core_modules/core_bootstrap.mm"
 #include "gba_core_modules/core_reset_state.mm"
 #include "gba_core_modules/core_save_debug.mm"
@@ -15,3 +22,4 @@
 #include "gba_core_modules/timing_dma.mm"
 #include "gba_core_modules/apu_interrupts.mm"
 #include "gba_core_modules/render_debug.mm"
+#endif

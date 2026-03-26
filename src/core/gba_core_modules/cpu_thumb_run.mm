@@ -409,8 +409,12 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   }
 
   // Conditional branch
-  if ((opcode & 0xF000u) == 0xD000u && (opcode & 0x0F00u) != 0x0F00u) {
+  if ((opcode & 0xF000u) == 0xD000u) {
     const uint32_t cond = (opcode >> 8) & 0xFu;
+    if (cond >= 0xEu) {
+      HandleUndefinedInstruction(true);
+      return;
+    }
     int32_t offset = static_cast<int32_t>(opcode & 0xFFu);
     if (offset & 0x80) offset |= ~0xFF;
     offset <<= 1;
@@ -454,7 +458,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     return;
   }
 
-  EnterException(0x00000004u, 0x1Bu, true, false);  // Undefined instruction
+  HandleUndefinedInstruction(true);
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
@@ -488,8 +492,11 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
   uint32_t consumed = 0;
   while (consumed < cycles) {
     ServiceInterruptIfNeeded();
+    const bool thumb_state = (cpu_.cpsr & (1u << 5)) != 0;
+    // Keep architectural PC aligned to current execution state.
+    cpu_.regs[15] &= thumb_state ? ~1u : ~3u;
     const uint32_t pc = cpu_.regs[15];
-    if (cpu_.cpsr & (1u << 5)) {
+    if (thumb_state) {
       const uint16_t opcode = Read16(pc);
       consumed += EstimateThumbCycles(opcode);
       ExecuteThumbInstruction(opcode);
@@ -498,11 +505,10 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       consumed += EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
     }
-    // Keep PC sane when branch jumps outside executable mapped ranges.
-    // Do not remap valid BIOS/IWRAM/EWRAM/ROM addresses.
+    // Invalid execute address: do not remap to a pseudo-random ROM address.
+    // Use the undefined-instruction path to keep control flow deterministic.
     if (!is_exec_addr_valid(cpu_.regs[15])) {
-      const uint32_t mask = (cpu_.cpsr & (1u << 5)) ? 0x1FFFFFEu : 0x1FFFFFCu;
-      cpu_.regs[15] = 0x08000000u + static_cast<uint32_t>((cpu_.regs[15] & mask) % std::max<size_t>(4, rom_.size()));
+      HandleUndefinedInstruction((cpu_.cpsr & (1u << 5)) != 0);
     }
   }
 }
@@ -530,7 +536,9 @@ void GBACore::DebugStepCpuInstructions(uint32_t count) {
       }
     }
     ServiceInterruptIfNeeded();
-    if (cpu_.cpsr & (1u << 5)) {
+    const bool thumb_state = (cpu_.cpsr & (1u << 5)) != 0;
+    cpu_.regs[15] &= thumb_state ? ~1u : ~3u;
+    if (thumb_state) {
       const uint16_t opcode = Read16(cpu_.regs[15]);
       ExecuteThumbInstruction(opcode);
     } else {

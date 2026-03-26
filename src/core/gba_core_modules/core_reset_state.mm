@@ -69,21 +69,32 @@ void GBACore::Reset() {
   cpu_.banked_lr[0x12u] = 0;
   cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
   cpu_.regs[14] = 0;
-  // Real boot executes from BIOS reset vector only for externally supplied BIOS.
-  // Built-in BIOS is a compatibility stub and still uses direct cartridge entry.
+  // Prefer true BIOS-vector boot when a real external BIOS is loaded.
+  // Built-in BIOS remains HLE/direct-boot oriented.
   const bool use_real_bios_boot = bios_loaded_ && !bios_is_builtin_;
+  bios_boot_via_vector_ = use_real_bios_boot;
+  bios_boot_watchdog_frames_ = 0;
+  halt_watchdog_frames_ = 0;
   cpu_.regs[15] = use_real_bios_boot ? 0x00000000u : 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
-  // VCOUNT
-  WriteIO16(0x04000006u, 0x0000u);
+  if (use_real_bios_boot) {
+    // BIOS flow starts from line 0 baseline.
+    WriteIO16(0x04000006u, 0x0000u);
+    ppu_cycle_accum_ = 0;
+  } else {
+    // Align direct-boot timing with mGBA skip-BIOS baseline:
+    // VCOUNT starts near line 0x7E and first scanline edge arrives shortly after.
+    WriteIO16(0x04000006u, 0x007Eu);
+    ppu_cycle_accum_ = mgba_compat::kVideoHDrawCycles - 117u;
+  }
   // KEYINPUT: all released (active low)
   WriteIO16(0x04000130u, 0x03FFu);
   // IE/IF/IME
   WriteIO16(0x04000200u, 0x0000u);
   WriteIO16(0x04000202u, 0x0000u);
   WriteIO16(0x04000208u, 0x0001u);
-  // POSTFLG remains 0 during real BIOS boot, and is 1 for direct cartridge fallback.
+  // POSTFLG: 0 during BIOS flow, 1 when skipping to cartridge entry.
   Write8(0x04000300u, use_real_bios_boot ? 0x00u : 0x01u);
   SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
