@@ -78,8 +78,10 @@ void GBACore::Reset() {
   cpu_.regs[15] = 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
-  // VCOUNT
-  WriteIO16(0x04000006u, 0x0000u);
+  // Align direct-boot timing with mGBA skip-BIOS baseline:
+  // VCOUNT starts near line 0x7E and first scanline edge arrives shortly after.
+  WriteIO16(0x04000006u, 0x007Eu);
+  ppu_cycle_accum_ = mgba_compat::kVideoHDrawCycles - 117u;
   // KEYINPUT: all released (active low)
   WriteIO16(0x04000130u, 0x03FFu);
   // IE/IF/IME
@@ -90,7 +92,6 @@ void GBACore::Reset() {
   Write8(0x04000300u, 0x01u);
   SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
-  forced_blank_streak_ = 0;
   frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
   RenderDebugFrame();
 }

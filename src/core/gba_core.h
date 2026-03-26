@@ -263,7 +263,6 @@ class GBACore {
 
   CpuState cpu_{};
   GameplayState gameplay_state_{};
-  uint32_t forced_blank_streak_ = 0;
   uint64_t frame_count_ = 0;
   uint64_t executed_cycles_ = 0;
   uint16_t keys_pressed_mask_ = 0;

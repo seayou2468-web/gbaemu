@@ -92,29 +92,18 @@ void GBACore::RenderDebugFrame() {
   }
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const bool forced_blank = (dispcnt & (1u << 7)) != 0;
-  if (forced_blank) {
-    ++forced_blank_streak_;
-    // mGBA-compat note: forced blank should output white. However, with this
-    // core's incomplete startup/timing emulation some titles can get stuck in
-    // forced blank forever. After a grace period, continue rendering as a
-    // fallback so gameplay remains visible instead of a permanent white screen.
-    if (forced_blank_streak_ < 120u) {
-      std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
-      EnsureBgPriorityBufferSize();
-      std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-                static_cast<uint8_t>(kBackdropPriority));
-      return;
-    }
-  } else {
-    forced_blank_streak_ = 0;
+  if ((dispcnt & (1u << 7)) != 0) {
+    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
+    EnsureBgPriorityBufferSize();
+    std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
+              static_cast<uint8_t>(kBackdropPriority));
+    return;
   }
-  const uint16_t render_dispcnt = forced_blank ? static_cast<uint16_t>(dispcnt & ~(1u << 7)) : dispcnt;
   EnsureObjDrawnMaskBufferSize();
   EnsureBgBaseColorBufferSize();
   EnsureBgSecondBuffersSize();
   BuildObjWindowMask();
-  const uint16_t bg_mode = render_dispcnt & 0x7u;
+  const uint16_t bg_mode = dispcnt & 0x7u;
   if (bg_mode == 0u) {
     RenderMode0Frame();
     BgBaseColorBuffer() = frame_buffer_;
