@@ -78,10 +78,15 @@ void GBACore::StepPpu(uint32_t cycles) {
 
 void GBACore::StepTimers(uint32_t cycles) {
   static constexpr uint32_t kPrescalerLut[4] = {1, 64, 256, 1024};
+  auto write_timer_counter_raw = [&](size_t i, uint16_t counter) {
+    const size_t off = 0x100u + i * 4u;
+    if (off + 1u >= io_regs_.size()) return;
+    io_regs_[off] = static_cast<uint8_t>(counter & 0xFFu);
+    io_regs_[off + 1u] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
+  };
   uint32_t overflow_count[4] = {0u, 0u, 0u, 0u};
   for (size_t i = 0; i < timers_.size(); ++i) {
     TimerState& t = timers_[i];
-    t.reload = ReadIO16(static_cast<uint32_t>(0x04000100u + i * 4u));
     const uint16_t cnt_h = ReadIO16(static_cast<uint32_t>(0x04000102u + i * 4u));
     t.control = cnt_h;
     if ((cnt_h & 0x0080u) == 0) continue;  // disabled
@@ -104,7 +109,7 @@ void GBACore::StepTimers(uint32_t cycles) {
       for (uint32_t n = 0; n < ticks; ++n) {
         tick_once();
       }
-      WriteIO16(static_cast<uint32_t>(0x04000100u + i * 4u), t.counter);
+      write_timer_counter_raw(i, t.counter);
       continue;
     }
 
@@ -114,7 +119,7 @@ void GBACore::StepTimers(uint32_t cycles) {
       t.prescaler_accum -= prescaler;
       tick_once();
     }
-    WriteIO16(static_cast<uint32_t>(0x04000100u + i * 4u), t.counter);
+    write_timer_counter_raw(i, t.counter);
   }
 }
 
