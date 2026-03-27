@@ -404,56 +404,86 @@ void GBACore::RenderMode2Frame() {
     return Bgr555ToRgba8888(bgr);
   };
 
+  struct AffineBgState {
+    bool enabled = false;
+    bool wrap = false;
+    bool mosaic = false;
+    uint8_t priority = 4;
+    uint8_t layer = kLayerBackdrop;
+    uint32_t char_base = 0;
+    uint32_t screen_base = 0;
+    int mos_h = 1;
+    int mos_v = 1;
+    int size_px = 128;
+    int tiles_per_row = 16;
+    int16_t pa = 0;
+    int16_t pb = 0;
+    int16_t pc = 0;
+    int16_t pd = 0;
+    int32_t refx = 0;
+    int32_t refy = 0;
+  };
+
+  auto read_affine_ref28 = [&](uint32_t addr) -> int32_t {
+    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
+                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
+                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
+                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
+    uint32_t raw28 = v & 0x0FFFFFFFu;
+    if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
+    return static_cast<int32_t>(raw28);
+  };
+
+  std::array<AffineBgState, 2> affine_bgs{};
+  const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
+  for (int i = 0; i < 2; ++i) {
+    const int bg = 2 + i;
+    auto& st = affine_bgs[static_cast<size_t>(i)];
+    st.enabled = (dispcnt & (1u << (8 + bg))) != 0;
+    st.layer = static_cast<uint8_t>(bg);
+    if (!st.enabled) continue;
+    const uint16_t bgcnt = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2u));
+    st.priority = static_cast<uint8_t>(bgcnt & 0x3u);
+    st.char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
+    st.screen_base = ((bgcnt >> 8) & 0x1Fu) * 2u * 1024u;
+    st.mosaic = (bgcnt & (1u << 6)) != 0;
+    st.wrap = (bgcnt & (1u << 13)) != 0;
+    st.mos_h = static_cast<int>((mosaic_reg & 0xFu) + 1u);
+    st.mos_v = static_cast<int>(((mosaic_reg >> 4) & 0xFu) + 1u);
+    const uint32_t screen_size = (bgcnt >> 14) & 0x3u;
+    st.size_px = 128 << screen_size;
+    st.tiles_per_row = st.size_px / 8;
+
+    const uint32_t affine_base = (bg == 2) ? 0x04000020u : 0x04000030u;
+    st.pa = static_cast<int16_t>(ReadIO16(affine_base + 0u));
+    st.pb = static_cast<int16_t>(ReadIO16(affine_base + 2u));
+    st.pc = static_cast<int16_t>(ReadIO16(affine_base + 4u));
+    st.pd = static_cast<int16_t>(ReadIO16(affine_base + 6u));
+    const uint32_t ref_base = (bg == 2) ? 0x04000028u : 0x04000038u;
+    st.refx = read_affine_ref28(ref_base);
+    st.refy = read_affine_ref28(ref_base + 4u);
+  }
+
   auto sample_affine_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
     *out_idx = 0;
     *out_opaque = false;
-    const uint32_t bgcnt_addr = static_cast<uint32_t>(0x04000008u + bg * 2u);
-    const uint16_t bgcnt = ReadIO16(bgcnt_addr);
-    const uint32_t char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
-    const uint32_t screen_base = ((bgcnt >> 8) & 0x1Fu) * 2u * 1024u;
-    const bool wrap = (bgcnt & (1u << 13)) != 0;
-    const bool mosaic = (bgcnt & (1u << 6)) != 0;
-    const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
-    const int mos_h = static_cast<int>((mosaic_reg & 0xFu) + 1u);
-    const int mos_v = static_cast<int>(((mosaic_reg >> 4) & 0xFu) + 1u);
-    const uint32_t screen_size = (bgcnt >> 14) & 0x3u;
-    const int size_px = 128 << screen_size;
-    const int tiles_per_row = size_px / 8;
-
-    const uint32_t affine_base = (bg == 2) ? 0x04000020u : 0x04000030u;
-    const int16_t pa = static_cast<int16_t>(ReadIO16(affine_base + 0u));
-    const int16_t pb = static_cast<int16_t>(ReadIO16(affine_base + 2u));
-    const int16_t pc = static_cast<int16_t>(ReadIO16(affine_base + 4u));
-    const int16_t pd = static_cast<int16_t>(ReadIO16(affine_base + 6u));
-
-    const uint32_t ref_base = (bg == 2) ? 0x04000028u : 0x04000038u;
-    auto read_s32_le = [&](uint32_t addr) -> int32_t {
-      const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
-                         (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
-                         (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
-                         (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
-      uint32_t raw28 = v & 0x0FFFFFFFu;  // BG2X/BG2Y/BG3X/BG3Y are signed 28-bit.
-      if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
-      return static_cast<int32_t>(raw28);
-    };
-    const int32_t refx = read_s32_le(ref_base);
-    const int32_t refy = read_s32_le(ref_base + 4u);
-
-    const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
-    const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
-    int64_t tex_x_fp = static_cast<int64_t>(refx) +
-                       static_cast<int64_t>(pa) * sample_x + static_cast<int64_t>(pb) * sample_y;
-    int64_t tex_y_fp = static_cast<int64_t>(refy) +
-                       static_cast<int64_t>(pc) * sample_x + static_cast<int64_t>(pd) * sample_y;
+    const auto& st = affine_bgs[static_cast<size_t>(bg - 2)];
+    if (!st.enabled) return;
+    const int sample_x = st.mosaic ? ((x / st.mos_h) * st.mos_h) : x;
+    const int sample_y = st.mosaic ? ((y / st.mos_v) * st.mos_v) : y;
+    int64_t tex_x_fp = static_cast<int64_t>(st.refx) +
+                       static_cast<int64_t>(st.pa) * sample_x + static_cast<int64_t>(st.pb) * sample_y;
+    int64_t tex_y_fp = static_cast<int64_t>(st.refy) +
+                       static_cast<int64_t>(st.pc) * sample_x + static_cast<int64_t>(st.pd) * sample_y;
     int tx = static_cast<int>(tex_x_fp >> 8);
     int ty = static_cast<int>(tex_y_fp >> 8);
 
-    if (wrap) {
-      tx %= size_px;
-      ty %= size_px;
-      if (tx < 0) tx += size_px;
-      if (ty < 0) ty += size_px;
-    } else if (tx < 0 || ty < 0 || tx >= size_px || ty >= size_px) {
+    if (st.wrap) {
+      tx %= st.size_px;
+      ty %= st.size_px;
+      if (tx < 0) tx += st.size_px;
+      if (ty < 0) ty += st.size_px;
+    } else if (tx < 0 || ty < 0 || tx >= st.size_px || ty >= st.size_px) {
       return;
     }
 
@@ -461,10 +491,10 @@ void GBACore::RenderMode2Frame() {
     const int tile_y = ty / 8;
     const int pixel_x = tx & 7;
     const int pixel_y = ty & 7;
-    const size_t map_off = static_cast<size_t>(screen_base + tile_y * tiles_per_row + tile_x);
+    const size_t map_off = static_cast<size_t>(st.screen_base + tile_y * st.tiles_per_row + tile_x);
     if (map_off >= vram_.size()) return;
     const uint16_t tile_id = vram_[map_off];
-    const size_t chr_off = static_cast<size_t>(char_base + tile_id * 64u + pixel_y * 8u + pixel_x);
+    const size_t chr_off = static_cast<size_t>(st.char_base + tile_id * 64u + pixel_y * 8u + pixel_x);
     if (chr_off >= vram_.size()) return;
     const uint16_t idx = vram_[chr_off];
     if ((idx & 0xFFu) == 0u) return;
@@ -506,14 +536,14 @@ void GBACore::RenderMode2Frame() {
       };
 
       for (int bg = 2; bg <= 3; ++bg) {
-        if ((dispcnt & (1u << (8 + bg))) == 0) continue;
+        const auto& st = affine_bgs[static_cast<size_t>(bg - 2)];
+        if (!st.enabled) continue;
         if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) continue;
         uint16_t idx = 0;
         bool opaque = false;
         sample_affine_bg(bg, x, y, &idx, &opaque);
         if (opaque) {
-          const int prio = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2u)) & 0x3u;
-          consider(idx, prio, static_cast<uint8_t>(bg));
+          consider(idx, st.priority, st.layer);
         }
       }
 
