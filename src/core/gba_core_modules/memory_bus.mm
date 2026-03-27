@@ -289,15 +289,16 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
     }
   }
   if (addr >= 0x04000000u && addr <= 0x040003FCu) {
-    const uint32_t off32 = addr - 0x04000000u;
+    const uint32_t aligned = addr & ~3u;
+    const uint32_t off32 = aligned - 0x04000000u;
     if (off32 <= io_regs_.size() - 4) {
-      WriteIO16(addr, static_cast<uint16_t>(value & 0xFFFFu));
-      WriteIO16(addr + 2, static_cast<uint16_t>((value >> 16) & 0xFFFFu));
+      WriteIO16(aligned, static_cast<uint16_t>(value & 0xFFFFu));
+      WriteIO16(aligned + 2u, static_cast<uint16_t>((value >> 16) & 0xFFFFu));
       return;
     }
   }
   if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x05000000u, 0x3FFu);
+    const uint32_t off32 = MirrorOffset(addr & ~3u, 0x05000000u, 0x3FFu);
     if (off32 <= palette_ram_.size() - 4) {
       const size_t off = static_cast<size_t>(off32);
       palette_ram_[off] = static_cast<uint8_t>(value & 0xFF);
@@ -308,7 +309,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
     }
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = VramOffset(addr);
+    const uint32_t off32 = VramOffset(addr & ~3u);
     if (off32 <= vram_.size() - 4) {
       const size_t off = static_cast<size_t>(off32);
       vram_[off] = static_cast<uint8_t>(value & 0xFF);
@@ -319,7 +320,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
     }
   }
   if (addr >= 0x07000000u && addr <= 0x07FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x07000000u, 0x3FFu);
+    const uint32_t off32 = MirrorOffset(addr & ~3u, 0x07000000u, 0x3FFu);
     if (off32 <= oam_.size() - 4) {
       const size_t off = static_cast<size_t>(off32);
       oam_[off] = static_cast<uint8_t>(value & 0xFF);
@@ -365,14 +366,15 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
     }
   }
   if (addr >= 0x04000000u && addr <= 0x040003FEu) {
-    const uint32_t off32 = addr - 0x04000000u;
+    const uint32_t aligned = addr & ~1u;
+    const uint32_t off32 = aligned - 0x04000000u;
     if (off32 <= io_regs_.size() - 2) {
-      WriteIO16(addr & ~1u, value);
+      WriteIO16(aligned, value);
       return;
     }
   }
   if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x05000000u, 0x3FFu);
+    const uint32_t off32 = MirrorOffset(addr & ~1u, 0x05000000u, 0x3FFu);
     if (off32 <= palette_ram_.size() - 2) {
       const size_t off = static_cast<size_t>(off32);
       palette_ram_[off] = static_cast<uint8_t>(value & 0xFF);
@@ -381,7 +383,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
     }
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t off32 = VramOffset(addr);
+    const uint32_t off32 = VramOffset(addr & ~1u);
     if (off32 <= vram_.size() - 2) {
       const size_t off = static_cast<size_t>(off32);
       vram_[off] = static_cast<uint8_t>(value & 0xFF);
@@ -390,7 +392,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
     }
   }
   if (addr >= 0x07000000u && addr <= 0x07FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr, 0x07000000u, 0x3FFu);
+    const uint32_t off32 = MirrorOffset(addr & ~1u, 0x07000000u, 0x3FFu);
     if (off32 <= oam_.size() - 2) {
       const size_t off = static_cast<size_t>(off32);
       oam_[off] = static_cast<uint8_t>(value & 0xFF);
@@ -444,13 +446,8 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     }
   }
   if (addr >= 0x07000000u && addr <= 0x07FFFFFFu) {
-    const uint32_t off32 = MirrorOffset(addr & ~1u, 0x07000000u, 0x3FFu);
-    if (off32 + 1u < oam_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      oam_[off] = value;
-      oam_[off + 1] = value;
-      return;
-    }
+    // OAM does not support byte writes on GBA; they are ignored.
+    return;
   }
   if (addr >= 0x0E000000u) {
     WriteBackup8(addr, value);

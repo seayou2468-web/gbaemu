@@ -2,6 +2,47 @@
 #include "./ppu_common.mm"
 
 namespace gba {
+namespace {
+
+bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_chr_base,
+                         bool obj_1d, bool color_256, int src_w, int tx, int ty,
+                         uint16_t tile_id, uint16_t palbank, uint16_t* out_color_index) {
+  if (out_color_index == nullptr) return false;
+  const int tile_x = tx / 8;
+  const int tile_y = ty / 8;
+  const int in_x = tx & 7;
+  const int in_y = ty & 7;
+
+  // OBJ tile indices are addressed in 32-byte units.
+  // 256-color OBJ tiles consume two 32-byte indices, so both tile base and
+  // row stride need color-depth-aware scaling.
+  const int tile_unit_x = color_256 ? (tile_x * 2) : tile_x;
+  const int row_stride_units = obj_1d ? (color_256 ? (src_w / 4) : (src_w / 8)) : 32;
+  const uint16_t tile_base = color_256 ? static_cast<uint16_t>(tile_id & ~1u) : tile_id;
+  const uint32_t tile_units = static_cast<uint32_t>(tile_base) +
+                              static_cast<uint32_t>(tile_y * row_stride_units + tile_unit_x);
+  const size_t chr_base_off = obj_chr_base + static_cast<size_t>(tile_units) * 32u;
+  if (chr_base_off >= vram.size()) return false;
+
+  if (color_256) {
+    const size_t chr_off = chr_base_off + static_cast<size_t>(in_y * 8 + in_x);
+    if (chr_off >= vram.size()) return false;
+    const uint8_t color = vram[chr_off];
+    if (color == 0u) return false;
+    *out_color_index = color;
+    return true;
+  }
+
+  const size_t chr_off = chr_base_off + static_cast<size_t>(in_y * 4 + in_x / 2);
+  if (chr_off >= vram.size()) return false;
+  const uint8_t packed = vram[chr_off];
+  const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
+  if (nib == 0u) return false;
+  *out_color_index = static_cast<uint16_t>(palbank * 16u + nib);
+  return true;
+}
+
+}  // namespace
 
 void GBACore::RenderMode3Frame() {
   // Mode 3: 240x160 direct color (BGR555) in VRAM.
@@ -312,6 +353,9 @@ void GBACore::BuildObjWindowMask() {
       {{8, 16}, {8, 32}, {16, 32}, {32, 64}},
   };
   const bool obj_1d = (dispcnt & (1u << 6)) != 0;
+  const uint8_t bg_mode = static_cast<uint8_t>(dispcnt & 0x7u);
+  const bool bitmap_mode = bg_mode >= 3u;
+  const size_t obj_chr_base = bitmap_mode ? 0x14000u : 0x10000u;
   auto& mask = ObjWindowMaskBuffer();
 
   for (int obj = 127; obj >= 0; --obj) {
@@ -344,9 +388,9 @@ void GBACore::BuildObjWindowMask() {
     const bool mosaic = (attr0 & (1u << 12)) != 0;
     const bool hflip = (attr1 & (1u << 12)) != 0;
     const bool vflip = (attr1 & (1u << 13)) != 0;
-    const uint16_t tile_id = attr2 & 0x03FFu;
+    const uint16_t tile_id = bitmap_mode ? static_cast<uint16_t>(attr2 & 0x01FFu)
+                                         : static_cast<uint16_t>(attr2 & 0x03FFu);
     const uint16_t palbank = static_cast<uint16_t>((attr2 >> 12) & 0xFu);
-    const size_t obj_chr_base = 0x10000u;
 
     int16_t pa = 0, pb = 0, pc = 0, pd = 0;
     if (affine) {
@@ -402,33 +446,10 @@ void GBACore::BuildObjWindowMask() {
         }
 
         uint16_t color_index = 0;
-        if (color_256) {
-          const int tile_x = tx / 8;
-          const int tile_y = ty / 8;
-          const int in_x = tx & 7;
-          const int in_y = ty & 7;
-          const int tile_stride = obj_1d ? (src_w / 8) : 32;
-          const size_t chr_off = obj_chr_base +
-                                 static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 64 +
-                                                     in_y * 8 + in_x);
-          if (chr_off >= vram_.size()) continue;
-          color_index = vram_[chr_off];
-        } else {
-          const int tile_x = tx / 8;
-          const int tile_y = ty / 8;
-          const int in_x = tx & 7;
-          const int in_y = ty & 7;
-          const int tile_stride = obj_1d ? (src_w / 8) : 32;
-          const size_t chr_off = obj_chr_base +
-                                 static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 32 +
-                                                     in_y * 4 + in_x / 2);
-          if (chr_off >= vram_.size()) continue;
-          const uint8_t packed = vram_[chr_off];
-          const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
-          if (nib == 0u) continue;
-          color_index = static_cast<uint16_t>(palbank * 16u + nib);
+        if (!SampleObjColorIndex(vram_, obj_chr_base, obj_1d, color_256, src_w, tx, ty,
+                                 tile_id, palbank, &color_index)) {
+          continue;
         }
-        if (color_256 && color_index == 0u) continue;
         const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
         mask[fb_off] = 1u;
       }
@@ -465,6 +486,9 @@ void GBACore::RenderSprites() {
       {{8, 16}, {8, 32}, {16, 32}, {32, 64}},     // vertical
   };
   const bool obj_1d = (dispcnt & (1u << 6)) != 0;
+  const uint8_t bg_mode = static_cast<uint8_t>(dispcnt & 0x7u);
+  const bool bitmap_mode = bg_mode >= 3u;
+  const size_t obj_chr_base = bitmap_mode ? 0x14000u : 0x10000u;
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
     const size_t off = static_cast<size_t>((idx & 0x1FFu) * 2u);
@@ -507,9 +531,9 @@ void GBACore::RenderSprites() {
     const bool hflip = (attr1 & (1u << 12)) != 0;
     const bool vflip = (attr1 & (1u << 13)) != 0;
     const uint8_t obj_priority = static_cast<uint8_t>((attr2 >> 10) & 0x3u);
-    const uint16_t tile_id = attr2 & 0x03FFu;
+    const uint16_t tile_id = bitmap_mode ? static_cast<uint16_t>(attr2 & 0x01FFu)
+                                         : static_cast<uint16_t>(attr2 & 0x03FFu);
     const uint16_t palbank = static_cast<uint16_t>((attr2 >> 12) & 0xFu);
-    const size_t obj_chr_base = 0x10000u;
 
     int16_t pa = 0;
     int16_t pb = 0;
@@ -573,33 +597,10 @@ void GBACore::RenderSprites() {
         }
 
         uint16_t color_index = 0;
-        if (color_256) {
-          const int tile_x = tx / 8;
-          const int tile_y = ty / 8;
-          const int in_x = tx & 7;
-          const int in_y = ty & 7;
-          const int tile_stride = obj_1d ? (src_w / 8) : 32;
-          const size_t chr_off = obj_chr_base +
-                                 static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 64 +
-                                                     in_y * 8 + in_x);
-          if (chr_off >= vram_.size()) continue;
-          color_index = vram_[chr_off];
-        } else {
-          const int tile_x = tx / 8;
-          const int tile_y = ty / 8;
-          const int in_x = tx & 7;
-          const int in_y = ty & 7;
-          const int tile_stride = obj_1d ? (src_w / 8) : 32;
-          const size_t chr_off = obj_chr_base +
-                                 static_cast<size_t>((tile_id + tile_y * tile_stride + tile_x) * 32 +
-                                                     in_y * 4 + in_x / 2);
-          if (chr_off >= vram_.size()) continue;
-          const uint8_t packed = vram_[chr_off];
-          const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
-          if (nib == 0u) continue;
-          color_index = static_cast<uint16_t>(palbank * 16u + nib);
+        if (!SampleObjColorIndex(vram_, obj_chr_base, obj_1d, color_256, src_w, tx, ty,
+                                 tile_id, palbank, &color_index)) {
+          continue;
         }
-        if (color_256 && color_index == 0u) continue;  // transparent
         const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
         if (obj_priority > bg_priority[fb_off]) continue;
         uint32_t obj_px = palette_color(color_index);
