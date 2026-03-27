@@ -72,6 +72,7 @@ void GBACore::StepTimers(uint32_t cycles) {
   bool overflowed[4] = {false, false, false, false};
   for (size_t i = 0; i < timers_.size(); ++i) {
     TimerState& t = timers_[i];
+    t.reload = ReadIO16(static_cast<uint32_t>(0x04000100u + i * 4u));
     const uint16_t cnt_h = ReadIO16(static_cast<uint32_t>(0x04000102u + i * 4u));
     t.control = cnt_h;
     if ((cnt_h & 0x0080u) == 0) continue;  // disabled
@@ -81,7 +82,7 @@ void GBACore::StepTimers(uint32_t cycles) {
       const uint16_t old = t.counter;
       t.counter = static_cast<uint16_t>(t.counter + 1u);
       if (t.counter == 0) {
-        t.counter = ReadIO16(static_cast<uint32_t>(0x04000100u + i * 4u));
+        t.counter = t.reload;
         ConsumeAudioFifoOnTimer(i);
         if (cnt_h & 0x0040u) {
           RaiseInterrupt(static_cast<uint16_t>(1u << static_cast<uint16_t>(3u + i)));
@@ -188,9 +189,10 @@ void GBACore::StepDma() {
       dst_cur = static_cast<uint32_t>(static_cast<int64_t>(dst_cur) + dst_step);
     }
 
-    Write32(base + 0u, src_cur);
-    Write32(base + 4u, (dst_ctl == 3) ? dst : dst_cur);
     const bool repeat = (cnt_h & (1u << 9)) != 0;
+    const bool reload_dest = (dst_ctl == 3) && repeat && (start_timing != 0u);
+    Write32(base + 0u, src_cur);
+    Write32(base + 4u, reload_dest ? dst : dst_cur);
     uint16_t next_cnt_h = cnt_h;
     if (!(repeat && start_timing != 0u)) {
       next_cnt_h = static_cast<uint16_t>(cnt_h & ~0x8000u);

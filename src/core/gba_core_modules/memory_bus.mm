@@ -500,7 +500,22 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   // DISPSTAT: bits 0-2 are status (read-only), bits 3-5/8-15 writable.
   if (addr == 0x04000004u) {
     const uint16_t old = ReadIO16(addr);
-    value = static_cast<uint16_t>((value & 0xFF38u) | (old & 0x0007u));
+    value = static_cast<uint16_t>((value & 0xFF38u) | (old & 0x0003u));
+    const uint16_t vcount = ReadIO16(0x04000006u);
+    const uint16_t lyc = static_cast<uint16_t>((value >> 8) & 0x00FFu);
+    const bool old_match = (old & 0x0004u) != 0;
+    const bool now_match = (vcount == lyc);
+    if (now_match) {
+      value = static_cast<uint16_t>(value | 0x0004u);
+      if (!old_match && (value & (1u << 5))) {
+        RaiseInterrupt(1u << 2);  // VCount IRQ
+      }
+    } else {
+      value = static_cast<uint16_t>(value & ~0x0004u);
+    }
+    io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
+    io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+    return;
   }
   // VCOUNT is read-only.
   if (addr == 0x04000006u) {
@@ -559,7 +574,7 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
         timers_[tidx].control = value;
         if (!was_enable && now_enable) {
           // Enabling a timer reloads counter from TMxCNT_L and resets prescaler.
-          const uint16_t reload = ReadIO16(static_cast<uint32_t>(0x04000100u + tidx * 4u));
+          const uint16_t reload = timers_[tidx].reload;
           timers_[tidx].counter = reload;
           timers_[tidx].prescaler_accum = 0;
           io_regs_[0x100u + tidx * 4u] = static_cast<uint8_t>(reload & 0xFFu);
@@ -570,6 +585,7 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       if (is_low) {
         io_regs_[off] = static_cast<uint8_t>(value & 0xFF);
         io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        timers_[tidx].reload = value;
         // When timer is stopped, writes to reload are reflected in current count.
         const uint16_t ctrl = ReadIO16(static_cast<uint32_t>(0x04000102u + tidx * 4u));
         if ((ctrl & 0x0080u) == 0) {
