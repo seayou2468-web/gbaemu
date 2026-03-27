@@ -7,6 +7,42 @@ inline uint32_t MirrorOffset(uint32_t addr, uint32_t base, uint32_t mask) {
   return (addr - base) & mask;
 }
 
+inline uint16_t Read16Wrap(const uint8_t* buf, uint32_t off, uint32_t mask) {
+  const uint32_t o0 = off & mask;
+  const uint32_t o1 = (off + 1u) & mask;
+  return static_cast<uint16_t>(buf[o0]) |
+         static_cast<uint16_t>(buf[o1] << 8);
+}
+
+inline uint32_t Read32Wrap(const uint8_t* buf, uint32_t off, uint32_t mask) {
+  const uint32_t o0 = off & mask;
+  const uint32_t o1 = (off + 1u) & mask;
+  const uint32_t o2 = (off + 2u) & mask;
+  const uint32_t o3 = (off + 3u) & mask;
+  return static_cast<uint32_t>(buf[o0]) |
+         (static_cast<uint32_t>(buf[o1]) << 8) |
+         (static_cast<uint32_t>(buf[o2]) << 16) |
+         (static_cast<uint32_t>(buf[o3]) << 24);
+}
+
+inline void Write16Wrap(uint8_t* buf, uint32_t off, uint32_t mask, uint16_t value) {
+  const uint32_t o0 = off & mask;
+  const uint32_t o1 = (off + 1u) & mask;
+  buf[o0] = static_cast<uint8_t>(value & 0xFFu);
+  buf[o1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+}
+
+inline void Write32Wrap(uint8_t* buf, uint32_t off, uint32_t mask, uint32_t value) {
+  const uint32_t o0 = off & mask;
+  const uint32_t o1 = (off + 1u) & mask;
+  const uint32_t o2 = (off + 2u) & mask;
+  const uint32_t o3 = (off + 3u) & mask;
+  buf[o0] = static_cast<uint8_t>(value & 0xFFu);
+  buf[o1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+  buf[o2] = static_cast<uint8_t>((value >> 16) & 0xFFu);
+  buf[o3] = static_cast<uint8_t>((value >> 24) & 0xFFu);
+}
+
 inline uint32_t VramOffset(uint32_t addr) {
   uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x1FFFFu);
   if (off32 >= 0x18000u) off32 -= 0x8000u;
@@ -33,24 +69,12 @@ uint32_t GBACore::Read32(uint32_t addr) const {
   // 0x02000000-0x02FFFFFF: EWRAM mirror (256KB)
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
-    if (off32 + 3u < ewram_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(ewram_[off]) |
-             (static_cast<uint32_t>(ewram_[off + 1]) << 8) |
-             (static_cast<uint32_t>(ewram_[off + 2]) << 16) |
-             (static_cast<uint32_t>(ewram_[off + 3]) << 24);
-    }
+    return Read32Wrap(ewram_.data(), off32, 0x3FFFFu);
   }
   // 0x03000000-0x03FFFFFF: IWRAM mirror (32KB)
   if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
-    if (off32 + 3u < iwram_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(iwram_[off]) |
-             (static_cast<uint32_t>(iwram_[off + 1]) << 8) |
-             (static_cast<uint32_t>(iwram_[off + 2]) << 16) |
-             (static_cast<uint32_t>(iwram_[off + 3]) << 24);
-    }
+    return Read32Wrap(iwram_.data(), off32, 0x7FFFu);
   }
   // 0x04000000-0x040003FF: IO
   if (addr >= 0x04000000u && addr <= 0x040003FCu) {
@@ -142,19 +166,11 @@ uint16_t GBACore::Read16(uint32_t addr) const {
   }
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
-    if (off32 + 1u < ewram_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(ewram_[off]) |
-             static_cast<uint16_t>(ewram_[off + 1] << 8);
-    }
+    return Read16Wrap(ewram_.data(), off32, 0x3FFFFu);
   }
   if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
-    if (off32 + 1u < iwram_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(iwram_[off]) |
-             static_cast<uint16_t>(iwram_[off + 1] << 8);
-    }
+    return Read16Wrap(iwram_.data(), off32, 0x7FFFu);
   }
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
@@ -269,25 +285,13 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
   }
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
-    if (off32 + 3u < ewram_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      ewram_[off] = static_cast<uint8_t>(value & 0xFF);
-      ewram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-      ewram_[off + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
-      ewram_[off + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
-      return;
-    }
+    Write32Wrap(ewram_.data(), off32, 0x3FFFFu, value);
+    return;
   }
   if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
-    if (off32 + 3u < iwram_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      iwram_[off] = static_cast<uint8_t>(value & 0xFF);
-      iwram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-      iwram_[off + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
-      iwram_[off + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
-      return;
-    }
+    Write32Wrap(iwram_.data(), off32, 0x7FFFu, value);
+    return;
   }
   if (addr >= 0x04000000u && addr <= 0x040003FCu) {
     const uint32_t aligned = addr & ~3u;
@@ -350,21 +354,13 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
 void GBACore::Write16(uint32_t addr, uint16_t value) {
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
-    if (off32 + 1u < ewram_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      ewram_[off] = static_cast<uint8_t>(value & 0xFF);
-      ewram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-      return;
-    }
+    Write16Wrap(ewram_.data(), off32, 0x3FFFFu, value);
+    return;
   }
   if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
-    if (off32 + 1u < iwram_.size()) {
-      const size_t off = static_cast<size_t>(off32);
-      iwram_[off] = static_cast<uint8_t>(value & 0xFF);
-      iwram_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-      return;
-    }
+    Write16Wrap(iwram_.data(), off32, 0x7FFFu, value);
+    return;
   }
   if (addr >= 0x04000000u && addr <= 0x040003FEu) {
     const uint32_t aligned = addr & ~1u;
