@@ -628,6 +628,7 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
         io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
         const bool was_enable = (old & 0x0080u) != 0;
         const bool now_enable = (value & 0x0080u) != 0;
+        const bool prescaler_changed = ((old ^ value) & 0x0003u) != 0u;
         timers_[tidx].control = value;
         if (!was_enable && now_enable) {
           // Enabling a timer reloads counter from TMxCNT_L and resets prescaler.
@@ -636,6 +637,12 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
           timers_[tidx].prescaler_accum = 0;
           io_regs_[0x100u + tidx * 4u] = static_cast<uint8_t>(reload & 0xFFu);
           io_regs_[0x101u + tidx * 4u] = static_cast<uint8_t>((reload >> 8) & 0xFFu);
+        } else if (was_enable && !now_enable) {
+          // Disabling timer clears accumulated prescaler phase.
+          timers_[tidx].prescaler_accum = 0;
+        } else if (now_enable && prescaler_changed) {
+          // Changing prescaler while enabled restarts divider phase.
+          timers_[tidx].prescaler_accum = 0;
         }
         return;
       }
