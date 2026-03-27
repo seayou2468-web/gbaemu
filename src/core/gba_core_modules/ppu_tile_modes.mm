@@ -4,6 +4,7 @@
 namespace gba {
 
 void GBACore::RenderMode0Frame() {
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
   EnsureBgPriorityBufferSize();
   EnsureBgLayerBufferSize();
   EnsureBgSecondBuffersSize();
@@ -12,7 +13,7 @@ void GBACore::RenderMode0Frame() {
   auto& second_color = BgSecondColorBuffer();
   auto& second_layer = BgSecondLayerBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const uint16_t winin = ReadIO16(0x04000048u);
+    const uint16_t winin = ReadIO16(0x04000048u);
   const uint16_t winout = ReadIO16(0x0400004Au);
   const uint16_t win0h = ReadIO16(0x04000040u);
   const uint16_t win0v = ReadIO16(0x04000042u);
@@ -130,17 +131,19 @@ void GBACore::RenderMode0Frame() {
         }
       }
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = palette_color(have_bg ? best_idx : 0);
+      frame_buffer_[off] = have_bg ? palette_color(best_idx) : backdrop;
       bg_priority[off] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
       bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
-      second_color[off] = palette_color(have_second ? second_idx : 0);
+      bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
+      second_color[off] = have_second ? palette_color(second_idx) : backdrop;
       second_layer[off] = have_second ? second_bg_layer : kLayerBackdrop;
     }
   }
 }
 
 void GBACore::RenderMode1Frame() {
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
   EnsureBgPriorityBufferSize();
   EnsureBgLayerBufferSize();
   EnsureBgSecondBuffersSize();
@@ -149,7 +152,7 @@ void GBACore::RenderMode1Frame() {
   auto& second_color = BgSecondColorBuffer();
   auto& second_layer = BgSecondLayerBuffer();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const uint16_t winin = ReadIO16(0x04000048u);
+    const uint16_t winin = ReadIO16(0x04000048u);
   const uint16_t winout = ReadIO16(0x0400004Au);
   const uint16_t win0h = ReadIO16(0x04000040u);
   const uint16_t win0v = ReadIO16(0x04000042u);
@@ -353,11 +356,12 @@ void GBACore::RenderMode1Frame() {
         }
       }
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = palette_color(have_bg ? best_idx : 0);
+      frame_buffer_[off] = have_bg ? palette_color(best_idx) : backdrop;
       bg_priority[off] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
       bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
-      second_color[off] = palette_color(have_second ? second_idx : 0);
+      bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
+      second_color[off] = have_second ? palette_color(second_idx) : backdrop;
       second_layer[off] = have_second ? second_bg_layer : kLayerBackdrop;
     }
   }
@@ -378,6 +382,7 @@ void GBACore::RenderMode2Frame() {
   const uint16_t win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u);
   const uint16_t win1v = ReadIO16(0x04000046u);
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
     const size_t off = static_cast<size_t>((idx & 0x1FFu) * 2u);
@@ -390,7 +395,6 @@ void GBACore::RenderMode2Frame() {
   auto sample_affine_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
     *out_idx = 0;
     *out_opaque = false;
-
     const uint32_t bgcnt_addr = static_cast<uint32_t>(0x04000008u + bg * 2u);
     const uint16_t bgcnt = ReadIO16(bgcnt_addr);
     const uint32_t char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
@@ -452,7 +456,6 @@ void GBACore::RenderMode2Frame() {
     if (chr_off >= vram_.size()) return;
     const uint16_t idx = vram_[chr_off];
     if ((idx & 0xFFu) == 0u) return;
-
     *out_idx = idx;
     *out_opaque = true;
   };
@@ -490,33 +493,23 @@ void GBACore::RenderMode2Frame() {
         }
       };
 
-      if ((dispcnt & (1u << 10)) != 0 &&
-          IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
+      for (int bg = 2; bg <= 3; ++bg) {
+        if ((dispcnt & (1u << (8 + bg))) == 0) continue;
+        if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) continue;
         uint16_t idx = 0;
         bool opaque = false;
-        sample_affine_bg(2, x, y, &idx, &opaque);
+        sample_affine_bg(bg, x, y, &idx, &opaque);
         if (opaque) {
-          const int prio = ReadIO16(0x0400000Cu) & 0x3u;
-          consider(idx, prio, kLayerBg2);
-        }
-      }
-      if ((dispcnt & (1u << 11)) != 0 &&
-          IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 3, x, y)) {
-        uint16_t idx = 0;
-        bool opaque = false;
-        sample_affine_bg(3, x, y, &idx, &opaque);
-        if (opaque) {
-          const int prio = ReadIO16(0x0400000Eu) & 0x3u;
-          consider(idx, prio, kLayerBg3);
+          const int prio = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2u)) & 0x3u;
+          consider(idx, prio, static_cast<uint8_t>(bg));
         }
       }
 
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = palette_color(have_bg ? best_idx : 0);
-      bg_priority[off] =
-          static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
+      frame_buffer_[off] = have_bg ? palette_color(best_idx) : backdrop;
+      bg_priority[off] = static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
       bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
-      second_color[off] = palette_color(have_second ? second_idx : 0);
+      second_color[off] = have_second ? palette_color(second_idx) : backdrop;
       second_layer[off] = have_second ? second_bg_layer : kLayerBackdrop;
     }
   }

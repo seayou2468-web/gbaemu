@@ -57,7 +57,7 @@ void GBACore::RenderMode3Frame() {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
-        frame_buffer_[fb_off] = backdrop;
+        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
         second_color[fb_off] = backdrop;
@@ -77,7 +77,7 @@ void GBACore::RenderMode3Frame() {
         sy = ((sy % kScreenHeight) + kScreenHeight) % kScreenHeight;
       }
       if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
-        frame_buffer_[fb_off] = backdrop;
+        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
         second_color[fb_off] = backdrop;
@@ -86,7 +86,7 @@ void GBACore::RenderMode3Frame() {
       }
       const size_t off = static_cast<size_t>((sy * kScreenWidth + sx) * 2);
       if (off + 1 >= vram_.size()) {
-        frame_buffer_[fb_off] = backdrop;
+        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
         second_color[fb_off] = backdrop;
@@ -171,7 +171,7 @@ void GBACore::RenderMode4Frame() {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
-        frame_buffer_[fb_off] = backdrop;
+        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
         second_color[fb_off] = backdrop;
@@ -191,7 +191,7 @@ void GBACore::RenderMode4Frame() {
         sy = ((sy % kScreenHeight) + kScreenHeight) % kScreenHeight;
       }
       if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
-        frame_buffer_[fb_off] = backdrop;
+        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
         second_color[fb_off] = backdrop;
@@ -201,7 +201,7 @@ void GBACore::RenderMode4Frame() {
       const size_t off = page_base + static_cast<size_t>(sy * kScreenWidth + sx);
       const uint8_t index = (off < vram_.size()) ? vram_[off] : 0;
       if (index == 0u) {
-        frame_buffer_[fb_off] = backdrop;
+        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
         bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
         bg_layer[fb_off] = kLayerBackdrop;
         second_color[fb_off] = backdrop;
