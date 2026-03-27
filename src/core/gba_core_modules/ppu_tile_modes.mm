@@ -264,9 +264,9 @@ void GBACore::RenderMode1Frame() {
                          (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
                          (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
                          (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
-      int32_t s = static_cast<int32_t>(v);
-      if ((s & 0x08000000) != 0) s |= static_cast<int32_t>(0xF0000000);
-      return s;
+      uint32_t raw28 = v & 0x0FFFFFFFu;  // BG2X/BG2Y are signed 28-bit.
+      if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
+      return static_cast<int32_t>(raw28);
     };
     const int32_t bg2x = read_s32_le(0x04000028u);
     const int32_t bg2y = read_s32_le(0x0400002Cu);
@@ -432,9 +432,9 @@ void GBACore::RenderMode2Frame() {
                          (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
                          (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
                          (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
-      int32_t s = static_cast<int32_t>(v);
-      if ((s & 0x08000000) != 0) s |= static_cast<int32_t>(0xF0000000);
-      return s;
+      uint32_t raw28 = v & 0x0FFFFFFFu;  // BG2X/BG2Y/BG3X/BG3Y are signed 28-bit.
+      if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
+      return static_cast<int32_t>(raw28);
     };
     const int32_t refx = read_s32_le(ref_base);
     const int32_t refy = read_s32_le(ref_base + 4u);
