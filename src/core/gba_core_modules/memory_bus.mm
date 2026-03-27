@@ -647,13 +647,18 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
         return;
       }
       if (is_low) {
-        io_regs_[off] = static_cast<uint8_t>(value & 0xFF);
-        io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
         timers_[tidx].reload = value;
-        // When timer is stopped, writes to reload are reflected in current count.
         const uint16_t ctrl = ReadIO16(static_cast<uint32_t>(0x04000102u + tidx * 4u));
         if ((ctrl & 0x0080u) == 0) {
+          // When timer is stopped, writes to reload are reflected in current count.
           timers_[tidx].counter = value;
+          io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
+          io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+        } else {
+          // While running, TMxCNT_L keeps exposing the live counter.
+          const uint16_t counter = timers_[tidx].counter;
+          io_regs_[off] = static_cast<uint8_t>(counter & 0xFFu);
+          io_regs_[off + 1] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
         }
         return;
       }

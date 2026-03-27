@@ -25,6 +25,7 @@ void GBACore::Reset() {
   bg2_refy_line_.fill(0);
   bg3_refx_line_.fill(0);
   bg3_refy_line_.fill(0);
+  affine_line_captured_.fill(0);
   dma_was_in_vblank_ = false;
   dma_was_in_hblank_ = false;
   dma_fifo_a_request_ = false;

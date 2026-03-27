@@ -272,6 +272,7 @@ class GBACore {
   std::array<int32_t, mgba_compat::kVideoTotalLines> bg2_refy_line_{};
   std::array<int32_t, mgba_compat::kVideoTotalLines> bg3_refx_line_{};
   std::array<int32_t, mgba_compat::kVideoTotalLines> bg3_refy_line_{};
+  std::array<uint8_t, mgba_compat::kVideoTotalLines> affine_line_captured_{};
   bool affine_line_refs_valid_ = false;
   uint64_t executed_cycles_ = 0;
   uint16_t keys_pressed_mask_ = 0;
