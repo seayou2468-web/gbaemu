@@ -15,7 +15,6 @@ void GBACore::ApplyColorEffects() {
   const uint16_t bldalpha = ReadIO16(0x04000052u);
   const uint16_t bldy = ReadIO16(0x04000054u);
   const uint32_t mode = (bldcnt >> 6) & 0x3u;
-  if (mode == 0u) return;
 
   const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
   const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
@@ -42,13 +41,15 @@ void GBACore::ApplyColorEffects() {
           top_is_obj && (fb_off < obj_semitrans.size()) && (obj_semitrans[fb_off] != 0u);
       const uint8_t top_layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
       const uint16_t top_mask = LayerToBlendMask(top_layer, top_is_obj);
+      const uint32_t effect_mode = top_is_semitrans_obj ? 1u : mode;
+      if (effect_mode == 0u) continue;
       if (!top_is_semitrans_obj && (bldcnt & top_mask) == 0) continue;  // top pixel is not 1st target
 
       uint32_t& px = frame_buffer_[fb_off];
       uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
       uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
       uint8_t b = static_cast<uint8_t>(px & 0xFFu);
-      if (top_is_semitrans_obj || mode == 1u) {
+      if (effect_mode == 1u) {
         uint8_t sr = back_r;
         uint8_t sg = back_g;
         uint8_t sb = back_b;
@@ -74,11 +75,11 @@ void GBACore::ApplyColorEffects() {
         r = ClampToByteLocal(static_cast<int>((r * eva + sr * evb) / 16u));
         g = ClampToByteLocal(static_cast<int>((g * eva + sg * evb) / 16u));
         b = ClampToByteLocal(static_cast<int>((b * eva + sb * evb) / 16u));
-      } else if (mode == 2u) {  // brighten
+      } else if (effect_mode == 2u) {  // brighten
         r = ClampToByteLocal(static_cast<int>(r + ((255 - r) * evy) / 16u));
         g = ClampToByteLocal(static_cast<int>(g + ((255 - g) * evy) / 16u));
         b = ClampToByteLocal(static_cast<int>(b + ((255 - b) * evy) / 16u));
-      } else if (mode == 3u) {  // darken
+      } else if (effect_mode == 3u) {  // darken
         r = ClampToByteLocal(static_cast<int>(r - (r * evy) / 16u));
         g = ClampToByteLocal(static_cast<int>(g - (g * evy) / 16u));
         b = ClampToByteLocal(static_cast<int>(b - (b * evy) / 16u));

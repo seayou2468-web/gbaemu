@@ -458,10 +458,6 @@ void GBACore::RenderSprites() {
   const uint16_t win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u);
   const uint16_t win1v = ReadIO16(0x04000046u);
-  const uint16_t bldcnt = ReadIO16(0x04000050u);
-  const uint16_t bldalpha = ReadIO16(0x04000052u);
-  const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
-  const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
 
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
@@ -469,8 +465,6 @@ void GBACore::RenderSprites() {
   auto& obj_drawn = ObjDrawnMaskBuffer();
   EnsureObjSemiTransMaskBufferSize();
   auto& obj_semitrans = ObjSemiTransMaskBuffer();
-  auto& bg_layer = BgLayerBuffer();
-  auto& bg_base = BgBaseColorBuffer();
 
   static constexpr int kObjDim[3][4][2] = {
       {{8, 8}, {16, 16}, {32, 32}, {64, 64}},     // square
@@ -597,46 +591,6 @@ void GBACore::RenderSprites() {
         const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
         if (obj_priority > bg_priority[fb_off]) continue;
         uint32_t obj_px = palette_color(color_index);
-        if (obj_mode == 1u) {
-          const uint8_t window_control = ResolveWindowControl(
-              dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), sx, sy);
-          const bool effects_enabled = (window_control & (1u << 5)) != 0;
-          bool second_target_ok = false;
-          if (obj_drawn[fb_off] != 0u) {
-            second_target_ok = (bldcnt & (1u << (8 + 4))) != 0;  // OBJ as 2nd target
-          } else if (bg_priority[fb_off] == kBackdropPriority) {
-            second_target_ok = (bldcnt & (1u << (8 + 5))) != 0;  // BD as 2nd target
-          } else {
-            const uint8_t layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
-            const uint16_t layer_mask = static_cast<uint16_t>(1u << (8u + std::min<uint8_t>(layer, 5u)));
-            second_target_ok = (bldcnt & layer_mask) != 0;
-          }
-          // Semi-transparent OBJ uses alpha blending against a valid 2nd target.
-          // Unlike regular BLDCNT mode selection, this path is driven by OBJ mode.
-          if (!(effects_enabled && second_target_ok)) {
-            frame_buffer_[fb_off] = obj_px;
-            bg_priority[fb_off] = obj_priority;
-            obj_drawn[fb_off] = 1u;
-            obj_semitrans[fb_off] = 1u;
-            continue;
-          }
-          // Semi-transparent OBJ: approximate hardware blend using current
-          // framebuffer pixel as 2nd target.
-          const uint32_t under =
-              (obj_drawn[fb_off] != 0u) ? frame_buffer_[fb_off]
-                                        : ((fb_off < bg_base.size()) ? bg_base[fb_off] : frame_buffer_[fb_off]);
-          const uint8_t sr = static_cast<uint8_t>((obj_px >> 16) & 0xFFu);
-          const uint8_t sg = static_cast<uint8_t>((obj_px >> 8) & 0xFFu);
-          const uint8_t sb = static_cast<uint8_t>(obj_px & 0xFFu);
-          const uint8_t ur = static_cast<uint8_t>((under >> 16) & 0xFFu);
-          const uint8_t ug = static_cast<uint8_t>((under >> 8) & 0xFFu);
-          const uint8_t ub = static_cast<uint8_t>(under & 0xFFu);
-          const uint8_t rr = ClampToByteLocal(static_cast<int>((sr * eva + ur * evb) / 16u));
-          const uint8_t rg = ClampToByteLocal(static_cast<int>((sg * eva + ug * evb) / 16u));
-          const uint8_t rb = ClampToByteLocal(static_cast<int>((sb * eva + ub * evb) / 16u));
-          obj_px = 0xFF000000u | (static_cast<uint32_t>(rr) << 16) |
-                   (static_cast<uint32_t>(rg) << 8) | rb;
-        }
         frame_buffer_[fb_off] = obj_px;
         bg_priority[fb_off] = obj_priority;
         obj_drawn[fb_off] = 1u;
