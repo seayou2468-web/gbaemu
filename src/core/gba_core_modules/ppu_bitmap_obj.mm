@@ -483,7 +483,8 @@ void GBACore::RenderSprites() {
   const size_t obj_chr_base = bitmap_mode ? 0x14000u : 0x10000u;
 
   auto palette_color = [&](uint16_t idx) -> uint32_t {
-    const size_t off = static_cast<size_t>((idx & 0x1FFu) * 2u);
+    // OBJ palettes live in palette RAM entries 256..511.
+    const size_t off = static_cast<size_t>(((idx & 0xFFu) + 0x100u) * 2u);
     if (off + 1 >= palette_ram_.size()) return 0xFF000000u;
     const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
                          static_cast<uint16_t>(palette_ram_[off + 1] << 8);
