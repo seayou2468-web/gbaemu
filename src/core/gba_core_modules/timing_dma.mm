@@ -187,6 +187,15 @@ void GBACore::StepDma() {
       }
       src_cur = static_cast<uint32_t>(static_cast<int64_t>(src_cur) + src_step);
       dst_cur = static_cast<uint32_t>(static_cast<int64_t>(dst_cur) + dst_step);
+      src_cur &= addr_mask;
+      dst_cur &= addr_mask;
+      if (word32) {
+        src_cur &= ~3u;
+        dst_cur &= ~3u;
+      } else {
+        src_cur &= ~1u;
+        dst_cur &= ~1u;
+      }
     }
 
     const bool repeat = (cnt_h & (1u << 9)) != 0;

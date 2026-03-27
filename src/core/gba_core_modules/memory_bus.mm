@@ -620,6 +620,10 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
         if (((value >> 7) & 0x3u) == 3u) {
           value = static_cast<uint16_t>(value & ~(0x3u << 7));
         }
+        // Dest addr control=3 is only valid on DMA3; normalize others.
+        if (ch < 3u && ((value >> 5) & 0x3u) == 3u) {
+          value = static_cast<uint16_t>(value & ~(0x3u << 5));
+        }
       }
       // Source/Destination high halfword address masks.
       if (reg == 2u || reg == 6u) {
