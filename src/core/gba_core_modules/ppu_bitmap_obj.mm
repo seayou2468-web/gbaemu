@@ -241,14 +241,6 @@ void GBACore::RenderMode4Frame() {
       }
       const size_t off = page_base + static_cast<size_t>(sy * kScreenWidth + sx);
       const uint8_t index = (off < vram_.size()) ? vram_[off] : 0;
-      if (index == 0u) {
-        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
-        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
-        bg_layer[fb_off] = kLayerBackdrop;
-        second_color[fb_off] = backdrop;
-        second_layer[fb_off] = kLayerBackdrop;
-        continue;
-      }
       frame_buffer_[fb_off] = palette_color(index);
       bg_priority[fb_off] = bg2_priority;
       bg_layer[fb_off] = kLayerBg2;

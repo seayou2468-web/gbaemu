@@ -32,6 +32,12 @@ void GBACore::RenderMode0Frame() {
     *out_idx = 0;
     *out_opaque = false;
     const uint16_t bgcnt = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2));
+    const bool mosaic = (bgcnt & (1u << 6)) != 0;
+    const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
+    const int mos_h = static_cast<int>((mosaic_reg & 0xFu) + 1u);
+    const int mos_v = static_cast<int>(((mosaic_reg >> 4) & 0xFu) + 1u);
+    const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
+    const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
     const uint32_t char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
     const uint32_t screen_base = ((bgcnt >> 8) & 0x1Fu) * 2u * 1024u;
     const bool color_256 = (bgcnt & (1u << 7)) != 0;
@@ -41,8 +47,8 @@ void GBACore::RenderMode0Frame() {
     const uint16_t hofs = ReadIO16(static_cast<uint32_t>(0x04000010u + bg * 4));
     const uint16_t vofs = ReadIO16(static_cast<uint32_t>(0x04000012u + bg * 4));
 
-    const int sx = (x + hofs) & (map_w * 8 - 1);
-    const int sy = (y + vofs) & (map_h * 8 - 1);
+    const int sx = (sample_x + hofs) & (map_w * 8 - 1);
+    const int sy = (sample_y + vofs) & (map_h * 8 - 1);
     const int tile_x = sx / 8;
     const int tile_y = sy / 8;
     const int pixel_x = sx & 7;
@@ -171,6 +177,12 @@ void GBACore::RenderMode1Frame() {
     *out_idx = 0;
     *out_opaque = false;
     const uint16_t bgcnt = ReadIO16(static_cast<uint32_t>(0x04000008u + bg * 2));
+    const bool mosaic = (bgcnt & (1u << 6)) != 0;
+    const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
+    const int mos_h = static_cast<int>((mosaic_reg & 0xFu) + 1u);
+    const int mos_v = static_cast<int>(((mosaic_reg >> 4) & 0xFu) + 1u);
+    const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
+    const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
     const uint32_t char_base = ((bgcnt >> 2) & 0x3u) * 16u * 1024u;
     const uint32_t screen_base = ((bgcnt >> 8) & 0x1Fu) * 2u * 1024u;
     const bool color_256 = (bgcnt & (1u << 7)) != 0;
@@ -180,8 +192,8 @@ void GBACore::RenderMode1Frame() {
     const uint16_t hofs = ReadIO16(static_cast<uint32_t>(0x04000010u + bg * 4));
     const uint16_t vofs = ReadIO16(static_cast<uint32_t>(0x04000012u + bg * 4));
 
-    const int sx = (x + hofs) & (map_w * 8 - 1);
-    const int sy = (y + vofs) & (map_h * 8 - 1);
+    const int sx = (sample_x + hofs) & (map_w * 8 - 1);
+    const int sy = (sample_y + vofs) & (map_h * 8 - 1);
     const int tile_x = sx / 8;
     const int tile_y = sy / 8;
     const int pixel_x = sx & 7;
