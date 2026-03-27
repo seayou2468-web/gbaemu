@@ -500,7 +500,7 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   // DISPSTAT: bits 0-2 are status (read-only), bits 3-5/8-15 writable.
   if (addr == 0x04000004u) {
     const uint16_t old = ReadIO16(addr);
-    value = static_cast<uint16_t>((value & 0xFFF8u) | (old & 0x0007u));
+    value = static_cast<uint16_t>((value & 0xFF38u) | (old & 0x0007u));
   }
   // VCOUNT is read-only.
   if (addr == 0x04000006u) {
@@ -548,6 +548,10 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
         const uint16_t old = ReadIO16(addr);
         // Timer control uses bits 0-2,6-7.
         value = static_cast<uint16_t>(value & 0x00C7u);
+        if (tidx == 0u) {
+          // Timer0 cannot use count-up mode.
+          value = static_cast<uint16_t>(value & ~0x0004u);
+        }
         io_regs_[off] = static_cast<uint8_t>(value & 0xFF);
         io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
         const bool was_enable = (old & 0x0080u) != 0;
@@ -572,6 +576,41 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
           timers_[tidx].counter = value;
         }
         return;
+      }
+    }
+  }
+  // DMA register writable masks.
+  if (addr >= 0x040000B0u && addr <= 0x040000DEu) {
+    const uint32_t rel = addr - 0x040000B0u;
+    const uint32_t ch = rel / 12u;
+    const uint32_t reg = rel % 12u;
+    if (ch < 4u) {
+      // DMACNT_L: 14-bit for DMA0-2, 16-bit for DMA3.
+      if (reg == 8u) {
+        if (ch < 3u) value = static_cast<uint16_t>(value & 0x3FFFu);
+      }
+      // DMACNT_H: writable control bits only.
+      if (reg == 10u) {
+        uint16_t mask = 0xF7E0u;  // bits 5-15 (bit 11 unused for ch0-2)
+        if (ch == 3u) {
+          mask = 0xFFE0u;  // include gamepak DRQ bit11 on DMA3.
+        }
+        value = static_cast<uint16_t>(value & mask);
+        // DMA0 doesn't support start timing=3 (special).
+        if (ch == 0u && ((value >> 12) & 0x3u) == 3u) {
+          value = static_cast<uint16_t>(value & ~(0x3u << 12));
+        }
+        // Prohibited source addr control=3 behaves like increment.
+        if (((value >> 7) & 0x3u) == 3u) {
+          value = static_cast<uint16_t>(value & ~(0x3u << 7));
+        }
+      }
+      // Source/Destination high halfword address masks.
+      if (reg == 2u || reg == 6u) {
+        // Valid address bits are within 0x0FFFFFFF for DMA1-3 and
+        // 0x07FFFFFF for DMA0.
+        const uint16_t high_mask = (ch == 0u) ? 0x07FFu : 0x0FFFu;
+        value = static_cast<uint16_t>(value & high_mask);
       }
     }
   }

@@ -119,8 +119,8 @@ void GBACore::StepDma() {
   dma_was_in_hblank_ = in_hblank;
   for (int ch = 0; ch < 4; ++ch) {
     const uint32_t base = static_cast<uint32_t>(0x040000B0u + ch * 12u);
-    const uint32_t src = Read32(base + 0u);
-    const uint32_t dst = Read32(base + 4u);
+    uint32_t src = Read32(base + 0u);
+    uint32_t dst = Read32(base + 4u);
     const uint16_t cnt_l = ReadIO16(base + 8u);
     const uint16_t cnt_h = ReadIO16(base + 10u);
     if ((cnt_h & 0x8000u) == 0) continue;
@@ -143,6 +143,11 @@ void GBACore::StepDma() {
     }
     if (!fire_now) continue;
 
+    // Channel-specific address bus width.
+    const uint32_t addr_mask = (ch == 0) ? 0x07FFFFFFu : 0x0FFFFFFFu;
+    src &= addr_mask;
+    dst &= addr_mask;
+
     bool word32 = (cnt_h & (1u << 10)) != 0;
     uint32_t count = cnt_l;
     if (count == 0) count = (ch == 3) ? 0x10000u : 0x4000u;
@@ -153,7 +158,8 @@ void GBACore::StepDma() {
     }
 
     int dst_ctl = (cnt_h >> 5) & 0x3;
-    const int src_ctl = (cnt_h >> 7) & 0x3;
+    int src_ctl = (cnt_h >> 7) & 0x3;
+    if (src_ctl == 3) src_ctl = 0;  // Prohibited, treat as increment.
     if (start_timing == 3u) dst_ctl = 2;  // fixed destination (FIFO register)
     const int step = word32 ? 4 : 2;
     int dst_step = step;
@@ -165,6 +171,13 @@ void GBACore::StepDma() {
 
     uint32_t src_cur = src;
     uint32_t dst_cur = dst;
+    if (word32) {
+      src_cur &= ~3u;
+      dst_cur &= ~3u;
+    } else {
+      src_cur &= ~1u;
+      dst_cur &= ~1u;
+    }
     for (uint32_t n = 0; n < count; ++n) {
       if (word32) {
         Write32(dst_cur, Read32(src_cur));
