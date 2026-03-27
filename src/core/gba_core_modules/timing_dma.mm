@@ -4,6 +4,19 @@ namespace gba {
 
 void GBACore::StepPpu(uint32_t cycles) {
   constexpr uint32_t kHBlankStartCycle = mgba_compat::kVideoHDrawCycles;
+  auto update_vcount_match = [&](uint16_t* dispstat, uint16_t vcount) {
+    const uint16_t vcount_compare = static_cast<uint16_t>((*dispstat >> 8) & 0x00FFu);
+    const bool had_match = (*dispstat & 0x0004u) != 0;
+    const bool match = (vcount == vcount_compare);
+    if (match) {
+      *dispstat = static_cast<uint16_t>(*dispstat | 0x0004u);
+      if (!had_match && (*dispstat & (1u << 5))) {
+        RaiseInterrupt(1u << 2);  // VCount IRQ
+      }
+    } else {
+      *dispstat = static_cast<uint16_t>(*dispstat & ~0x0004u);
+    }
+  };
   auto write_io_raw16 = [&](uint32_t addr, uint16_t value) {
     const size_t off = static_cast<size_t>(addr - 0x04000000u);
     if (off + 1 >= io_regs_.size()) return;
@@ -14,9 +27,9 @@ void GBACore::StepPpu(uint32_t cycles) {
   while (remaining > 0) {
     uint16_t dispstat = ReadIO16(0x04000004u);
     const bool in_hblank = (dispstat & 0x0002u) != 0;
-    const uint32_t boundary = in_hblank ? kCyclesPerScanline : kHBlankStartCycle;
-    const uint32_t until_boundary = (ppu_cycle_accum_ < boundary) ? (boundary - ppu_cycle_accum_) : 0u;
-    const uint32_t advance = std::min<uint32_t>(remaining, std::max<uint32_t>(1u, until_boundary));
+    const uint32_t next_hblank = in_hblank ? kCyclesPerScanline : kHBlankStartCycle;
+    const uint32_t until_boundary = (ppu_cycle_accum_ < next_hblank) ? (next_hblank - ppu_cycle_accum_) : 1u;
+    const uint32_t advance = std::min<uint32_t>(remaining, until_boundary);
     ppu_cycle_accum_ += advance;
     remaining -= advance;
 
@@ -48,17 +61,7 @@ void GBACore::StepPpu(uint32_t cycles) {
       } else {
         dispstat = static_cast<uint16_t>(dispstat & ~0x0001u);
       }
-
-      const uint16_t vcount_compare = static_cast<uint16_t>((dispstat >> 8) & 0x00FFu);
-      const bool vcount_match = (vcount == vcount_compare);
-      if (vcount_match) {
-        if ((dispstat & 0x0004u) == 0u && (dispstat & (1u << 5))) {
-          RaiseInterrupt(1u << 2);  // VCount IRQ
-        }
-        dispstat = static_cast<uint16_t>(dispstat | 0x0004u);
-      } else {
-        dispstat = static_cast<uint16_t>(dispstat & ~0x0004u);
-      }
+      update_vcount_match(&dispstat, vcount);
 
       // New scanline starts outside HBlank.
       dispstat = static_cast<uint16_t>(dispstat & ~0x0002u);
