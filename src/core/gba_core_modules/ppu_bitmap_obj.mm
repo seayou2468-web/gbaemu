@@ -467,6 +467,8 @@ void GBACore::RenderSprites() {
   auto& bg_priority = BgPriorityBuffer();
   EnsureObjDrawnMaskBufferSize();
   auto& obj_drawn = ObjDrawnMaskBuffer();
+  EnsureObjSemiTransMaskBufferSize();
+  auto& obj_semitrans = ObjSemiTransMaskBuffer();
   auto& bg_layer = BgLayerBuffer();
   auto& bg_base = BgBaseColorBuffer();
 
@@ -615,6 +617,7 @@ void GBACore::RenderSprites() {
             frame_buffer_[fb_off] = obj_px;
             bg_priority[fb_off] = obj_priority;
             obj_drawn[fb_off] = 1u;
+            obj_semitrans[fb_off] = 1u;
             continue;
           }
           // Semi-transparent OBJ: approximate hardware blend using current
@@ -637,6 +640,7 @@ void GBACore::RenderSprites() {
         frame_buffer_[fb_off] = obj_px;
         bg_priority[fb_off] = obj_priority;
         obj_drawn[fb_off] = 1u;
+        if (obj_mode == 1u) obj_semitrans[fb_off] = 1u;
       }
     }
   }

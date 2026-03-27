@@ -29,6 +29,7 @@ constexpr uint8_t kLayerBackdrop = 4;
 inline std::vector<uint8_t> g_bg_priority_buffer;
 inline std::vector<uint8_t> g_obj_window_mask_buffer;
 inline std::vector<uint8_t> g_obj_drawn_mask_buffer;
+inline std::vector<uint8_t> g_obj_semitrans_mask_buffer;
 inline std::vector<uint8_t> g_bg_layer_buffer;
 inline std::vector<uint32_t> g_bg_base_color_buffer;
 inline std::vector<uint32_t> g_bg_second_color_buffer;
@@ -52,6 +53,10 @@ std::vector<uint8_t>& ObjWindowMaskBuffer() {
 
 std::vector<uint8_t>& ObjDrawnMaskBuffer() {
   return g_obj_drawn_mask_buffer;
+}
+
+std::vector<uint8_t>& ObjSemiTransMaskBuffer() {
+  return g_obj_semitrans_mask_buffer;
 }
 
 std::vector<uint8_t>& BgLayerBuffer() {
@@ -85,6 +90,8 @@ void EnsureBgBaseColorBufferSize() {
   const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
   if (buffer.size() != required) {
     buffer.assign(required, 0xFF000000u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0xFF000000u);
   }
 }
 
@@ -106,6 +113,16 @@ void EnsureBgSecondBuffersSize() {
 
 void EnsureObjDrawnMaskBufferSize() {
   auto& buffer = ObjDrawnMaskBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0u);
+  }
+}
+
+void EnsureObjSemiTransMaskBufferSize() {
+  auto& buffer = ObjSemiTransMaskBuffer();
   const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
   if (buffer.size() != required) {
     buffer.assign(required, 0u);

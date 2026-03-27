@@ -27,6 +27,7 @@ void GBACore::ApplyColorEffects() {
   auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   auto& obj_drawn = ObjDrawnMaskBuffer();
+  auto& obj_semitrans = ObjSemiTransMaskBuffer();
   auto& bg_base = BgBaseColorBuffer();
   auto& bg_second = BgSecondColorBuffer();
   auto& bg_second_layer = BgSecondLayerBuffer();
@@ -37,15 +38,17 @@ void GBACore::ApplyColorEffects() {
           ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
       if ((window_control & (1u << 5)) == 0) continue;  // color effects masked by window
       const bool top_is_obj = (fb_off < obj_drawn.size()) && (obj_drawn[fb_off] != 0u);
+      const bool top_is_semitrans_obj =
+          top_is_obj && (fb_off < obj_semitrans.size()) && (obj_semitrans[fb_off] != 0u);
       const uint8_t top_layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
       const uint16_t top_mask = LayerToBlendMask(top_layer, top_is_obj);
-      if ((bldcnt & top_mask) == 0) continue;  // top pixel is not 1st target
+      if (!top_is_semitrans_obj && (bldcnt & top_mask) == 0) continue;  // top pixel is not 1st target
 
       uint32_t& px = frame_buffer_[fb_off];
       uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
       uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
       uint8_t b = static_cast<uint8_t>(px & 0xFFu);
-      if (mode == 1u) {
+      if (top_is_semitrans_obj || mode == 1u) {
         uint8_t sr = back_r;
         uint8_t sg = back_g;
         uint8_t sb = back_b;
@@ -100,6 +103,7 @@ void GBACore::RenderDebugFrame() {
     return;
   }
   EnsureObjDrawnMaskBufferSize();
+  EnsureObjSemiTransMaskBufferSize();
   EnsureBgBaseColorBufferSize();
   EnsureBgSecondBuffersSize();
   BuildObjWindowMask();

@@ -141,7 +141,6 @@ void GBACore::RenderMode0Frame() {
       bg_priority[off] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
       bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
-      bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
       second_color[off] = have_second ? palette_color(second_idx) : backdrop;
       second_layer[off] = have_second ? second_bg_layer : kLayerBackdrop;
     }
@@ -371,7 +370,6 @@ void GBACore::RenderMode1Frame() {
       frame_buffer_[off] = have_bg ? palette_color(best_idx) : backdrop;
       bg_priority[off] =
           static_cast<uint8_t>(have_bg ? best_prio : kBackdropPriority);
-      bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
       bg_layer[off] = have_bg ? best_bg_layer : kLayerBackdrop;
       second_color[off] = have_second ? palette_color(second_idx) : backdrop;
       second_layer[off] = have_second ? second_bg_layer : kLayerBackdrop;
