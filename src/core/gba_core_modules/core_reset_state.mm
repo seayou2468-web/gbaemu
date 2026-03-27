@@ -78,6 +78,16 @@ void GBACore::Reset() {
   cpu_.regs[15] = use_real_bios_boot ? 0x00000000u : 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
+  // Affine defaults: unit matrix (hardware boot state expectation for many
+  // direct-boot test ROMs that don't initialize these explicitly).
+  WriteIO16(0x04000020u, 0x0100u);  // BG2PA
+  WriteIO16(0x04000022u, 0x0000u);  // BG2PB
+  WriteIO16(0x04000024u, 0x0000u);  // BG2PC
+  WriteIO16(0x04000026u, 0x0100u);  // BG2PD
+  WriteIO16(0x04000030u, 0x0100u);  // BG3PA
+  WriteIO16(0x04000032u, 0x0000u);  // BG3PB
+  WriteIO16(0x04000034u, 0x0000u);  // BG3PC
+  WriteIO16(0x04000036u, 0x0100u);  // BG3PD
   if (use_real_bios_boot) {
     // BIOS flow starts from line 0 baseline.
     WriteIO16(0x04000006u, 0x0000u);
