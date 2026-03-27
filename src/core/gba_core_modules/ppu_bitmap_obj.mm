@@ -95,6 +95,9 @@ void GBACore::RenderMode3Frame() {
   }
 
   for (int y = 0; y < kScreenHeight; ++y) {
+    const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
+    const int64_t line_base_x = static_cast<int64_t>(refx) + static_cast<int64_t>(pb) * sample_y;
+    const int64_t line_base_y = static_cast<int64_t>(refy) + static_cast<int64_t>(pd) * sample_y;
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
@@ -106,11 +109,8 @@ void GBACore::RenderMode3Frame() {
         continue;
       }
       const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
-      const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
-      const int64_t tex_x_fp =
-          static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * sample_x + static_cast<int64_t>(pb) * sample_y;
-      const int64_t tex_y_fp =
-          static_cast<int64_t>(refy) + static_cast<int64_t>(pc) * sample_x + static_cast<int64_t>(pd) * sample_y;
+      const int64_t tex_x_fp = line_base_x + static_cast<int64_t>(pa) * sample_x;
+      const int64_t tex_y_fp = line_base_y + static_cast<int64_t>(pc) * sample_x;
       int sx = static_cast<int>(tex_x_fp >> 8);
       int sy = static_cast<int>(tex_y_fp >> 8);
       if (wrap) {
