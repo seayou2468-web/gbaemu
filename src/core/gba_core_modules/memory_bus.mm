@@ -521,6 +521,63 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (addr == 0x04000006u) {
     return;
   }
+  // DISPCNT: CGB mode bit (3) is read-only 0 on GBA.
+  if (addr == 0x04000000u) {
+    value = static_cast<uint16_t>(value & ~0x0008u);
+  }
+  // BGxCNT masks.
+  if (addr >= 0x04000008u && addr <= 0x0400000Eu && (addr & 1u) == 0u) {
+    const uint32_t bg = (addr - 0x04000008u) / 2u;
+    value = static_cast<uint16_t>(value & 0xDFFFu);  // bit13 handled below.
+    if (bg < 2u) {
+      // BG0/BG1 do not use wraparound bit13.
+      value = static_cast<uint16_t>(value & ~(1u << 13));
+    }
+  }
+  // BGxHOFS/BGxVOFS are 9-bit.
+  if (addr >= 0x04000010u && addr <= 0x0400001Eu && (addr & 1u) == 0u) {
+    value = static_cast<uint16_t>(value & 0x01FFu);
+  }
+  // BG2/3 affine parameters (PA/PB/PC/PD) are signed 16-bit: full writable.
+  // BG2X/BG2Y/BG3X/BG3Y reference points are 28-bit signed over 32-bit regs.
+  if ((addr >= 0x04000028u && addr <= 0x0400003Eu)) {
+    const uint32_t rel = addr - 0x04000028u;
+    const uint32_t lane = rel % 8u;
+    if (lane == 2u || lane == 6u) {
+      // High halfword only uses low 12 bits (bits 16..27 overall).
+      value = static_cast<uint16_t>(value & 0x0FFFu);
+    }
+  }
+  // Window coordinates are 8-bit start/end fields.
+  if (addr >= 0x04000040u && addr <= 0x04000046u && (addr & 1u) == 0u) {
+    const uint16_t lo = static_cast<uint16_t>(value & 0x00FFu);
+    const uint16_t hi = static_cast<uint16_t>((value >> 8) & 0x00FFu);
+    value = static_cast<uint16_t>(lo | (hi << 8));
+  }
+  // WININ/WINOUT: only lower 6 bits of each byte are used.
+  if (addr == 0x04000048u || addr == 0x0400004Au) {
+    const uint16_t lo = static_cast<uint16_t>(value & 0x003Fu);
+    const uint16_t hi = static_cast<uint16_t>((value >> 8) & 0x003Fu);
+    value = static_cast<uint16_t>(lo | (hi << 8));
+  }
+  // MOSAIC: each nibble is 4-bit size field.
+  if (addr == 0x0400004Cu) {
+    value = static_cast<uint16_t>(value & 0xFFFFu);
+  }
+  // BLDCNT: valid bits are 0-5, 6-7(mode), 8-13.
+  if (addr == 0x04000050u) {
+    value = static_cast<uint16_t>(value & 0x3FFFu);
+  }
+  // BLDALPHA: EVA/EVB are 5-bit.
+  if (addr == 0x04000052u) {
+    const uint16_t eva = static_cast<uint16_t>(value & 0x001Fu);
+    const uint16_t evb = static_cast<uint16_t>((value >> 8) & 0x001Fu);
+    value = static_cast<uint16_t>(eva | (evb << 8));
+  }
+  // BLDY: EVY is 5-bit.
+  if (addr == 0x04000054u) {
+    value = static_cast<uint16_t>(value & 0x001Fu);
+  }
   // SOUNDCNT_X: only bit7 is writable; bits0-3 are read-only channel-active flags.
   if (addr == 0x04000084u) {
     const uint16_t old = ReadIO16(addr);
