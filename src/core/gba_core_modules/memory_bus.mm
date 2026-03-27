@@ -537,6 +537,44 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       value = static_cast<uint16_t>(value & ~(1u << 15));
     }
   }
+  // Timer registers side effects.
+  if (addr >= 0x04000100u && addr <= 0x0400010Eu) {
+    const uint32_t rel = addr - 0x04000100u;
+    const uint32_t tidx = rel / 4u;
+    const bool is_low = (rel % 4u) == 0u;
+    const bool is_high = (rel % 4u) == 2u;
+    if (tidx < timers_.size()) {
+      if (is_high) {
+        const uint16_t old = ReadIO16(addr);
+        // Timer control uses bits 0-2,6-7.
+        value = static_cast<uint16_t>(value & 0x00C7u);
+        io_regs_[off] = static_cast<uint8_t>(value & 0xFF);
+        io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        const bool was_enable = (old & 0x0080u) != 0;
+        const bool now_enable = (value & 0x0080u) != 0;
+        timers_[tidx].control = value;
+        if (!was_enable && now_enable) {
+          // Enabling a timer reloads counter from TMxCNT_L and resets prescaler.
+          const uint16_t reload = ReadIO16(static_cast<uint32_t>(0x04000100u + tidx * 4u));
+          timers_[tidx].counter = reload;
+          timers_[tidx].prescaler_accum = 0;
+          io_regs_[0x100u + tidx * 4u] = static_cast<uint8_t>(reload & 0xFFu);
+          io_regs_[0x101u + tidx * 4u] = static_cast<uint8_t>((reload >> 8) & 0xFFu);
+        }
+        return;
+      }
+      if (is_low) {
+        io_regs_[off] = static_cast<uint8_t>(value & 0xFF);
+        io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        // When timer is stopped, writes to reload are reflected in current count.
+        const uint16_t ctrl = ReadIO16(static_cast<uint32_t>(0x04000102u + tidx * 4u));
+        if ((ctrl & 0x0080u) == 0) {
+          timers_[tidx].counter = value;
+        }
+        return;
+      }
+    }
+  }
   io_regs_[off] = static_cast<uint8_t>(value & 0xFF);
   io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
 }
