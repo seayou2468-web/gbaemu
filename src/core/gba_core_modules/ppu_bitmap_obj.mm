@@ -462,8 +462,6 @@ void GBACore::RenderSprites() {
   const uint16_t bldalpha = ReadIO16(0x04000052u);
   const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
   const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
-  const bool obj_is_1st_target = (bldcnt & (1u << 4)) != 0;
-  const bool any_2nd_target = ((bldcnt >> 8) & 0x3Fu) != 0;
 
   EnsureBgPriorityBufferSize();
   auto& bg_priority = BgPriorityBuffer();
@@ -611,7 +609,9 @@ void GBACore::RenderSprites() {
             const uint16_t layer_mask = static_cast<uint16_t>(1u << (8u + std::min<uint8_t>(layer, 5u)));
             second_target_ok = (bldcnt & layer_mask) != 0;
           }
-          if (!(effects_enabled && obj_is_1st_target && any_2nd_target && second_target_ok)) {
+          // Semi-transparent OBJ uses alpha blending against a valid 2nd target.
+          // Unlike regular BLDCNT mode selection, this path is driven by OBJ mode.
+          if (!(effects_enabled && second_target_ok)) {
             frame_buffer_[fb_off] = obj_px;
             bg_priority[fb_off] = obj_priority;
             obj_drawn[fb_off] = 1u;

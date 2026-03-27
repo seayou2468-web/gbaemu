@@ -21,9 +21,21 @@ constexpr uint8_t kLayerBg2 = 2;
 constexpr uint8_t kLayerBg3 = 3;
 constexpr uint8_t kLayerBackdrop = 4;
 
+// NOTE:
+// This file is text-included from multiple translation units. Function-local
+// statics here would create one buffer per TU, breaking compositor state
+// sharing between BG/OBJ/effects passes. Use C++17 inline variables so all TUs
+// share exactly one instance program-wide.
+inline std::vector<uint8_t> g_bg_priority_buffer;
+inline std::vector<uint8_t> g_obj_window_mask_buffer;
+inline std::vector<uint8_t> g_obj_drawn_mask_buffer;
+inline std::vector<uint8_t> g_bg_layer_buffer;
+inline std::vector<uint32_t> g_bg_base_color_buffer;
+inline std::vector<uint32_t> g_bg_second_color_buffer;
+inline std::vector<uint8_t> g_bg_second_layer_buffer;
+
 std::vector<uint8_t>& BgPriorityBuffer() {
-  static std::vector<uint8_t> buffer;
-  return buffer;
+  return g_bg_priority_buffer;
 }
 
 void EnsureBgPriorityBufferSize() {
@@ -35,33 +47,27 @@ void EnsureBgPriorityBufferSize() {
 }
 
 std::vector<uint8_t>& ObjWindowMaskBuffer() {
-  static std::vector<uint8_t> buffer;
-  return buffer;
+  return g_obj_window_mask_buffer;
 }
 
 std::vector<uint8_t>& ObjDrawnMaskBuffer() {
-  static std::vector<uint8_t> buffer;
-  return buffer;
+  return g_obj_drawn_mask_buffer;
 }
 
 std::vector<uint8_t>& BgLayerBuffer() {
-  static std::vector<uint8_t> buffer;
-  return buffer;
+  return g_bg_layer_buffer;
 }
 
 std::vector<uint32_t>& BgBaseColorBuffer() {
-  static std::vector<uint32_t> buffer;
-  return buffer;
+  return g_bg_base_color_buffer;
 }
 
 std::vector<uint32_t>& BgSecondColorBuffer() {
-  static std::vector<uint32_t> buffer;
-  return buffer;
+  return g_bg_second_color_buffer;
 }
 
 std::vector<uint8_t>& BgSecondLayerBuffer() {
-  static std::vector<uint8_t> buffer;
-  return buffer;
+  return g_bg_second_layer_buffer;
 }
 
 void EnsureBgLayerBufferSize() {
