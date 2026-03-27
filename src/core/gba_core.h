@@ -268,6 +268,11 @@ class GBACore {
   CpuState cpu_{};
   GameplayState gameplay_state_{};
   uint64_t frame_count_ = 0;
+  std::array<int32_t, mgba_compat::kVideoTotalLines> bg2_refx_line_{};
+  std::array<int32_t, mgba_compat::kVideoTotalLines> bg2_refy_line_{};
+  std::array<int32_t, mgba_compat::kVideoTotalLines> bg3_refx_line_{};
+  std::array<int32_t, mgba_compat::kVideoTotalLines> bg3_refy_line_{};
+  bool affine_line_refs_valid_ = false;
   uint64_t executed_cycles_ = 0;
   uint16_t keys_pressed_mask_ = 0;
   uint16_t previous_keys_mask_ = 0;

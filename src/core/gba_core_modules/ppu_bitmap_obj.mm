@@ -82,8 +82,8 @@ void GBACore::RenderMode3Frame() {
     if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
     return static_cast<int32_t>(raw28);
   };
-  const int32_t refx = read_s32_le(0x04000028u);
-  const int32_t refy = read_s32_le(0x0400002Cu);
+  const int32_t reg_refx = read_s32_le(0x04000028u);
+  const int32_t reg_refy = read_s32_le(0x0400002Cu);
 
   if (!bg2_enabled) {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
@@ -95,6 +95,10 @@ void GBACore::RenderMode3Frame() {
   }
 
   for (int y = 0; y < kScreenHeight; ++y) {
+    const int32_t refx = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
+      ? bg2_refx_line_[static_cast<size_t>(y)] : reg_refx;
+    const int32_t refy = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
+      ? bg2_refy_line_[static_cast<size_t>(y)] : reg_refy;
     const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
     const int64_t line_base_x = static_cast<int64_t>(refx) + static_cast<int64_t>(pb) * sample_y;
     const int64_t line_base_y = static_cast<int64_t>(refy) + static_cast<int64_t>(pd) * sample_y;
@@ -185,8 +189,8 @@ void GBACore::RenderMode4Frame() {
     if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
     return static_cast<int32_t>(raw28);
   };
-  const int32_t refx = read_s32_le(0x04000028u);
-  const int32_t refy = read_s32_le(0x0400002Cu);
+  const int32_t reg_refx = read_s32_le(0x04000028u);
+  const int32_t reg_refy = read_s32_le(0x0400002Cu);
 
   const uint16_t backdrop_bgr = ReadBackdropBgr(palette_ram_);
   const uint32_t backdrop = Bgr555ToRgba8888(backdrop_bgr);
@@ -219,6 +223,10 @@ void GBACore::RenderMode4Frame() {
         second_layer[fb_off] = kLayerBackdrop;
         continue;
       }
+      const int32_t refx = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
+        ? bg2_refx_line_[static_cast<size_t>(y)] : reg_refx;
+      const int32_t refy = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
+        ? bg2_refy_line_[static_cast<size_t>(y)] : reg_refy;
       const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
       const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
       const int64_t tex_x_fp =
@@ -291,8 +299,8 @@ void GBACore::RenderMode5Frame() {
     if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
     return static_cast<int32_t>(raw28);
   };
-  const int32_t refx = read_s32_le(0x04000028u);
-  const int32_t refy = read_s32_le(0x0400002Cu);
+  const int32_t reg_refx = read_s32_le(0x04000028u);
+  const int32_t reg_refy = read_s32_le(0x0400002Cu);
 
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
   std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
@@ -308,6 +316,10 @@ void GBACore::RenderMode5Frame() {
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         continue;
       }
+      const int32_t refx = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
+        ? bg2_refx_line_[static_cast<size_t>(y)] : reg_refx;
+      const int32_t refy = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
+        ? bg2_refy_line_[static_cast<size_t>(y)] : reg_refy;
       const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
       const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
       const int64_t tex_x_fp =

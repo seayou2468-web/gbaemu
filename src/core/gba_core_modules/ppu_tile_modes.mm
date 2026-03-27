@@ -267,11 +267,15 @@ void GBACore::RenderMode1Frame() {
       if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
       return static_cast<int32_t>(raw28);
     };
-    const int32_t bg2x = read_s32_le(0x04000028u);
-    const int32_t bg2y = read_s32_le(0x0400002Cu);
+    const int32_t reg_bg2x = read_s32_le(0x04000028u);
+    const int32_t reg_bg2y = read_s32_le(0x0400002Cu);
 
     const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
     const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
+    const int32_t bg2x = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
+      ? bg2_refx_line_[static_cast<size_t>(y)] : reg_bg2x;
+    const int32_t bg2y = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
+      ? bg2_refy_line_[static_cast<size_t>(y)] : reg_bg2y;
     int64_t ref_x = static_cast<int64_t>(bg2x) +
                     static_cast<int64_t>(pa) * sample_x + static_cast<int64_t>(pb) * sample_y;
     int64_t ref_y = static_cast<int64_t>(bg2y) +
@@ -457,9 +461,14 @@ void GBACore::RenderMode2Frame() {
     st.pb = static_cast<int16_t>(ReadIO16(affine_base + 2u));
     st.pc = static_cast<int16_t>(ReadIO16(affine_base + 4u));
     st.pd = static_cast<int16_t>(ReadIO16(affine_base + 6u));
-    const uint32_t ref_base = (bg == 2) ? 0x04000028u : 0x04000038u;
-    st.refx = read_affine_ref28(ref_base);
-    st.refy = read_affine_ref28(ref_base + 4u);
+    if (affine_line_refs_valid_) {
+      st.refx = (bg == 2) ? bg2_refx_line_[0] : bg3_refx_line_[0];
+      st.refy = (bg == 2) ? bg2_refy_line_[0] : bg3_refy_line_[0];
+    } else {
+      const uint32_t ref_base = (bg == 2) ? 0x04000028u : 0x04000038u;
+      st.refx = read_affine_ref28(ref_base);
+      st.refy = read_affine_ref28(ref_base + 4u);
+    }
   }
 
   auto sample_affine_bg = [&](int bg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
@@ -469,9 +478,15 @@ void GBACore::RenderMode2Frame() {
     if (!st.enabled) return;
     const int sample_x = st.mosaic ? ((x / st.mos_h) * st.mos_h) : x;
     const int sample_y = st.mosaic ? ((y / st.mos_v) * st.mos_v) : y;
-    int64_t tex_x_fp = static_cast<int64_t>(st.refx) +
+    const int32_t base_refx = affine_line_refs_valid_
+      ? ((bg == 2) ? bg2_refx_line_[static_cast<size_t>(y)] : bg3_refx_line_[static_cast<size_t>(y)])
+      : st.refx;
+    const int32_t base_refy = affine_line_refs_valid_
+      ? ((bg == 2) ? bg2_refy_line_[static_cast<size_t>(y)] : bg3_refy_line_[static_cast<size_t>(y)])
+      : st.refy;
+    int64_t tex_x_fp = static_cast<int64_t>(base_refx) +
                        static_cast<int64_t>(st.pa) * sample_x + static_cast<int64_t>(st.pb) * sample_y;
-    int64_t tex_y_fp = static_cast<int64_t>(st.refy) +
+    int64_t tex_y_fp = static_cast<int64_t>(base_refy) +
                        static_cast<int64_t>(st.pc) * sample_x + static_cast<int64_t>(st.pd) * sample_y;
     int tx = static_cast<int>(tex_x_fp >> 8);
     int ty = static_cast<int>(tex_y_fp >> 8);

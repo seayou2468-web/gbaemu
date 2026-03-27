@@ -4,6 +4,24 @@ namespace gba {
 
 void GBACore::StepPpu(uint32_t cycles) {
   constexpr uint32_t kHBlankStartCycle = mgba_compat::kVideoHDrawCycles;
+  auto read_affine_ref28 = [&](uint32_t addr) -> int32_t {
+    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
+                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
+                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
+                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
+    uint32_t raw28 = v & 0x0FFFFFFFu;
+    if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
+    return static_cast<int32_t>(raw28);
+  };
+  auto capture_affine_refs_for_line = [&](uint16_t vcount) {
+    if (vcount >= mgba_compat::kVideoTotalLines) return;
+    const size_t li = static_cast<size_t>(vcount);
+    bg2_refx_line_[li] = read_affine_ref28(0x04000028u);
+    bg2_refy_line_[li] = read_affine_ref28(0x0400002Cu);
+    bg3_refx_line_[li] = read_affine_ref28(0x04000038u);
+    bg3_refy_line_[li] = read_affine_ref28(0x0400003Cu);
+    affine_line_refs_valid_ = true;
+  };
   auto update_vcount_match = [&](uint16_t* dispstat, uint16_t vcount) {
     const uint16_t vcount_compare = static_cast<uint16_t>((*dispstat >> 8) & 0x00FFu);
     const bool had_match = (*dispstat & 0x0004u) != 0;
@@ -27,6 +45,7 @@ void GBACore::StepPpu(uint32_t cycles) {
   while (remaining > 0) {
     uint16_t dispstat = ReadIO16(0x04000004u);
     const uint16_t cur_vcount = ReadIO16(0x04000006u);
+    capture_affine_refs_for_line(cur_vcount);
     const uint16_t dispstat_before_match = dispstat;
     update_vcount_match(&dispstat, cur_vcount);
     if (dispstat != dispstat_before_match) {
@@ -55,6 +74,7 @@ void GBACore::StepPpu(uint32_t cycles) {
       uint16_t vcount = ReadIO16(0x04000006u);
       vcount = static_cast<uint16_t>((vcount + 1u) % mgba_compat::kVideoTotalLines);
       write_io_raw16(0x04000006u, vcount);
+      capture_affine_refs_for_line(vcount);
 
       dispstat = ReadIO16(0x04000004u);
       const bool was_vblank = (dispstat & 0x0001u) != 0;

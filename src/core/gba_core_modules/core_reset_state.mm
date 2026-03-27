@@ -20,6 +20,11 @@ void GBACore::Reset() {
   std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
   ResetBackupControllerState();
   timers_ = {};
+  affine_line_refs_valid_ = false;
+  bg2_refx_line_.fill(0);
+  bg2_refy_line_.fill(0);
+  bg3_refx_line_.fill(0);
+  bg3_refy_line_.fill(0);
   dma_was_in_vblank_ = false;
   dma_was_in_hblank_ = false;
   dma_fifo_a_request_ = false;
