@@ -1,5 +1,5 @@
 #include "../gba_core.h"
-#include "./ppu_common.mm"
+// #include "./ppu_common.mm"
 
 namespace gba {
 
@@ -149,7 +149,7 @@ void GBACore::StepApu(uint32_t cycles) {
   };
   auto square_sample = [&](uint32_t* phase, uint16_t freq_reg, uint16_t duty_reg) -> int {
     const uint16_t n = static_cast<uint16_t>(freq_reg & 0x07FFu);
-    const uint32_t hz = (2048u > n) ? (131072u / std::max<uint16_t>(1u, static_cast<uint16_t>(2048u - n))) : 0u;
+    const uint32_t hz = (2048u > n) ? (16777216u / (2048u - n) / 128u) : 0u;
     *phase += hz * std::max<uint32_t>(1u, cycles);
     const int step = static_cast<int>((*phase / 1024u) & 7u);
     const int high = duty_high_steps(static_cast<uint16_t>(duty_reg >> 6));
@@ -185,7 +185,7 @@ void GBACore::StepApu(uint32_t cycles) {
       const uint16_t nr33 = ReadIO16(0x04000074u);
       const uint16_t nr34 = ReadIO16(0x04000075u);
       const uint16_t n = static_cast<uint16_t>(nr33 | ((nr34 & 0x7u) << 8));
-      const uint32_t hz = (2048u > n) ? (65536u / std::max<uint16_t>(1u, static_cast<uint16_t>(2048u - n))) : 0u;
+      const uint32_t hz = (2048u > n) ? (16777216u / (2048u - n) / 256u) : 0u;
       apu_phase_wave_ += hz * std::max<uint32_t>(1u, cycles);
       const bool two_bank_mode = (nr30 & (1u << 5)) != 0;
       const bool bank_select = (nr30 & (1u << 6)) != 0;
@@ -248,9 +248,8 @@ void GBACore::StepApu(uint32_t cycles) {
                          (fifo_b_right ? fifo_b_last_sample_ * fifo_b_gain : 0);
   const int fifo_left = (fifo_a_left ? fifo_a_last_sample_ * fifo_a_gain : 0) +
                         (fifo_b_left ? fifo_b_last_sample_ * fifo_b_gain : 0);
-  const int fifo_mix = (fifo_left + fifo_right) / 2;
-  const int mixed = psg_mix + fifo_mix;
-  audio_mix_level_ = static_cast<uint16_t>(ClampToByteLocal(mixed) & 0xFFu);
+  const int mixed = psg_mix + (fifo_left + fifo_right) / 4;
+  audio_mix_level_ = static_cast<uint16_t>(GBACore::ClampToByteLocal(mixed + 128) & 0xFFu);
   uint16_t status = 0x0080u;
   if (apu_ch1_active_) status |= 0x0001u;
   if (apu_ch2_active_) status |= 0x0002u;
@@ -338,7 +337,7 @@ void GBACore::ServiceInterruptIfNeeded() {
   const uint32_t irq_vector = Read32(0x03007FFCu);
   const bool vector_thumb = (irq_vector & 1u) != 0;
   const uint32_t vector_addr = irq_vector & ~1u;
-  const bool vector_valid = (vector_addr >= 0x08000000u && vector_addr <= 0x0DFFFFFFu);
+  const bool vector_valid = (vector_addr >= 0x02000000u && vector_addr <= 0x03FFFFFFu) || (vector_addr >= 0x08000000u && vector_addr <= 0x0DFFFFFFu);
   if (vector_valid) {
     EnterException(vector_addr, 0x12u, true, vector_thumb);
     return;

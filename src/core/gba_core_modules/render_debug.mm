@@ -1,5 +1,5 @@
 #include "../gba_core.h"
-#include "./ppu_common.mm"
+// #include "./ppu_common.mm"
 
 namespace gba {
 
@@ -21,67 +21,57 @@ void GBACore::ApplyColorEffects() {
   const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
   const uint32_t evy = std::min<uint32_t>(16u, bldy & 0x1Fu);
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
-  const uint8_t back_r = static_cast<uint8_t>((backdrop >> 16) & 0xFFu);
-  const uint8_t back_g = static_cast<uint8_t>((backdrop >> 8) & 0xFFu);
-  const uint8_t back_b = static_cast<uint8_t>(backdrop & 0xFFu);
+
   auto& bg_layer = BgLayerBuffer();
   auto& bg_priority = BgPriorityBuffer();
   auto& obj_drawn = ObjDrawnMaskBuffer();
   auto& bg_base = BgBaseColorBuffer();
   auto& bg_second = BgSecondColorBuffer();
   auto& bg_second_layer = BgSecondLayerBuffer();
+
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
-      const uint8_t window_control =
-          ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
-      if ((window_control & (1u << 5)) == 0) continue;  // color effects masked by window
-      const bool top_is_obj = (fb_off < obj_drawn.size()) && (obj_drawn[fb_off] != 0u);
-      const uint8_t top_layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
-      const uint16_t top_mask = LayerToBlendMask(top_layer, top_is_obj);
-      if ((bldcnt & top_mask) == 0) continue;  // top pixel is not 1st target
+      const uint8_t win_ctrl = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, obj_window_mask_buffer_, x, y);
+      if (!(win_ctrl & (1u << 5))) continue;
+
+      const bool top_is_obj = (obj_drawn[fb_off] != 0u);
+      const uint8_t top_layer = bg_layer[fb_off];
+      const uint16_t top_mask = top_is_obj ? (1u << 4) : (top_layer == 4 ? (1u << 5) : (1u << top_layer));
+
+      if (!(bldcnt & top_mask)) continue;
 
       uint32_t& px = frame_buffer_[fb_off];
-      uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
-      uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
-      uint8_t b = static_cast<uint8_t>(px & 0xFFu);
-      if (mode == 1u) {
-        uint8_t sr = back_r;
-        uint8_t sg = back_g;
-        uint8_t sb = back_b;
-        uint16_t second_mask = static_cast<uint16_t>(1u << (8 + 5));  // backdrop
-        if (top_is_obj && fb_off < bg_base.size() && fb_off < bg_priority.size() &&
-            bg_priority[fb_off] != kBackdropPriority) {
-          const uint8_t under_layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
-          second_mask = static_cast<uint16_t>(1u << (8u + std::min<uint8_t>(under_layer, 5u)));
-          const uint32_t under = bg_base[fb_off];
-          sr = static_cast<uint8_t>((under >> 16) & 0xFFu);
-          sg = static_cast<uint8_t>((under >> 8) & 0xFFu);
-          sb = static_cast<uint8_t>(under & 0xFFu);
-        } else if (!top_is_obj && fb_off < bg_second.size() && fb_off < bg_second_layer.size() &&
-                   bg_second_layer[fb_off] != kLayerBackdrop) {
-          const uint8_t under_layer = bg_second_layer[fb_off];
-          second_mask = static_cast<uint16_t>(1u << (8u + std::min<uint8_t>(under_layer, 5u)));
-          const uint32_t under = bg_second[fb_off];
-          sr = static_cast<uint8_t>((under >> 16) & 0xFFu);
-          sg = static_cast<uint8_t>((under >> 8) & 0xFFu);
-          sb = static_cast<uint8_t>(under & 0xFFu);
+      uint8_t r1 = (px >> 16) & 0xFF, g1 = (px >> 8) & 0xFF, b1 = px & 0xFF;
+
+      if (mode == 1u) { // Alpha blend
+        uint32_t under_px = backdrop;
+        uint16_t bot_mask = (1u << (8 + 5));
+        if (top_is_obj) {
+           if (bg_priority[fb_off] != 4) {
+             under_px = bg_base[fb_off];
+             bot_mask = (1u << (8 + bg_layer[fb_off]));
+           }
+        } else {
+           if (bg_second_layer[fb_off] != 4) {
+             under_px = bg_second[fb_off];
+             bot_mask = (1u << (8 + bg_second_layer[fb_off]));
+           }
         }
-        if ((bldcnt & second_mask) == 0) continue;
-        r = ClampToByteLocal(static_cast<int>((r * eva + sr * evb) / 16u));
-        g = ClampToByteLocal(static_cast<int>((g * eva + sg * evb) / 16u));
-        b = ClampToByteLocal(static_cast<int>((b * eva + sb * evb) / 16u));
-      } else if (mode == 2u) {  // brighten
-        r = ClampToByteLocal(static_cast<int>(r + ((255 - r) * evy) / 16u));
-        g = ClampToByteLocal(static_cast<int>(g + ((255 - g) * evy) / 16u));
-        b = ClampToByteLocal(static_cast<int>(b + ((255 - b) * evy) / 16u));
-      } else if (mode == 3u) {  // darken
-        r = ClampToByteLocal(static_cast<int>(r - (r * evy) / 16u));
-        g = ClampToByteLocal(static_cast<int>(g - (g * evy) / 16u));
-        b = ClampToByteLocal(static_cast<int>(b - (b * evy) / 16u));
+        if (!(bldcnt & bot_mask)) continue;
+        uint8_t r2 = (under_px >> 16) & 0xFF, g2 = (under_px >> 8) & 0xFF, b2 = under_px & 0xFF;
+        px = 0xFF000000u | (ClampToByteLocal((r1 * eva + r2 * evb) / 16) << 16) |
+                          (ClampToByteLocal((g1 * eva + g2 * evb) / 16) << 8) |
+                           ClampToByteLocal((b1 * eva + b2 * evb) / 16);
+      } else if (mode == 2u) { // Brighten
+        px = 0xFF000000u | (ClampToByteLocal(r1 + ((255 - r1) * evy) / 16) << 16) |
+                          (ClampToByteLocal(g1 + ((255 - g1) * evy) / 16) << 8) |
+                           ClampToByteLocal(b1 + ((255 - b1) * evy) / 16);
+      } else if (mode == 3u) { // Darken
+        px = 0xFF000000u | (ClampToByteLocal(r1 - (r1 * evy) / 16) << 16) |
+                          (ClampToByteLocal(g1 - (g1 * evy) / 16) << 8) |
+                           ClampToByteLocal(b1 - (b1 * evy) / 16);
       }
-      px = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-           (static_cast<uint32_t>(g) << 8) | b;
     }
   }
 }
@@ -96,7 +86,7 @@ void GBACore::RenderDebugFrame() {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
     EnsureBgPriorityBufferSize();
     std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-              static_cast<uint8_t>(kBackdropPriority));
+              static_cast<uint8_t>(GBACore::kBackdropPriority));
     return;
   }
   EnsureObjDrawnMaskBufferSize();
@@ -150,7 +140,7 @@ void GBACore::RenderDebugFrame() {
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
   EnsureBgPriorityBufferSize();
   std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-            static_cast<uint8_t>(kBackdropPriority));
+            static_cast<uint8_t>(GBACore::kBackdropPriority));
 }
 
 uint64_t GBACore::ComputeFrameHash() const {

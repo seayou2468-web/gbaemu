@@ -96,6 +96,15 @@ void GBACore::Reset() {
   WriteIO16(0x04000208u, 0x0001u);
   // POSTFLG: 0 during BIOS flow, 1 when skipping to cartridge entry.
   Write8(0x04000300u, use_real_bios_boot ? 0x00u : 0x01u);
+  apu_sq1_sweep_cycles_ = 0;
+  apu_sq1_duty_cycles_ = 0;
+  apu_sq2_duty_cycles_ = 0;
+  apu_ch3_pos_ = 0;
+  apu_ch4_lfsr_ = 0x7FFFu;
+  bg2_refx_internal_ = 0;
+  bg2_refy_internal_ = 0;
+  bg3_refx_internal_ = 0;
+  bg3_refy_internal_ = 0;
   SyncKeyInputRegister();
   gameplay_state_ = GameplayState{};
   frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);

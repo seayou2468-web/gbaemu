@@ -74,6 +74,14 @@ class GBACore {
  public:
   static constexpr int kScreenWidth = 240;
   static constexpr int kScreenHeight = 160;
+  static constexpr int kBackdropPriority = 4;
+  static constexpr uint8_t kLayerBg0 = 0;
+  static constexpr uint8_t kLayerBg1 = 1;
+  static constexpr uint8_t kLayerBg2 = 2;
+  static constexpr uint8_t kLayerBg3 = 3;
+  static constexpr uint8_t kLayerBackdrop = 4;
+  static uint8_t ClampToByteLocal(int value);
+
 
   bool LoadBIOS(const std::vector<uint8_t>& bios, std::string* error);
   void LoadBuiltInBIOS();
@@ -175,7 +183,7 @@ class GBACore {
   void HandleUndefinedInstruction(bool thumb_state);
   void HandleRegisterRamReset(uint8_t flags);
   void HandleCpuSet(bool fast_mode);
-  void RunCpuSlice(uint32_t cycles);
+  uint32_t RunCpuSlice(uint32_t cycles);
 
   struct CpuState {
     std::array<uint32_t, 16> regs{};
@@ -195,6 +203,35 @@ class GBACore {
     kFlash128K = 3,
     kEEPROM = 4,
   };
+
+  std::vector<uint8_t>& BgPriorityBuffer();
+  std::vector<uint8_t>& BgLayerBuffer();
+  std::vector<uint32_t>& BgBaseColorBuffer();
+  std::vector<uint32_t>& BgSecondColorBuffer();
+  std::vector<uint8_t>& BgSecondLayerBuffer();
+  std::vector<uint8_t>& ObjWindowMaskBuffer() const;
+  std::vector<uint8_t>& ObjDrawnMaskBuffer();
+  void EnsureBgPriorityBufferSize();
+  void EnsureBgLayerBufferSize();
+  void EnsureBgBaseColorBufferSize();
+  void EnsureBgSecondBuffersSize();
+  void EnsureObjDrawnMaskBufferSize();
+  void EnsureObjWindowMaskBufferSize();
+  static uint32_t Bgr555ToRgba8888(uint16_t bgr);
+  static uint16_t ReadBackdropBgr(const std::array<uint8_t, 1024>& palette_ram);
+  bool IsWithinWindowAxis(int p, int start, int end, int axis_max) const;
+  uint8_t ResolveWindowControl(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                               uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                               const std::vector<uint8_t>& obj_window_mask,
+                               int x, int y) const;
+  bool IsBgVisibleByWindow(uint8_t control, int bg) const;
+  bool IsBgVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                           uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                           int bg, int x, int y) const;
+  bool IsObjVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                            uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                            int x, int y) const;
+  static uint16_t LayerToBlendMask(uint8_t layer, bool top_is_obj);
 
   BackupType DetectBackupTypeFromRom() const;
   uint8_t ReadBackup8(uint32_t addr) const;
@@ -225,6 +262,11 @@ class GBACore {
   std::vector<uint8_t> fifo_b_;
   int16_t fifo_a_last_sample_ = 0;
   int16_t fifo_b_last_sample_ = 0;
+  uint32_t apu_sq1_sweep_cycles_ = 0;
+  uint32_t apu_sq1_duty_cycles_ = 0;
+  uint32_t apu_sq2_duty_cycles_ = 0;
+  uint32_t apu_ch3_pos_ = 0;
+  uint32_t apu_ch4_lfsr_ = 0x7FFF;
   uint32_t apu_phase_sq1_ = 0;
   uint32_t apu_phase_sq2_ = 0;
   uint32_t apu_phase_wave_ = 0;
@@ -288,6 +330,26 @@ class GBACore {
   mutable std::vector<uint8_t> eeprom_cmd_bits_{};
   mutable std::vector<uint8_t> eeprom_read_bits_{};
   mutable size_t eeprom_read_pos_ = 0;
+  int32_t bg2_refx_internal_ = 0;
+  int32_t bg2_refy_internal_ = 0;
+  int32_t bg3_refx_internal_ = 0;
+  int32_t bg3_refy_internal_ = 0;
+  std::vector<uint8_t> bg_priority_buffer_;
+  std::vector<uint8_t> bg_layer_buffer_;
+  std::vector<uint32_t> bg_base_color_buffer_;
+  std::vector<uint32_t> bg_second_color_buffer_;
+  std::vector<uint8_t> bg_second_layer_buffer_;
+  std::vector<uint8_t> obj_window_mask_buffer_;
+  std::vector<uint8_t> obj_drawn_mask_buffer_;
+
+
+
+
+
+
+
+
+
 };
 
 }  // namespace gba

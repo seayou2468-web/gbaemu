@@ -88,55 +88,62 @@ uint32_t GBACore::ApplyShift(uint32_t value,
                              uint32_t shift_amount,
                              bool* carry_out) const {
   if (!carry_out) return value;
-  *carry_out = GetFlagC();
-  switch (shift_type & 0x3u) {
-    case 0: {  // LSL
-      if (shift_amount == 0) return value;
-      if (shift_amount < 32) {
-        *carry_out = ((value >> (32u - shift_amount)) & 1u) != 0;
-        return value << shift_amount;
+  uint32_t result = value;
+  switch (shift_type & 3) {
+    case 0: // LSL
+      if (shift_amount == 0) {
+      } else if (shift_amount < 32) {
+        *carry_out = (value >> (32 - shift_amount)) & 1;
+        result = value << shift_amount;
+      } else if (shift_amount == 32) {
+        *carry_out = value & 1;
+        result = 0;
+      } else {
+        *carry_out = 0;
+        result = 0;
       }
-      if (shift_amount == 32) {
-        *carry_out = (value & 1u) != 0;
-        return 0;
+      break;
+    case 1: // LSR
+      if (shift_amount == 0) {
+      } else if (shift_amount < 32) {
+        *carry_out = (value >> (shift_amount - 1)) & 1;
+        result = value >> shift_amount;
+      } else if (shift_amount == 32) {
+        *carry_out = value >> 31;
+        result = 0;
+      } else {
+        *carry_out = 0;
+        result = 0;
       }
-      *carry_out = false;
-      return 0;
-    }
-    case 1: {  // LSR
-      if (shift_amount == 0 || shift_amount == 32) {
-        *carry_out = (value >> 31) != 0;
-        return 0;
+      break;
+    case 2: // ASR
+      if (shift_amount == 0) {
+      } else if (shift_amount < 32) {
+        *carry_out = (value >> (shift_amount - 1)) & 1;
+        result = static_cast<uint32_t>(static_cast<int32_t>(value) >> shift_amount);
+      } else {
+        *carry_out = value >> 31;
+        result = (value & 0x80000000) ? 0xFFFFFFFF : 0;
       }
-      if (shift_amount > 32) {
-        *carry_out = false;
-        return 0;
-      }
-      *carry_out = ((value >> (shift_amount - 1u)) & 1u) != 0;
-      return value >> shift_amount;
-    }
-    case 2: {  // ASR
-      if (shift_amount == 0 || shift_amount >= 32) {
-        *carry_out = (value >> 31) != 0;
-        return (value & 0x80000000u) ? 0xFFFFFFFFu : 0u;
-      }
-      *carry_out = ((value >> (shift_amount - 1u)) & 1u) != 0;
-      return static_cast<uint32_t>(static_cast<int32_t>(value) >> shift_amount);
-    }
-    case 3: {  // ROR / RRX
-      if (shift_amount == 0) {  // RRX
+      break;
+    case 3: // ROR
+      if (shift_amount == 0) {
         const bool old_c = GetFlagC();
-        *carry_out = (value & 1u) != 0;
-        return (old_c ? 0x80000000u : 0u) | (value >> 1);
+        *carry_out = value & 1;
+        result = (value >> 1) | (old_c ? 0x80000000 : 0);
+      } else {
+        uint32_t amt = shift_amount % 32;
+        if (amt == 0) {
+          result = value;
+          *carry_out = value >> 31;
+        } else {
+          result = (value >> amt) | (value << (32 - amt));
+          *carry_out = (result >> 31) & 1;
+        }
       }
-      const uint32_t rot = shift_amount & 31u;
-      const uint32_t result = RotateRight(value, rot == 0 ? 32 : rot);
-      *carry_out = (result >> 31) != 0;
-      return result;
-    }
-    default:
-      return value;
+      break;
   }
+  return result;
 }
 
 bool GBACore::GetFlagC() const { return (cpu_.cpsr & (1u << 29)) != 0; }
@@ -279,22 +286,22 @@ void GBACore::HandleCpuSet(bool fast_mode) {
   const bool fill = (cnt & (1u << 24)) != 0;
   const bool word32 = fast_mode || ((cnt & (1u << 26)) != 0);
   uint32_t units = cnt & 0x1FFFFFu;
-  if (fast_mode) units = (cnt & 0x1FFFFFu) * 8u;
+  if (fast_mode) units = (units + 7) & ~7u;
 
   if (units == 0) return;
 
   if (word32) {
     const uint32_t value = Read32(src & ~3u);
     for (uint32_t i = 0; i < units; ++i) {
-      const uint32_t saddr = fill ? (src & ~3u) : ((src + i * 4u) & ~3u);
-      const uint32_t daddr = (dst + i * 4u) & ~3u;
+      const uint32_t saddr = fill ? (src & ~3u) : (src + i * 4u);
+      const uint32_t daddr = dst + i * 4u;
       Write32(daddr, fill ? value : Read32(saddr));
     }
   } else {
     const uint16_t value = Read16(src & ~1u);
     for (uint32_t i = 0; i < units; ++i) {
-      const uint32_t saddr = fill ? (src & ~1u) : ((src + i * 2u) & ~1u);
-      const uint32_t daddr = (dst + i * 2u) & ~1u;
+      const uint32_t saddr = fill ? (src & ~1u) : (src + i * 2u);
+      const uint32_t daddr = dst + i * 2u;
       Write16(daddr, fill ? value : Read16(saddr));
     }
   }

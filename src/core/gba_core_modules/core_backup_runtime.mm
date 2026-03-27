@@ -254,16 +254,15 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
 void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   executed_cycles_ += cycles;
-  uint32_t remaining = cycles;
-  constexpr uint32_t kSchedulerSliceCycles = 4;
+  int32_t remaining = static_cast<int32_t>(cycles);
   while (remaining > 0) {
-    const uint32_t slice = std::min<uint32_t>(remaining, kSchedulerSliceCycles);
-    RunCpuSlice(slice);
-    StepTimers(slice);
-    StepApu(slice);
-    StepPpu(slice);
+    const uint32_t slice = std::min<uint32_t>(static_cast<uint32_t>(remaining), 1u);
+    const uint32_t consumed = RunCpuSlice(slice);
+    StepTimers(consumed);
+    StepApu(consumed);
+    StepPpu(consumed);
     StepDma();
-    remaining -= slice;
+    remaining -= static_cast<int32_t>(consumed);
   }
 }
 

@@ -39,7 +39,7 @@ void GBACore::StepPpu(uint32_t cycles) {
 
       dispstat = ReadIO16(0x04000004u);
       const bool was_vblank = (dispstat & 0x0001u) != 0;
-      const bool now_vblank = vcount >= mgba_compat::kVideoVisibleLines;
+      const bool now_vblank = (vcount >= 160);
       if (now_vblank) {
         dispstat = static_cast<uint16_t>(dispstat | 0x0001u);
         if (!was_vblank && (dispstat & (1u << 3))) {

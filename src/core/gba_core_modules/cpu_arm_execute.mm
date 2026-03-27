@@ -282,7 +282,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       const uint32_t shift_type = (opcode >> 5) & 0x3u;
       const uint32_t shift_imm = (opcode >> 7) & 0x1Fu;
       bool ignored_carry = false;
-      offset = ApplyShift(cpu_.regs[rm], shift_type, shift_imm, &ignored_carry);
+      offset = ApplyShift(arm_reg_value(rm), shift_type, shift_imm, &ignored_carry);
     }
     uint32_t addr = arm_reg_value(rn);
     if (pre) {
@@ -395,9 +395,18 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         shift_amount = arm_reg_value(rs) & 0xFFu;
       } else {
         shift_amount = (opcode >> 7) & 0x1Fu;
+        if (shift_amount == 0) {
+            if (shift_type == 1 || shift_type == 2) shift_amount = 32;
+        }
       }
       if (reg_shift && shift_amount == 0u) {
         operand2 = arm_shift_operand_value(rm, true);
+        // Register shift by 0: carry is NOT updated.
+        shifter_carry = GetFlagC();
+      } else if (!reg_shift && shift_amount == 0 && shift_type == 0) {
+        // LSL #0: carry is NOT updated.
+        operand2 = arm_shift_operand_value(rm, false);
+        shifter_carry = GetFlagC();
       } else {
         operand2 = ApplyShift(arm_shift_operand_value(rm, reg_shift), shift_type, shift_amount, &shifter_carry);
       }

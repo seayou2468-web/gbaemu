@@ -468,14 +468,14 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   HandleUndefinedInstruction(true);
 }
 
-void GBACore::RunCpuSlice(uint32_t cycles) {
+uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
   if (cpu_.halted) {
     bool woke_from_intrwait = false;
     if (swi_intrwait_active_) {
-      const uint16_t iflags = ReadIO16(0x04000202u);
-      const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
-      if (matched != 0u) {
-        WriteIO16(0x04000202u, matched);
+      const uint32_t irq_flags_addr = 0x03007FF8u;
+      const uint16_t ram_flags = static_cast<uint16_t>(Read32(irq_flags_addr) & swi_intrwait_mask_);
+      if (ram_flags != 0u) {
+        Write32(irq_flags_addr, Read32(irq_flags_addr) & ~ram_flags);
         swi_intrwait_active_ = false;
         swi_intrwait_mask_ = 0;
         cpu_.halted = false;
@@ -485,7 +485,7 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
     if (!woke_from_intrwait) {
       const uint16_t ie = ReadIO16(0x04000200u);
       const uint16_t iflags = ReadIO16(0x04000202u);
-      if ((ie & iflags) == 0) return;
+      if ((ie & iflags) == 0) return cycles;
       cpu_.halted = false;
     }
   }
@@ -518,6 +518,7 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       HandleUndefinedInstruction((cpu_.cpsr & (1u << 5)) != 0);
     }
   }
+  return consumed;
 }
 
 void GBACore::DebugStepCpuInstructions(uint32_t count) {
