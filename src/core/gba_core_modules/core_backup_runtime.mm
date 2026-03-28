@@ -33,6 +33,7 @@ void GBACore::ResetBackupControllerState() {
   eeprom_cmd_bits_.clear();
   eeprom_read_bits_.clear();
   eeprom_read_pos_ = 0;
+  eeprom_addr_bits_ = 0;
 }
 
 uint8_t GBACore::ReadBackup8(uint32_t addr) const {
@@ -106,6 +107,12 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
             }
             eeprom_[base + i] = out;
           }
+          eeprom_addr_bits_ = static_cast<uint8_t>(addr_bits);
+          // EEPROM write busy phase: poll returns 0 until complete, then 1.
+          eeprom_read_bits_.clear();
+          eeprom_read_pos_ = 0;
+          for (int i = 0; i < 8; ++i) eeprom_read_bits_.push_back(0);
+          eeprom_read_bits_.push_back(1);
           reset_cmd();
           return true;
         }
@@ -118,6 +125,7 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
           for (uint32_t i = 0; i < addr_bits; ++i) {
             block_addr = (block_addr << 1u) | static_cast<uint32_t>(eeprom_cmd_bits_[2u + i] & 1u);
           }
+          eeprom_addr_bits_ = static_cast<uint8_t>(addr_bits);
           load_read_bits(block_addr, addr_bits);
           reset_cmd();
           return true;
@@ -130,7 +138,11 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
       reset_cmd();
       return;
     }
-    if (try_decode(6u) || try_decode(14u)) {
+    if (eeprom_addr_bits_ == 6u) {
+      if (try_decode(6u)) return;
+    } else if (eeprom_addr_bits_ == 14u) {
+      if (try_decode(14u)) return;
+    } else if (try_decode(14u) || try_decode(6u)) {
       return;
     }
     return;

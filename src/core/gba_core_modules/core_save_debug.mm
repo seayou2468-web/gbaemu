@@ -18,7 +18,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   std::vector<uint8_t> blob;
   blob.reserve(512 * 1024);
   blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
-  append_u32(&blob, 10u);  // version
+  append_u32(&blob, 11u);  // version
   append_u64(&blob, frame_count_);
   append_u64(&blob, executed_cycles_);
   append_u32(&blob, cpu_.cpsr);
@@ -64,6 +64,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   append_u32(&blob, static_cast<uint32_t>(fifo_b_.size()));
   for (uint8_t b : fifo_b_) append_u32(&blob, b);
   append_u32(&blob, static_cast<uint32_t>(eeprom_read_pos_));
+  append_u32(&blob, static_cast<uint32_t>(eeprom_addr_bits_));
   append_u32(&blob, static_cast<uint32_t>(eeprom_cmd_bits_.size()));
   for (uint8_t b : eeprom_cmd_bits_) append_u32(&blob, b);
   append_u32(&blob, static_cast<uint32_t>(eeprom_read_bits_.size()));
@@ -245,6 +246,12 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
       if (version >= 7u) {
         if (!read_u32(&off, &tmp32)) return false;
         eeprom_read_pos_ = tmp32;
+        if (version >= 11u) {
+          if (!read_u32(&off, &tmp32)) return false;
+          eeprom_addr_bits_ = static_cast<uint8_t>(tmp32 & 0x0Fu);
+        } else {
+          eeprom_addr_bits_ = 0;
+        }
         if (!read_u32(&off, &tmp32)) return false;
         eeprom_cmd_bits_.assign(tmp32, 0);
         for (size_t i = 0; i < eeprom_cmd_bits_.size(); ++i) {
@@ -263,6 +270,7 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
         eeprom_cmd_bits_.clear();
         eeprom_read_bits_.clear();
         eeprom_read_pos_ = 0;
+        eeprom_addr_bits_ = 0;
       }
     } else {
       flash_bank_switch_mode_ = false;
@@ -270,6 +278,7 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
       eeprom_cmd_bits_.clear();
       eeprom_read_bits_.clear();
       eeprom_read_pos_ = 0;
+      eeprom_addr_bits_ = 0;
     }
   } else {
     backup_type_ = DetectBackupTypeFromRom();

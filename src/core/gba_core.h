@@ -296,6 +296,7 @@ class GBACore {
   mutable std::vector<uint8_t> eeprom_cmd_bits_{};
   mutable std::vector<uint8_t> eeprom_read_bits_{};
   mutable size_t eeprom_read_pos_ = 0;
+  mutable uint8_t eeprom_addr_bits_ = 0;  // 0=auto, 6 or 14 once detected
 };
 
 }  // namespace gba
