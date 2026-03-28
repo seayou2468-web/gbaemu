@@ -311,6 +311,19 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
 
   io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
   io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+  // Trigger immediate DMA if enabled
+  if (addr == 0x040000B8u || addr == 0x040000C4u || addr == 0x040000D0u || addr == 0x040000DCu) {
+    if ((value & 0x8000u) && ((value >> 12) & 3) == 0) {
+      StepDma();
+    }
+  }
+  // Immediate DMA trigger
+  if (addr == 0x040000B8u || addr == 0x040000C4u || addr == 0x040000D0u || addr == 0x040000DCu) {
+    if ((value & 0x8000u) && ((value >> 12) & 3) == 0) {
+      StepDma();
+    }
+  }
+
 }
 
 }  // namespace gba

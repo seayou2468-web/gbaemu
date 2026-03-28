@@ -156,98 +156,67 @@ void GBACore::StepDma() {
   const bool hblank_rising = in_hblank && !dma_was_in_hblank_;
   dma_was_in_vblank_ = in_vblank;
   dma_was_in_hblank_ = in_hblank;
+
   for (int ch = 0; ch < 4; ++ch) {
-    const uint32_t base = static_cast<uint32_t>(0x040000B0u + ch * 12u);
-    uint32_t src = Read32(base + 0u);
-    uint32_t dst = Read32(base + 4u);
-    const uint16_t cnt_l = ReadIO16(base + 8u);
+    const uint32_t base = 0x040000B0u + ch * 12u;
     const uint16_t cnt_h = ReadIO16(base + 10u);
-    if ((cnt_h & 0x8000u) == 0) continue;
-    const uint16_t start_timing = static_cast<uint16_t>((cnt_h >> 12) & 0x3u);
-    bool fire_now = false;
-    if (start_timing == 0u) fire_now = true;                      // Immediate
-    if (start_timing == 1u && vblank_rising) fire_now = true;     // VBlank edge
-    if (start_timing == 2u && hblank_rising) fire_now = true;     // HBlank edge
-    if (start_timing == 3u) {
-      // Sound FIFO DMA (DMA1/DMA2) request timing.
-      if (ch != 1 && ch != 2) continue;
-      const uint32_t fifo_addr = dst & ~3u;
-      const bool is_fifo_a = fifo_addr == 0x040000A0u;
-      const bool is_fifo_b = fifo_addr == 0x040000A4u;
-      if (!is_fifo_a && !is_fifo_b) continue;
-      fire_now = is_fifo_a ? dma_fifo_a_request_ : dma_fifo_b_request_;
-      if (!fire_now) continue;
-      if (is_fifo_a) dma_fifo_a_request_ = false;
-      if (is_fifo_b) dma_fifo_b_request_ = false;
+    if (!(cnt_h & 0x8000u)) continue;
+
+    const uint16_t start_timing = (cnt_h >> 12) & 0x3u;
+    bool fire = false;
+    if (start_timing == 0) fire = true; // Immediate
+    else if (start_timing == 1 && vblank_rising) fire = true;
+    else if (start_timing == 2 && hblank_rising) fire = true;
+    else if (start_timing == 3) {
+      if (ch == 1 || ch == 2) fire = (ch == 1) ? dma_fifo_a_request_ : dma_fifo_b_request_;
+      else if (ch == 3) fire = hblank_rising; // Simplified Video Capture trigger
     }
-    if (!fire_now) continue;
 
-    // Channel-specific address bus width.
-    const uint32_t addr_mask = (ch == 0) ? 0x07FFFFFFu : 0x0FFFFFFFu;
-    src &= addr_mask;
-    dst &= addr_mask;
+    if (!fire) continue;
+    if (start_timing == 3) {
+      if (ch == 1) dma_fifo_a_request_ = false;
+      if (ch == 2) dma_fifo_b_request_ = false;
+    }
 
-    bool word32 = (cnt_h & (1u << 10)) != 0;
-    uint32_t count = cnt_l;
+    uint32_t src = Read32(base + 0);
+    uint32_t dst = Read32(base + 4);
+    uint32_t count = ReadIO16(base + 8);
     if (count == 0) count = (ch == 3) ? 0x10000u : 0x4000u;
-    if (start_timing == 3u) {
-      // FIFO DMA always transfers 4 words and keeps destination fixed.
-      word32 = true;
-      count = mgba_compat::kAudioFifoDmaWordsPerBurst;
-    }
+    if (start_timing == 3 && (ch == 1 || ch == 2)) count = 4;
 
-    int dst_ctl = (cnt_h >> 5) & 0x3;
-    int src_ctl = (cnt_h >> 7) & 0x3;
-    if (src_ctl == 3) src_ctl = 0;  // Prohibited, treat as increment.
-    if (start_timing == 3u) dst_ctl = 2;  // fixed destination (FIFO register)
+    const bool word32 = (cnt_h & 0x0400u) != 0;
+    const uint32_t addr_mask = (ch == 0) ? 0x07FFFFFFu : 0x0FFFFFFFu;
+    const int src_ctl = (cnt_h >> 7) & 0x3;
+    const int dst_ctl = (cnt_h >> 5) & 0x3;
     const int step = word32 ? 4 : 2;
-    int dst_step = step;
-    int src_step = step;
-    if (dst_ctl == 1) dst_step = -step;
-    if (dst_ctl == 2) dst_step = 0;
-    if (src_ctl == 1) src_step = -step;
-    if (src_ctl == 2) src_step = 0;
 
-    uint32_t src_cur = src;
-    uint32_t dst_cur = dst;
-    if (word32) {
-      src_cur &= ~3u;
-      dst_cur &= ~3u;
-    } else {
-      src_cur &= ~1u;
-      dst_cur &= ~1u;
-    }
     for (uint32_t n = 0; n < count; ++n) {
-      if (word32) {
-        Write32(dst_cur, Read32(src_cur));
-      } else {
-        Write16(dst_cur, Read16(src_cur));
-      }
-      src_cur = static_cast<uint32_t>(static_cast<int64_t>(src_cur) + src_step);
-      dst_cur = static_cast<uint32_t>(static_cast<int64_t>(dst_cur) + dst_step);
-      src_cur &= addr_mask;
-      dst_cur &= addr_mask;
-      if (word32) {
-        src_cur &= ~3u;
-        dst_cur &= ~3u;
-      } else {
-        src_cur &= ~1u;
-        dst_cur &= ~1u;
-      }
+      if (word32) Write32(dst & ~3u, Read32(src & ~3u));
+      else Write16(dst & ~1u, Read16(src & ~1u));
+
+      if (src_ctl == 0) src += step; else if (src_ctl == 1) src -= step;
+      if (dst_ctl == 0 || dst_ctl == 3) dst += step; else if (dst_ctl == 1) dst -= step;
+      src &= addr_mask;
+      dst &= addr_mask;
     }
 
-    const bool repeat = (cnt_h & (1u << 9)) != 0;
-    const bool reload_dest = (dst_ctl == 3) && repeat && (start_timing != 0u);
-    Write32(base + 0u, src_cur);
-    Write32(base + 4u, reload_dest ? dst : dst_cur);
-    uint16_t next_cnt_h = cnt_h;
-    if (!(repeat && start_timing != 0u)) {
-      next_cnt_h = static_cast<uint16_t>(cnt_h & ~0x8000u);
+    // Shadow register logic: reload destination only if repeat and NOT immediate
+    const bool repeat = (cnt_h & 0x0200u) != 0;
+    Write32(base + 0, src);
+    if (repeat && start_timing != 0) {
+      if (dst_ctl == 3) {
+        // Conceptually reload initial DAD.
+        // We'll use the value from WriteIO16's original write if we had shadow regs.
+        // For now, we update the register with the current 'dst' unless it's reload type.
+      } else {
+        Write32(base + 4, dst);
+      }
+    } else {
+      Write32(base + 4, dst);
+      WriteIO16(base + 10, cnt_h & ~0x8000u); // Auto-disable
     }
-    WriteIO16(base + 10u, next_cnt_h);
-    if (cnt_h & (1u << 14)) {
-      RaiseInterrupt(static_cast<uint16_t>(1u << static_cast<uint16_t>(8u + ch)));
-    }
+
+    if (cnt_h & 0x4000u) RaiseInterrupt(1u << (8 + ch));
   }
 }
 
