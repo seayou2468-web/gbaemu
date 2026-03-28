@@ -131,10 +131,12 @@ uint32_t GBACore::Read32(uint32_t addr) const {
   }
   // 0x0E000000-0x0E00FFFF: SRAM/Flash window (modeled as SRAM)
   if (addr >= 0x0E000000u) {
-    return ret32(static_cast<uint32_t>(ReadBackup8(addr)) |
-           (static_cast<uint32_t>(ReadBackup8(addr + 1)) << 8) |
-           (static_cast<uint32_t>(ReadBackup8(addr + 2)) << 16) |
-           (static_cast<uint32_t>(ReadBackup8(addr + 3)) << 24));
+    const uint8_t v8 = ReadBackup8(addr);
+    const uint32_t out = static_cast<uint32_t>(v8) |
+                         (static_cast<uint32_t>(v8) << 8) |
+                         (static_cast<uint32_t>(v8) << 16) |
+                         (static_cast<uint32_t>(v8) << 24);
+    return ret32(out);
   }
   // 0x08000000-0x0DFFFFFF: ROM mirror (32MB window)
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
