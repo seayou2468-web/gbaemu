@@ -255,7 +255,10 @@ void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   executed_cycles_ += cycles;
   uint32_t remaining = cycles;
-  constexpr uint32_t kSchedulerSliceCycles = 4;
+  // Keep finer granularity during real BIOS boot animation to preserve timing
+  // sensitive display/IRQ sequencing, but use a larger slice after handoff to
+  // reduce runtime overhead.
+  const uint32_t kSchedulerSliceCycles = bios_boot_via_vector_ ? 4u : 16u;
   while (remaining > 0) {
     const uint32_t slice = std::min<uint32_t>(remaining, kSchedulerSliceCycles);
     RunCpuSlice(slice);
@@ -406,4 +409,3 @@ void GBACore::UpdateGameplayFromInput() {
 
 
 }  // namespace gba
-

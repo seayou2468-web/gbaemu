@@ -214,9 +214,9 @@
             [self.engine stepFrame];
             [self.engine stepFrame];
             [self.engine setKeysPressedMask:0x0000];
-            // Many commercial titles need dozens of frames after reset/BIOS init
-            // before first visible draw. Warm up the core once on load.
-            for (NSInteger i = 0; i < 90; i++) {
+            // Keep startup animation visible; avoid skipping BIOS/title sequences
+            // by large hidden warm-up bursts at ROM load.
+            for (NSInteger i = 0; i < 6; i++) {
                 [self.engine stepFrame];
             }
             // If frame is still uniform/blank-like, try a short key-probe sequence
