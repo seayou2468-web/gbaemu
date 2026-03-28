@@ -7,6 +7,7 @@ namespace gba {
 void GBACore::Reset() {
   frame_count_ = 0;
   executed_cycles_ = 0;
+  open_bus_latch_ = 0;
   keys_pressed_mask_ = 0;
   previous_keys_mask_ = 0;
   std::fill(ewram_.begin(), ewram_.end(), 0);

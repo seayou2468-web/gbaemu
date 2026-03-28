@@ -51,6 +51,10 @@ inline uint32_t VramOffset(uint32_t addr) {
 }  // namespace
 
 uint32_t GBACore::Read32(uint32_t addr) const {
+  auto ret32 = [&](uint32_t v) -> uint32_t {
+    open_bus_latch_ = v;
+    return v;
+  };
   // 0x00000000-0x00003FFF: BIOS
   if (bios_loaded_ && addr < 0x00004000u) {
     if (cpu_.regs[15] < 0x00004000u) {
@@ -61,20 +65,20 @@ uint32_t GBACore::Read32(uint32_t addr) const {
                       (static_cast<uint32_t>(bios_[off + 1]) << 8) |
                       (static_cast<uint32_t>(bios_[off + 2]) << 16) |
                       (static_cast<uint32_t>(bios_[off + 3]) << 24);
-        return bios_latch_;
+        return ret32(bios_latch_);
       }
     }
-    return bios_latch_;
+    return ret32(bios_latch_);
   }
   // 0x02000000-0x02FFFFFF: EWRAM mirror (256KB)
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
-    return Read32Wrap(ewram_.data(), off32, 0x3FFFFu);
+    return ret32(Read32Wrap(ewram_.data(), off32, 0x3FFFFu));
   }
   // 0x03000000-0x03FFFFFF: IWRAM mirror (32KB)
   if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
-    return Read32Wrap(iwram_.data(), off32, 0x7FFFu);
+    return ret32(Read32Wrap(iwram_.data(), off32, 0x7FFFu));
   }
   // 0x04000000-0x040003FF: IO
   if (addr >= 0x04000000u && addr <= 0x040003FCu) {
@@ -83,7 +87,7 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     if (off32 + 3u < io_regs_.size()) {
       const uint16_t lo = ReadIO16(aligned);
       const uint16_t hi = ReadIO16(aligned + 2u);
-      return static_cast<uint32_t>(lo) | (static_cast<uint32_t>(hi) << 16);
+      return ret32(static_cast<uint32_t>(lo) | (static_cast<uint32_t>(hi) << 16));
     }
   }
   // 0x05000000-0x050003FF: Palette RAM
@@ -121,10 +125,10 @@ uint32_t GBACore::Read32(uint32_t addr) const {
   }
   // 0x0E000000-0x0E00FFFF: SRAM/Flash window (modeled as SRAM)
   if (addr >= 0x0E000000u) {
-    return static_cast<uint32_t>(ReadBackup8(addr)) |
+    return ret32(static_cast<uint32_t>(ReadBackup8(addr)) |
            (static_cast<uint32_t>(ReadBackup8(addr + 1)) << 8) |
            (static_cast<uint32_t>(ReadBackup8(addr + 2)) << 16) |
-           (static_cast<uint32_t>(ReadBackup8(addr + 3)) << 24);
+           (static_cast<uint32_t>(ReadBackup8(addr + 3)) << 24));
   }
   // 0x08000000-0x0DFFFFFF: ROM mirror (32MB window)
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
@@ -140,16 +144,21 @@ uint32_t GBACore::Read32(uint32_t addr) const {
       const size_t off1 = (base + 1u) % rom_.size();
       const size_t off2 = (base + 2u) % rom_.size();
       const size_t off3 = (base + 3u) % rom_.size();
-      return static_cast<uint32_t>(rom_[off0]) |
+      return ret32(static_cast<uint32_t>(rom_[off0]) |
              (static_cast<uint32_t>(rom_[off1]) << 8) |
              (static_cast<uint32_t>(rom_[off2]) << 16) |
-             (static_cast<uint32_t>(rom_[off3]) << 24);
+             (static_cast<uint32_t>(rom_[off3]) << 24));
     }
   }
-  return 0;
+  return ret32(open_bus_latch_);
 }
 
 uint16_t GBACore::Read16(uint32_t addr) const {
+  auto ret16 = [&](uint16_t v) -> uint16_t {
+    const uint32_t shift = (addr & 2u) * 8u;
+    open_bus_latch_ = (open_bus_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(v) << shift);
+    return v;
+  };
   if (bios_loaded_ && addr < 0x00004000u) {
     if (cpu_.regs[15] < 0x00004000u) {
       const uint32_t off32 = addr & 0x3FFFu;
@@ -162,15 +171,15 @@ uint16_t GBACore::Read16(uint32_t addr) const {
         return value;
       }
     }
-    return static_cast<uint16_t>((bios_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu);
+    return ret16(static_cast<uint16_t>((bios_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu));
   }
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
-    return Read16Wrap(ewram_.data(), off32, 0x3FFFFu);
+    return ret16(Read16Wrap(ewram_.data(), off32, 0x3FFFFu));
   }
   if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
-    return Read16Wrap(iwram_.data(), off32, 0x7FFFu);
+    return ret16(Read16Wrap(iwram_.data(), off32, 0x7FFFu));
   }
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
@@ -188,7 +197,7 @@ uint16_t GBACore::Read16(uint32_t addr) const {
   if (addr >= 0x04000000u && addr <= 0x040003FEu) {
     const uint32_t off32 = addr - 0x04000000u;
     if (off32 + 1u < io_regs_.size()) {
-      return ReadIO16(addr & ~1u);
+      return ret16(ReadIO16(addr & ~1u));
     }
   }
   if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
@@ -219,29 +228,34 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     return static_cast<uint16_t>(ReadBackup8(addr)) |
            static_cast<uint16_t>(ReadBackup8(addr + 1) << 8);
   }
-  return 0;
+  return ret16(static_cast<uint16_t>((open_bus_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu));
 }
 
 uint8_t GBACore::Read8(uint32_t addr) const {
+  auto ret8 = [&](uint8_t v) -> uint8_t {
+    const uint32_t shift = (addr & 3u) * 8u;
+    open_bus_latch_ = (open_bus_latch_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(v) << shift);
+    return v;
+  };
   if (bios_loaded_ && addr < 0x00004000u) {
     if (cpu_.regs[15] < 0x00004000u) {
       const uint8_t value = bios_[static_cast<size_t>(addr & 0x3FFFu)];
       const uint32_t shift = (addr & 3u) * 8u;
       bios_latch_ = (bios_latch_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(value) << shift);
-      return value;
+      return ret8(value);
     }
-    return static_cast<uint8_t>((bios_latch_ >> ((addr & 3u) * 8u)) & 0xFFu);
+    return ret8(static_cast<uint8_t>((bios_latch_ >> ((addr & 3u) * 8u)) & 0xFFu));
   }
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
     if (off32 < ewram_.size()) {
-      return ewram_[static_cast<size_t>(off32)];
+      return ret8(ewram_[static_cast<size_t>(off32)]);
     }
   }
   if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
     if (off32 < iwram_.size()) {
-      return iwram_[static_cast<size_t>(off32)];
+      return ret8(iwram_[static_cast<size_t>(off32)]);
     }
   }
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
@@ -250,32 +264,32 @@ uint8_t GBACore::Read8(uint32_t addr) const {
     }
     if (!rom_.empty()) {
       const size_t off = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu) % rom_.size();
-      return rom_[off];
+      return ret8(rom_[off]);
     }
   }
   if (addr >= 0x04000000u && addr <= 0x040003FFu) {
     const uint32_t off32 = addr - 0x04000000u;
     if (off32 < io_regs_.size()) {
       const uint16_t half = ReadIO16(addr & ~1u);
-      return static_cast<uint8_t>((addr & 1u) ? ((half >> 8) & 0xFFu) : (half & 0xFFu));
+      return ret8(static_cast<uint8_t>((addr & 1u) ? ((half >> 8) & 0xFFu) : (half & 0xFFu)));
     }
   }
   if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x05000000u, 0x3FFu);
-    if (off32 < palette_ram_.size()) return palette_ram_[static_cast<size_t>(off32)];
+    if (off32 < palette_ram_.size()) return ret8(palette_ram_[static_cast<size_t>(off32)]);
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
     const uint32_t off32 = VramOffset(addr);
-    if (off32 < vram_.size()) return vram_[static_cast<size_t>(off32)];
+    if (off32 < vram_.size()) return ret8(vram_[static_cast<size_t>(off32)]);
   }
   if (addr >= 0x07000000u && addr <= 0x07FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x07000000u, 0x3FFu);
-    if (off32 < oam_.size()) return oam_[static_cast<size_t>(off32)];
+    if (off32 < oam_.size()) return ret8(oam_[static_cast<size_t>(off32)]);
   }
   if (addr >= 0x0E000000u) {
-    return ReadBackup8(addr);
+    return ret8(ReadBackup8(addr));
   }
-  return 0;
+  return ret8(static_cast<uint8_t>((open_bus_latch_ >> ((addr & 3u) * 8u)) & 0xFFu));
 }
 
 void GBACore::Write32(uint32_t addr, uint32_t value) {
@@ -492,6 +506,10 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   // IME only bit0 is used.
   if (addr == 0x04000208u) {
     value &= 0x0001u;
+  }
+  // WAITCNT writable bits.
+  if (addr == 0x04000204u) {
+    value = static_cast<uint16_t>(value & 0x5FFFu);
   }
   // DISPSTAT: bits 0-2 are status (read-only), bits 3-5/8-15 writable.
   if (addr == 0x04000004u) {
