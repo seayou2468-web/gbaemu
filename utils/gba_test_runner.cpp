@@ -15,13 +15,14 @@ std::vector<uint8_t> LoadFile(const std::string& path) {
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::printf("Usage: %s <rom_path> <frames> <output_png>\n", argv[0]);
+        std::printf("Usage: %s <rom_path> <frames> <output_png> [bios_path]\n", argv[0]);
         return 1;
     }
 
     std::string rom_path = argv[1];
     int frames = std::stoi(argv[2]);
     std::string output_path = argv[3];
+    std::string bios_path = (argc >= 5) ? argv[4] : "";
 
     std::vector<uint8_t> rom = LoadFile(rom_path);
     if (rom.empty()) {
@@ -30,7 +31,17 @@ int main(int argc, char** argv) {
     }
 
     gba::GBACore core;
-    core.LoadBuiltInBIOS();
+    if (!bios_path.empty()) {
+        std::vector<uint8_t> bios = LoadFile(bios_path);
+        std::string bios_error;
+        if (bios.empty() || !core.LoadBIOS(bios, &bios_error)) {
+            std::printf("Failed to load BIOS (%s): %s\n", bios_path.c_str(),
+                        bios_error.empty() ? "unknown error" : bios_error.c_str());
+            return 1;
+        }
+    } else {
+        core.LoadBuiltInBIOS();
+    }
     std::string warning;
     if (!core.LoadROM(rom, &warning)) {
         std::printf("Warning/Error loading ROM: %s\n", warning.c_str());
