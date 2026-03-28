@@ -128,9 +128,8 @@ uint32_t GBACore::ApplyShift(uint32_t value,
     case 3: { // ROR
       uint32_t rot = shift_amount & 31u;
       if (rot == 0) {
-        // RRX behavior for ROR #0
-        *carry_out = (value & 1u) != 0;
-        return (value >> 1) | (GetFlagC() ? 0x80000000u : 0u);
+        *carry_out = (value >> 31) != 0;
+        return value;
       }
       uint32_t result = RotateRight(value, rot);
       *carry_out = (result >> 31) != 0;

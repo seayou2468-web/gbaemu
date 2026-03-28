@@ -1,9 +1,12 @@
-// ---- BEGIN gba_core_memory.cpp ----
-#include "../gba_core.h"
+import sys
+import re
 
-namespace gba {
-namespace {
-inline uint32_t MirrorOffset(uint32_t addr, uint32_t base, uint32_t mask) {
+path = "src/core/gba_core_modules/memory_bus.mm"
+with open(path, "r") as f:
+    full_content = f.read()
+
+# 1. Define Helper functions
+helpers = """inline uint32_t MirrorOffset(uint32_t addr, uint32_t base, uint32_t mask) {
   return (addr - base) & mask;
 }
 
@@ -30,10 +33,10 @@ inline uint32_t VramOffset(uint32_t addr) {
   uint32_t off32 = MirrorOffset(addr, 0x06000000u, 0x1FFFFu);
   if (off32 >= 0x18000u) off32 -= 0x8000u;
   return off32;
-}
-}  // namespace
+}"""
 
-uint32_t GBACore::ReadBus32(uint32_t a) const {
+# 2. GBACore methods
+readbus32 = """uint32_t GBACore::ReadBus32(uint32_t a) const {
   a &= ~3u;
   if (a < 0x00004000u) {
     if (cpu_.regs[15] < 0x00004000u) {
@@ -100,15 +103,15 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
 
   if (mapped) open_bus_latch_ = val;
   return val;
-}
+}"""
 
-uint32_t GBACore::Read32(uint32_t addr) const {
+read32 = """uint32_t GBACore::Read32(uint32_t addr) const {
   const uint32_t val = ReadBus32(addr);
   const uint32_t rot = (addr & 3u) * 8u;
   return (rot == 0) ? val : RotateRight(val, rot);
-}
+}"""
 
-uint16_t GBACore::Read16(uint32_t addr) const {
+read16 = """uint16_t GBACore::Read16(uint32_t addr) const {
   if (addr & 1u) return static_cast<uint16_t>(Read8(addr)) | (static_cast<uint16_t>(Read8(addr + 1)) << 8);
   const uint32_t val = ReadBus32(addr);
   const uint32_t shift = (addr & 2u) * 8u;
@@ -122,9 +125,9 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     }
   }
   return res;
-}
+}"""
 
-uint8_t GBACore::Read8(uint32_t addr) const {
+read8 = """uint8_t GBACore::Read8(uint32_t addr) const {
   const uint32_t val = ReadBus32(addr);
   const uint32_t shift = (addr & 3u) * 8u;
   const uint8_t res = static_cast<uint8_t>(val >> shift);
@@ -137,16 +140,16 @@ uint8_t GBACore::Read8(uint32_t addr) const {
     }
   }
   return res;
-}
+}"""
 
-void GBACore::Write32(uint32_t addr, uint32_t value) {
+write32 = """void GBACore::Write32(uint32_t addr, uint32_t value) {
   open_bus_latch_ = value;
   if (addr == 0x040000A0u || addr == 0x040000A4u) { PushAudioFifo(addr == 0x040000A0u, value); return; }
   Write16(addr, static_cast<uint16_t>(value));
   Write16(addr + 2u, static_cast<uint16_t>(value >> 16));
-}
+}"""
 
-void GBACore::Write16(uint32_t addr, uint16_t value) {
+write16 = """void GBACore::Write16(uint32_t addr, uint16_t value) {
   open_bus_latch_ = (value | (static_cast<uint32_t>(value) << 16));
   if (addr >= 0x04000000u && addr <= 0x040003FEu) { WriteIO16(addr, value); return; }
   if (addr >= 0x05000000u && addr <= 0x07FFFFFFu) {
@@ -163,9 +166,9 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
   }
   Write8(addr, static_cast<uint8_t>(value));
   Write8(addr + 1u, static_cast<uint8_t>(value >> 8));
-}
+}"""
 
-void GBACore::Write8(uint32_t addr, uint8_t value) {
+write8 = """void GBACore::Write8(uint32_t addr, uint8_t value) {
   open_bus_latch_ = (value | (value << 8) | (value << 16) | (value << 24));
   if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
     const uint32_t a = addr & ~1u;
@@ -181,93 +184,42 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     if (addr & 1u) WriteIO16(addr & ~1u, (old & 0xFFu) | (static_cast<uint16_t>(value) << 8));
     else WriteIO16(addr & ~1u, (old & 0xFF00u) | value);
   } else if (addr >= 0x0E000000u) { WriteBackup8(addr, value); }
-}
+}"""
 
-uint16_t GBACore::ReadIO16(uint32_t addr) const {
-  addr &= ~1u;
-  if (addr < 0x04000000u || addr > 0x040003FEu) return 0;
-  const size_t off = static_cast<size_t>(addr - 0x04000000u);
-  if (off + 1 >= io_regs_.size()) return 0;
-  return static_cast<uint16_t>(io_regs_[off]) |
-         static_cast<uint16_t>(io_regs_[off + 1] << 8);
-}
+# 3. Handle ReadIO16 and WriteIO16
+# Find them in full_content and keep their structure
+readio16 = re.findall(r"uint16_t GBACore::ReadIO16\(uint32_t addr\) const \{.*?^\}", full_content, flags=re.DOTALL | re.MULTILINE)[0]
+writeio16 = re.findall(r"void GBACore::WriteIO16\(uint32_t addr, uint16_t value\) \{.*?^\}", full_content, flags=re.DOTALL | re.MULTILINE)[0]
 
-void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
-  addr &= ~1u;
-  if (addr < 0x04000000u || addr > 0x040003FEu) return;
-  const size_t off = static_cast<size_t>(addr - 0x04000000u);
-  if (off + 1 >= io_regs_.size()) return;
+# Construct file
+new_file = f"""// ---- BEGIN gba_core_memory.cpp ----
+#include "../gba_core.h"
 
-  switch(addr) {
-    case 0x04000000u: value &= ~0x0008u; break; // DISPCNT
-    case 0x04000004u: { // DISPSTAT
-      const uint16_t old = ReadIO16(addr);
-      value = (value & 0xFFB8u) | (old & 0x0007u);
-      break;
-    }
-    case 0x04000006u: return; // VCOUNT RO
-    case 0x04000130u: return; // KEYINPUT RO
-    case 0x04000202u: { // IF W1C
-      const uint16_t old = ReadIO16(addr);
-      value = old & ~value;
-      break;
-    }
-    case 0x04000204u: value &= 0x5FFFu; break; // WAITCNT
-    case 0x04000208u: value &= 0x0001u; break; // IME
-    case 0x04000050u: value &= 0x3FFFu; break; // BLDCNT
-    case 0x04000084u: { // SOUNDCNT_X
-      const uint16_t old = ReadIO16(addr);
-      value = (value & 0x0080u) | (old & 0x000Fu);
-      if ((old & 0x0080u) && !(value & 0x0080u)) {
-        for (size_t i = 0x60; i <= 0x81; ++i) io_regs_[i] = 0;
-        apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
-      }
-      break;
-    }
-    case 0x04000082u: { // SOUNDCNT_H
-      if (value & (1u << 11)) { fifo_a_.clear(); fifo_a_last_sample_ = 0; value &= ~(1u << 11); }
-      if (value & (1u << 15)) { fifo_b_.clear(); fifo_b_last_sample_ = 0; value &= ~(1u << 15); }
-      break;
-    }
-  }
+namespace gba {{
+namespace {{
+{helpers}
+}}  // namespace
 
-  if (addr >= 0x04000008u && addr <= 0x0400000Eu && (addr & 1) == 0) {
-    if ((addr - 0x04000008u) / 2 < 2) value &= ~(1u << 13);
-  }
+{readbus32}
 
-  if (addr >= 0x040000B0u && addr <= 0x040000DEu) {
-    const uint32_t ch = (addr - 0x040000B0u) / 12u;
-    const uint32_t reg = (addr - 0x040000B0u) % 12u;
-    if (reg == 8u && ch < 3u) value &= 0x3FFFu;
-    if (reg == 10u) {
-       uint16_t mask = (ch == 3u) ? 0xFFE0u : 0xF7E0u;
-       value &= mask;
-       if (((value >> 12) & 0x3) == 3 && ch == 0) value &= ~(0x3u << 12);
-    }
-  }
+{read32}
 
-  if (addr >= 0x04000100u && addr <= 0x0400010Eu) {
-    const uint32_t tidx = (addr - 0x04000100u) / 4u;
-    if (tidx < 4) {
-      if (addr & 2) {
-        const uint16_t old = ReadIO16(addr);
-        value &= 0x00C7u; if (tidx == 0) value &= ~0x0004u;
-        timers_[tidx].control = value;
-        if (!(old & 0x80u) && (value & 0x80u)) {
-          timers_[tidx].counter = timers_[tidx].reload;
-          timers_[tidx].prescaler_accum = 0;
-          io_regs_[0x100u + tidx*4] = timers_[tidx].reload & 0xFF;
-          io_regs_[0x101u + tidx*4] = (timers_[tidx].reload >> 8) & 0xFF;
-        }
-      } else {
-        timers_[tidx].reload = value;
-        if (!(timers_[tidx].control & 0x80u)) timers_[tidx].counter = value;
-      }
-    }
-  }
+{read16}
 
-  io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
-  io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
-}
+{read8}
 
-}  // namespace gba
+{write32}
+
+{write16}
+
+{write8}
+
+{readio16}
+
+{writeio16}
+
+}}  // namespace gba
+"""
+
+with open(path, "w") as f:
+    f.write(new_file)
