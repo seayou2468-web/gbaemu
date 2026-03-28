@@ -148,6 +148,7 @@ class GBACore {
   void ServiceInterruptIfNeeded();
 
   uint32_t ReadBus32(uint32_t a) const;
+  void UpdateOpenBus(uint32_t addr, uint32_t val, int size) const;
   uint32_t Read32(uint32_t addr) const;
   uint16_t Read16(uint32_t addr) const;
   uint8_t Read8(uint32_t addr) const;
