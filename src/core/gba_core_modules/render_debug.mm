@@ -97,11 +97,7 @@ void GBACore::RenderDebugFrame() {
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const bool forced_blank = (dispcnt & (1u << 7)) != 0;
-  // During BIOS startup flows, some environments keep forced-blank set while
-  // still updating display state; allow rendering to proceed so startup
-  // animation doesn't appear frozen/white. Keep strict white-fill otherwise.
-  const bool allow_forced_blank_render = bios_boot_via_vector_ || (bios_loaded_ && bios_is_builtin_);
-  if (forced_blank && !allow_forced_blank_render) {
+  if (forced_blank) {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
     EnsureBgPriorityBufferSize();
     std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),

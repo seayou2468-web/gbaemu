@@ -91,8 +91,10 @@ void GBACore::Reset() {
   bios_boot_watchdog_frames_ = 0;
   halt_watchdog_frames_ = 0;
   cpu_.regs[15] = use_real_bios_boot ? 0x00000000u : 0x08000000u;
-  // DISPCNT default: mode 0, forced blank off.
-  WriteIO16(0x04000000u, 0x0000u);
+  // DISPCNT reset defaults:
+  // - Real BIOS boot starts in forced blank.
+  // - Direct-boot/HLE starts with forced blank cleared.
+  WriteIO16(0x04000000u, use_real_bios_boot ? 0x0080u : 0x0000u);
   // Affine defaults: unit matrix (hardware boot state expectation for many
   // direct-boot test ROMs that don't initialize these explicitly).
   WriteIO16(0x04000020u, 0x0100u);  // BG2PA

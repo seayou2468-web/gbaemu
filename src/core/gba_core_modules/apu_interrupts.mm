@@ -295,9 +295,13 @@ void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode, bool disab
   debug_last_exception_cpsr_ = old_cpsr;
   const bool old_thumb = (old_cpsr & (1u << 5)) != 0;
   uint32_t lr_adjust = old_thumb ? 2u : 4u;
-  // IRQ/FIQ return uses SUBS PC,LR,#4; LR must be biased accordingly.
+  // IRQ/FIQ handlers typically return with "SUBS PC, LR, #4".
+  // This requires LR to hold (next instruction + 4) in the pre-exception
+  // instruction set state:
+  //   ARM   : next = PC+4  -> LR = PC+8
+  //   Thumb : next = PC+2  -> LR = PC+6
   if (vector_addr == 0x00000018u || vector_addr == 0x0000001Cu) {
-    lr_adjust = 4u;
+    lr_adjust = old_thumb ? 6u : 8u;
   }
   SwitchCpuMode(target_mode);
   if (HasSpsr(target_mode)) cpu_.spsr[target_mode] = old_cpsr;
