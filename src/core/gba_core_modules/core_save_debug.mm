@@ -24,7 +24,7 @@ std::vector<uint8_t> GBACore::SaveStateBlob() const {
   append_u32(&blob, cpu_.cpsr);
   append_u32(&blob, ppu_cycle_accum_);
   append_u32(&blob, audio_mix_level_);
-  append_u32(&blob, bios_latch_);
+  append_u32(&blob, bios_fetch_latch_);
   append_u32(&blob, keys_pressed_mask_);
   append_u32(&blob, previous_keys_mask_);
   append_u32(&blob, static_cast<uint32_t>(backup_type_));
@@ -139,9 +139,9 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
   apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
   apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
   if (version >= 6u) {
-    if (!read_u32(&off, &bios_latch_)) return false;
+    if (!read_u32(&off, &bios_fetch_latch_)) return false;
   } else {
-    bios_latch_ = 0;
+    bios_fetch_latch_ = 0;
   }
   if (!read_u32(&off, &tmp32)) return false;
   keys_pressed_mask_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);

@@ -204,7 +204,8 @@ class GBACore {
 
   std::vector<uint8_t> rom_;
   std::array<uint8_t, 16 * 1024> bios_{};
-  mutable uint32_t bios_latch_ = 0;
+  mutable uint32_t bios_fetch_latch_ = 0;
+  mutable uint32_t bios_data_latch_ = 0;
   mutable uint32_t open_bus_latch_ = 0;
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;

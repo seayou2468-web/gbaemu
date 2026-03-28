@@ -63,7 +63,7 @@ void GBACore::Reset() {
   apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
   swi_intrwait_active_ = false;
   swi_intrwait_mask_ = 0;
-  bios_latch_ = 0;
+  bios_fetch_latch_ = 0;
   open_bus_latch_ = 0;
   // Prefer true BIOS-vector boot when a real external BIOS is loaded.
   // Built-in BIOS remains HLE/direct-boot oriented.

@@ -100,7 +100,7 @@ bool GBACore::LoadBIOS(const std::vector<uint8_t>& bios, std::string* error) {
   std::copy_n(bios.begin(), bios_.size(), bios_.begin());
   bios_loaded_ = true;
   bios_is_builtin_ = false;
-  bios_latch_ = 0;
+  bios_fetch_latch_ = 0;
   open_bus_latch_ = 0;
   // If a ROM is already loaded, immediately reinitialize so execution and SWI
   // handling use the newly loaded BIOS image.
@@ -114,7 +114,7 @@ void GBACore::LoadBuiltInBIOS() {
   bios_ = kMgbaHleBios;
   bios_loaded_ = true;
   bios_is_builtin_ = true;
-  bios_latch_ = 0;
+  bios_fetch_latch_ = 0;
   open_bus_latch_ = 0;
   if (loaded_) {
     Reset();
