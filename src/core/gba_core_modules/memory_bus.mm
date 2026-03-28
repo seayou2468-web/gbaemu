@@ -162,10 +162,12 @@ uint32_t GBACore::Read32(uint32_t addr) const {
 uint16_t GBACore::Read16(uint32_t addr) const {
   const uint32_t req_addr = addr;
   addr &= ~1u;
+  const bool rotate8 = (req_addr & 1u) != 0u;
   auto ret16 = [&](uint16_t v) -> uint16_t {
+    const uint16_t out = rotate8 ? static_cast<uint16_t>((v >> 8) | (v << 8)) : v;
     const uint32_t shift = (req_addr & 2u) * 8u;
-    open_bus_latch_ = (open_bus_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(v) << shift);
-    return v;
+    open_bus_latch_ = (open_bus_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(out) << shift);
+    return out;
   };
   if (bios_loaded_ && addr < 0x00004000u) {
     if (cpu_.regs[15] < 0x00004000u) {
