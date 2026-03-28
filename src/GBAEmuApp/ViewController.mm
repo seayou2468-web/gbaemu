@@ -208,40 +208,8 @@
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
             [self.engine reset];
-            // Auto-pulse START for a couple of frames to pass "press start"
-            // waits commonly used in bundled test ROMs.
-            [self.engine setKeysPressedMask:0x0008];
-            [self.engine stepFrame];
-            [self.engine stepFrame];
             [self.engine setKeysPressedMask:0x0000];
-            // Keep startup animation visible; avoid skipping BIOS/title sequences
-            // by large hidden warm-up bursts at ROM load.
-            for (NSInteger i = 0; i < 6; i++) {
-                [self.engine stepFrame];
-            }
-            // If frame is still uniform/blank-like, try a short key-probe sequence
-            // to pass simple title/input waits in ROM startup flows.
-            NSData *probeFrame = [self.engine copyCurrentFrameData];
-            if ([self isFrameLikelyUniform:probeFrame]) {
-                [self appendLog:@"起動補助: 画面が均一のため入力プローブ実施"];
-                const uint16_t keyCandidates[] = {0x0008, 0x0001, 0x0002, 0x0004}; // START/A/B/SELECT
-                const NSUInteger keyCount = sizeof(keyCandidates) / sizeof(keyCandidates[0]);
-                for (NSUInteger k = 0; k < keyCount; k++) {
-                    [self.engine setKeysPressedMask:keyCandidates[k]];
-                    for (NSInteger i = 0; i < 6; i++) {
-                        [self.engine stepFrame];
-                    }
-                    [self.engine setKeysPressedMask:0x0000];
-                    for (NSInteger i = 0; i < 24; i++) {
-                        [self.engine stepFrame];
-                    }
-                    probeFrame = [self.engine copyCurrentFrameData];
-                    if (![self isFrameLikelyUniform:probeFrame]) {
-                        [self appendLog:[NSString stringWithFormat:@"起動補助: 入力プローブで進行 (%u)", keyCandidates[k]]];
-                        break;
-                    }
-                }
-            }
+            // 1フレームずつ進める方針: ROMロード時に隠しfast-forwardをしない。
             [self renderCurrentFrame];
             NSString *coreMessage = [self.engine lastErrorMessage];
             if (coreMessage.length > 0 && ![coreMessage isEqualToString:@"(no error)"]) {
