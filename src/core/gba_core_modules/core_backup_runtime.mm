@@ -255,7 +255,9 @@ void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   executed_cycles_ += cycles;
   uint32_t remaining = cycles;
-  constexpr uint32_t kSchedulerSliceCycles = 4;
+  // Larger scheduler slices significantly reduce per-slice overhead while
+  // preserving enough granularity for PPU/timer/DMA edge handling.
+  constexpr uint32_t kSchedulerSliceCycles = 16;
   while (remaining > 0) {
     const uint32_t slice = std::min<uint32_t>(remaining, kSchedulerSliceCycles);
     RunCpuSlice(slice);
@@ -406,4 +408,3 @@ void GBACore::UpdateGameplayFromInput() {
 
 
 }  // namespace gba
-
