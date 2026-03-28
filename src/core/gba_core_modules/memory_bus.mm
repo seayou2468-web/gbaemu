@@ -95,10 +95,10 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     const uint32_t off32 = MirrorOffset(addr & ~3u, 0x05000000u, 0x3FFu);
     if (off32 + 3u < palette_ram_.size()) {
       const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(palette_ram_[off]) |
-             (static_cast<uint32_t>(palette_ram_[off + 1]) << 8) |
-             (static_cast<uint32_t>(palette_ram_[off + 2]) << 16) |
-             (static_cast<uint32_t>(palette_ram_[off + 3]) << 24);
+      return ret32(static_cast<uint32_t>(palette_ram_[off]) |
+                   (static_cast<uint32_t>(palette_ram_[off + 1]) << 8) |
+                   (static_cast<uint32_t>(palette_ram_[off + 2]) << 16) |
+                   (static_cast<uint32_t>(palette_ram_[off + 3]) << 24));
     }
   }
   // 0x06000000-0x06017FFF: VRAM
@@ -106,10 +106,10 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     const uint32_t off32 = VramOffset(addr & ~3u);
     if (off32 + 3u < vram_.size()) {
       const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(vram_[off]) |
-             (static_cast<uint32_t>(vram_[off + 1]) << 8) |
-             (static_cast<uint32_t>(vram_[off + 2]) << 16) |
-             (static_cast<uint32_t>(vram_[off + 3]) << 24);
+      return ret32(static_cast<uint32_t>(vram_[off]) |
+                   (static_cast<uint32_t>(vram_[off + 1]) << 8) |
+                   (static_cast<uint32_t>(vram_[off + 2]) << 16) |
+                   (static_cast<uint32_t>(vram_[off + 3]) << 24));
     }
   }
   // 0x07000000-0x070003FF: OAM
@@ -117,10 +117,10 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     const uint32_t off32 = MirrorOffset(addr & ~3u, 0x07000000u, 0x3FFu);
     if (off32 + 3u < oam_.size()) {
       const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint32_t>(oam_[off]) |
-             (static_cast<uint32_t>(oam_[off + 1]) << 8) |
-             (static_cast<uint32_t>(oam_[off + 2]) << 16) |
-             (static_cast<uint32_t>(oam_[off + 3]) << 24);
+      return ret32(static_cast<uint32_t>(oam_[off]) |
+                   (static_cast<uint32_t>(oam_[off + 1]) << 8) |
+                   (static_cast<uint32_t>(oam_[off + 2]) << 16) |
+                   (static_cast<uint32_t>(oam_[off + 3]) << 24));
     }
   }
   // 0x0E000000-0x0E00FFFF: SRAM/Flash window (modeled as SRAM)
@@ -133,10 +133,10 @@ uint32_t GBACore::Read32(uint32_t addr) const {
   // 0x08000000-0x0DFFFFFF: ROM mirror (32MB window)
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
-      return static_cast<uint32_t>(ReadBackup8(addr)) |
-             (static_cast<uint32_t>(ReadBackup8(addr + 1u)) << 8) |
-             (static_cast<uint32_t>(ReadBackup8(addr + 2u)) << 16) |
-             (static_cast<uint32_t>(ReadBackup8(addr + 3u)) << 24);
+      return ret32(static_cast<uint32_t>(ReadBackup8(addr)) |
+                   (static_cast<uint32_t>(ReadBackup8(addr + 1u)) << 8) |
+                   (static_cast<uint32_t>(ReadBackup8(addr + 2u)) << 16) |
+                   (static_cast<uint32_t>(ReadBackup8(addr + 3u)) << 24));
     }
     if (!rom_.empty()) {
       const size_t base = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu);
@@ -168,7 +168,7 @@ uint16_t GBACore::Read16(uint32_t addr) const {
                                static_cast<uint16_t>(bios_[off + 1] << 8);
         const uint32_t shift = (addr & 2u) * 8u;
         bios_latch_ = (bios_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(value) << shift);
-        return value;
+        return ret16(value);
       }
     }
     return ret16(static_cast<uint16_t>((bios_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu));
@@ -183,15 +183,15 @@ uint16_t GBACore::Read16(uint32_t addr) const {
   }
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
-      return static_cast<uint16_t>(ReadBackup8(addr)) |
-             static_cast<uint16_t>(ReadBackup8(addr + 1u) << 8);
+      return ret16(static_cast<uint16_t>(ReadBackup8(addr)) |
+                   static_cast<uint16_t>(ReadBackup8(addr + 1u) << 8));
     }
     if (!rom_.empty()) {
       const size_t base = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu);
       const size_t off0 = base % rom_.size();
       const size_t off1 = (base + 1u) % rom_.size();
-      return static_cast<uint16_t>(rom_[off0]) |
-             static_cast<uint16_t>(rom_[off1] << 8);
+      return ret16(static_cast<uint16_t>(rom_[off0]) |
+                   static_cast<uint16_t>(rom_[off1] << 8));
     }
   }
   if (addr >= 0x04000000u && addr <= 0x040003FEu) {
@@ -204,29 +204,29 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     const uint32_t off32 = MirrorOffset(addr & ~1u, 0x05000000u, 0x3FFu);
     if (off32 + 1u < palette_ram_.size()) {
       const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(palette_ram_[off]) |
-             static_cast<uint16_t>(palette_ram_[off + 1] << 8);
+      return ret16(static_cast<uint16_t>(palette_ram_[off]) |
+                   static_cast<uint16_t>(palette_ram_[off + 1] << 8));
     }
   }
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
     const uint32_t off32 = VramOffset(addr & ~1u);
     if (off32 + 1u < vram_.size()) {
       const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(vram_[off]) |
-             static_cast<uint16_t>(vram_[off + 1] << 8);
+      return ret16(static_cast<uint16_t>(vram_[off]) |
+                   static_cast<uint16_t>(vram_[off + 1] << 8));
     }
   }
   if (addr >= 0x07000000u && addr <= 0x07FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr & ~1u, 0x07000000u, 0x3FFu);
     if (off32 + 1u < oam_.size()) {
       const size_t off = static_cast<size_t>(off32);
-      return static_cast<uint16_t>(oam_[off]) |
-             static_cast<uint16_t>(oam_[off + 1] << 8);
+      return ret16(static_cast<uint16_t>(oam_[off]) |
+                   static_cast<uint16_t>(oam_[off + 1] << 8));
     }
   }
   if (addr >= 0x0E000000u) {
-    return static_cast<uint16_t>(ReadBackup8(addr)) |
-           static_cast<uint16_t>(ReadBackup8(addr + 1) << 8);
+    return ret16(static_cast<uint16_t>(ReadBackup8(addr)) |
+                 static_cast<uint16_t>(ReadBackup8(addr + 1) << 8));
   }
   return ret16(static_cast<uint16_t>((open_bus_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu));
 }
@@ -260,7 +260,7 @@ uint8_t GBACore::Read8(uint32_t addr) const {
   }
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
-      return ReadBackup8(addr);
+      return ret8(ReadBackup8(addr));
     }
     if (!rom_.empty()) {
       const size_t off = static_cast<size_t>((addr - 0x08000000u) & 0x01FFFFFFu) % rom_.size();
