@@ -97,11 +97,11 @@ void GBACore::RenderDebugFrame() {
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const bool forced_blank = (dispcnt & (1u << 7)) != 0;
-  // Built-in BIOS/direct-boot compatibility: some homebrew/test ROMs rely on
-  // BIOS-init side effects and may leave forced blank set in this environment.
-  // Keep strict white-fill for real BIOS flow, but allow rendering path to
-  // proceed for built-in BIOS mode so frame output doesn't collapse to white.
-  if (forced_blank && !(bios_loaded_ && bios_is_builtin_)) {
+  // During BIOS startup flows, some environments keep forced-blank set while
+  // still updating display state; allow rendering to proceed so startup
+  // animation doesn't appear frozen/white. Keep strict white-fill otherwise.
+  const bool allow_forced_blank_render = bios_boot_via_vector_ || (bios_loaded_ && bios_is_builtin_);
+  if (forced_blank && !allow_forced_blank_render) {
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
     EnsureBgPriorityBufferSize();
     std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
