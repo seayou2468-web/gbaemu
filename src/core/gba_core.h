@@ -147,6 +147,7 @@ class GBACore {
   void EnterException(uint32_t vector_addr, uint32_t new_mode, bool disable_irq, bool thumb_state);
   void ServiceInterruptIfNeeded();
 
+  uint32_t ReadBus32(uint32_t a) const;
   uint32_t Read32(uint32_t addr) const;
   uint16_t Read16(uint32_t addr) const;
   uint8_t Read8(uint32_t addr) const;
