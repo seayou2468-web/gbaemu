@@ -282,7 +282,16 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       const uint32_t shift_type = (opcode >> 5) & 0x3u;
       const uint32_t shift_imm = (opcode >> 7) & 0x1Fu;
       bool ignored_carry = false;
-      offset = ApplyShift(cpu_.regs[rm], shift_type, shift_imm, &ignored_carry);
+      if (shift_imm == 0 && shift_type != 0) {
+        if (shift_type == 3) { // RRX
+          const bool old_c = GetFlagC();
+          offset = (old_c ? 0x80000000u : 0u) | (cpu_.regs[rm] >> 1);
+        } else { // LSR 32 / ASR 32
+          offset = ApplyShift(cpu_.regs[rm], shift_type, 32, &ignored_carry);
+        }
+      } else {
+        offset = ApplyShift(cpu_.regs[rm], shift_type, shift_imm, &ignored_carry);
+      }
     }
     uint32_t addr = arm_reg_value(rn);
     if (pre) {
@@ -396,10 +405,25 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       } else {
         shift_amount = (opcode >> 7) & 0x1Fu;
       }
-      if (reg_shift && shift_amount == 0u) {
-        operand2 = arm_shift_operand_value(rm, true);
-      } else {
-        operand2 = ApplyShift(arm_shift_operand_value(rm, reg_shift), shift_type, shift_amount, &shifter_carry);
+      if (reg_shift) {
+        if (shift_amount == 0) {
+          operand2 = arm_shift_operand_value(rm, true);
+        } else {
+          operand2 = ApplyShift(arm_shift_operand_value(rm, true), shift_type, shift_amount, &shifter_carry);
+        }
+      } else { // Immediate shift
+        if (shift_amount == 0 && shift_type != 0) {
+          if (shift_type == 3) { // RRX
+            const bool old_c = GetFlagC();
+            const uint32_t val = arm_shift_operand_value(rm, false);
+            shifter_carry = (val & 1u) != 0;
+            operand2 = (old_c ? 0x80000000u : 0u) | (val >> 1);
+          } else { // LSR 32 / ASR 32
+            operand2 = ApplyShift(arm_shift_operand_value(rm, false), shift_type, 32, &shifter_carry);
+          }
+        } else {
+          operand2 = ApplyShift(arm_shift_operand_value(rm, false), shift_type, shift_amount, &shifter_carry);
+        }
       }
     }
 
