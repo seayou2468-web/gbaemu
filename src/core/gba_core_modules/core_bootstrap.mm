@@ -93,13 +93,15 @@ bool GBACore::LoadROM(const std::vector<uint8_t>& rom, std::string* error) {
 }
 
 bool GBACore::LoadBIOS(const std::vector<uint8_t>& bios, std::string* error) {
-  if (bios.size() < bios_.size()) {
-    if (error) *error = "BIOS too small (needs 16KB).";
+  if (bios.size() != bios_.size()) {
+    if (error) *error = "BIOS size must be exactly 16KB.";
     return false;
   }
   std::copy_n(bios.begin(), bios_.size(), bios_.begin());
   bios_loaded_ = true;
   bios_is_builtin_ = false;
+  bios_latch_ = 0;
+  open_bus_latch_ = 0;
   // If a ROM is already loaded, immediately reinitialize so execution and SWI
   // handling use the newly loaded BIOS image.
   if (loaded_) {
@@ -112,6 +114,8 @@ void GBACore::LoadBuiltInBIOS() {
   bios_ = kMgbaHleBios;
   bios_loaded_ = true;
   bios_is_builtin_ = true;
+  bios_latch_ = 0;
+  open_bus_latch_ = 0;
   if (loaded_) {
     Reset();
   }

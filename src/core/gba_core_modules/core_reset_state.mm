@@ -7,6 +7,7 @@ namespace gba {
 void GBACore::Reset() {
   frame_count_ = 0;
   executed_cycles_ = 0;
+  open_bus_latch_ = 0;
   keys_pressed_mask_ = 0;
   previous_keys_mask_ = 0;
   std::fill(ewram_.begin(), ewram_.end(), 0);
@@ -20,6 +21,12 @@ void GBACore::Reset() {
   std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
   ResetBackupControllerState();
   timers_ = {};
+  affine_line_refs_valid_ = false;
+  bg2_refx_line_.fill(0);
+  bg2_refy_line_.fill(0);
+  bg3_refx_line_.fill(0);
+  bg3_refy_line_.fill(0);
+  affine_line_captured_.fill(0);
   dma_was_in_vblank_ = false;
   dma_was_in_hblank_ = false;
   dma_fifo_a_request_ = false;
@@ -57,27 +64,45 @@ void GBACore::Reset() {
   swi_intrwait_active_ = false;
   swi_intrwait_mask_ = 0;
   bios_latch_ = 0;
-  cpu_ = CpuState{};
-  cpu_.active_mode = cpu_.cpsr & 0x1Fu;
-  cpu_.banked_fiq_r8_r12.fill(0);
-  // Real hardware leaves post-boot stack pointers at these locations after
-  // BIOS SoftReset (GBATEK "SWI 00h - SoftReset"), then enters game code.
-  cpu_.banked_sp[0x13u] = 0x03007FE0u;  // SVC
-  cpu_.banked_sp[0x12u] = 0x03007FA0u;  // IRQ
-  cpu_.banked_sp[0x1Fu] = 0x03007F00u;  // SYS
-  cpu_.banked_lr[0x13u] = 0;
-  cpu_.banked_lr[0x12u] = 0;
-  cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
-  cpu_.regs[14] = 0;
+  open_bus_latch_ = 0;
   // Prefer true BIOS-vector boot when a real external BIOS is loaded.
   // Built-in BIOS remains HLE/direct-boot oriented.
   const bool use_real_bios_boot = bios_loaded_ && !bios_is_builtin_;
+  cpu_ = CpuState{};
+  cpu_.banked_fiq_r8_r12.fill(0);
+  if (use_real_bios_boot) {
+    // Hardware reset: SVC mode, IRQ/FIQ disabled, ARM state.
+    cpu_.cpsr = 0x000000D3u;
+    cpu_.active_mode = cpu_.cpsr & 0x1Fu;
+    cpu_.regs[13] = 0;
+    cpu_.regs[14] = 0;
+  } else {
+    cpu_.active_mode = cpu_.cpsr & 0x1Fu;
+    // Direct-boot baseline matching post-BIOS SoftReset state.
+    cpu_.banked_sp[0x13u] = 0x03007FE0u;  // SVC
+    cpu_.banked_sp[0x12u] = 0x03007FA0u;  // IRQ
+    cpu_.banked_sp[0x1Fu] = 0x03007F00u;  // SYS
+    cpu_.banked_lr[0x13u] = 0;
+    cpu_.banked_lr[0x12u] = 0;
+    cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
+    cpu_.regs[14] = 0;
+  }
   bios_boot_via_vector_ = use_real_bios_boot;
   bios_boot_watchdog_frames_ = 0;
   halt_watchdog_frames_ = 0;
   cpu_.regs[15] = use_real_bios_boot ? 0x00000000u : 0x08000000u;
   // DISPCNT default: mode 0, forced blank off.
   WriteIO16(0x04000000u, 0x0000u);
+  // Affine defaults: unit matrix (hardware boot state expectation for many
+  // direct-boot test ROMs that don't initialize these explicitly).
+  WriteIO16(0x04000020u, 0x0100u);  // BG2PA
+  WriteIO16(0x04000022u, 0x0000u);  // BG2PB
+  WriteIO16(0x04000024u, 0x0000u);  // BG2PC
+  WriteIO16(0x04000026u, 0x0100u);  // BG2PD
+  WriteIO16(0x04000030u, 0x0100u);  // BG3PA
+  WriteIO16(0x04000032u, 0x0000u);  // BG3PB
+  WriteIO16(0x04000034u, 0x0000u);  // BG3PC
+  WriteIO16(0x04000036u, 0x0100u);  // BG3PD
   if (use_real_bios_boot) {
     // BIOS flow starts from line 0 baseline.
     WriteIO16(0x04000006u, 0x0000u);
