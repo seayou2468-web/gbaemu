@@ -50,8 +50,8 @@ inline uint32_t VramOffset(uint32_t addr) {
 }
 }  // namespace
 
-uint32_t GBACore::Read32(uint32_t addr) const {
-  const uint32_t a = addr & ~3u;
+uint32_t GBACore::ReadBus32(uint32_t a) const {
+  // a is already aligned to 4 bytes here
 
   // 1. BIOS (Internal Bus)
   if (a < 0x00004000u) {
@@ -67,59 +67,128 @@ uint32_t GBACore::Read32(uint32_t addr) const {
         return val;
       }
     }
-    return bios_fetch_latch_;
+    // Protected: return open_bus_latch_ as per latest instruction
+    return open_bus_latch_;
   }
 
-  // 2. System Bus
+  // 2. System Bus Regions
   uint32_t val = open_bus_latch_;
-  bool bus_updated = false;
 
-  if (a >= 0x02000000u && a <= 0x02FFFFFFu) {
+  if (a >= 0x02000000u && a <= 0x02FFFFFFu) { // EWRAM
     val = Read32Wrap(ewram_.data(), MirrorOffset(a, 0x02000000u, 0x3FFFFu), 0x3FFFFu);
-    bus_updated = true;
-  } else if (a >= 0x03000000u && a <= 0x03FFFFFFu) {
+  } else if (a >= 0x03000000u && a <= 0x03FFFFFFu) { // IWRAM
     val = Read32Wrap(iwram_.data(), MirrorOffset(a, 0x03000000u, 0x7FFFu), 0x7FFFu);
-    bus_updated = true;
-  } else if (a >= 0x04000000u && a <= 0x040003FCu) {
-    val = static_cast<uint32_t>(ReadIO16(a)) | (static_cast<uint32_t>(ReadIO16(a + 2u)) << 16);
-    bus_updated = true;
-  } else if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
+  } else if (a >= 0x04000000u && a <= 0x040003FCu) { // IO
+    // IO undefined bits are open bus. ReadIO16 should return bits that are NOT open bus.
+    // For simplicity, we assume if ReadIO16 returns 0 for a region, it might be open bus.
+    // Real GBA IO is complex, but "fallback to open bus" is the rule.
+    const uint16_t lo = ReadIO16(a);
+    const uint16_t hi = ReadIO16(a + 2u);
+    val = static_cast<uint32_t>(lo) | (static_cast<uint32_t>(hi) << 16);
+    // If both are 0, it might be fully undefined -> return open_bus_latch_
+    if (val == 0) val = open_bus_latch_;
+  } else if (a >= 0x05000000u && a <= 0x07FFFFFFu) { // PPU
+    // Strict PPU access control
+    const uint16_t dispcnt = ReadIO16(0x04000000u);
     const uint16_t dispstat = ReadIO16(0x04000004u);
+    const int mode = dispcnt & 7;
     const bool vblank = (dispstat & 1);
     const bool hblank = (dispstat & 2);
-    bool allowed = true;
-    if (a >= 0x07000000u) allowed = vblank;
-    else if (a >= 0x05000000u && a <= 0x05FFFFFFu) allowed = (vblank || hblank);
-    if (allowed) {
-      if (a >= 0x05000000u && a <= 0x05FFFFFFu)
-        val = Read32Wrap(palette_ram_.data(), MirrorOffset(a, 0x05000000u, 0x3FFu), 0x3FFu);
-      else if (a >= 0x06000000u && a <= 0x06FFFFFFu)
-        val = Read32Wrap(vram_.data(), VramOffset(a), 0x1FFFFu);
-      else if (a >= 0x07000000u)
-        val = Read32Wrap(oam_.data(), MirrorOffset(a, 0x07000000u, 0x3FFu), 0x3FFu);
-      bus_updated = true;
+
+    bool blocked = false;
+    if (a >= 0x07000000u) { // OAM
+      if (!vblank && !hblank) blocked = true; // Blocked during H-Draw
+    } else if (a >= 0x05000000u && a <= 0x05FFFFFFu) { // Palette
+      if (!vblank && !hblank) blocked = true;
+    } else { // VRAM
+      if (!vblank && !hblank && (mode >= 3)) blocked = true; // Simplified
     }
-  } else if (a >= 0x08000000u && a <= 0x0DFFFFFFu) {
+
+    if (!blocked) {
+       if (a >= 0x05000000u && a <= 0x05FFFFFFu)
+         val = Read32Wrap(palette_ram_.data(), MirrorOffset(a, 0x05000000u, 0x3FFu), 0x3FFu);
+       else if (a >= 0x06000000u && a <= 0x06FFFFFFu)
+         val = Read32Wrap(vram_.data(), VramOffset(a), 0x1FFFFu);
+       else if (a >= 0x07000000u)
+         val = Read32Wrap(oam_.data(), MirrorOffset(a, 0x07000000u, 0x3FFu), 0x3FFu);
+    }
+  } else if (a >= 0x08000000u && a <= 0x0DFFFFFFu) { // ROM
     if (backup_type_ == BackupType::kEEPROM && a >= 0x0D000000u) {
       val = (open_bus_latch_ & ~1u) | (ReadBackup8(a) & 1u);
-      bus_updated = true;
     } else if (!rom_.empty()) {
       const size_t base = static_cast<size_t>((a - 0x08000000u) & 0x01FFFFFFu);
       val = static_cast<uint32_t>(rom_[base % rom_.size()]) |
             (static_cast<uint32_t>(rom_[(base+1) % rom_.size()]) << 8) |
             (static_cast<uint32_t>(rom_[(base+2) % rom_.size()]) << 16) |
             (static_cast<uint32_t>(rom_[(base+3) % rom_.size()]) << 24);
-      bus_updated = true;
     }
+  } else if (a >= 0x0E000000u) { // SRAM
+    if (backup_type_ == BackupType::kSRAM) {
+      const uint8_t v8 = ReadBackup8(a);
+      val = v8 | (v8 << 8) | (v8 << 16) | (v8 << 24);
+    }
+  }
+
+  return val;
+}
+
+uint32_t GBACore::Read32(uint32_t addr) const {
+  const uint32_t a = addr & ~3u;
+
+  // BIOS Protection
+  if (a < 0x00004000u) {
+    if (cpu_.regs[15] >= 0x00004000u) return open_bus_latch_;
+    if (bios_loaded_ && a < bios_.size()) {
+      const size_t off = static_cast<size_t>(a);
+      const uint32_t val = static_cast<uint32_t>(bios_[off]) |
+                           (static_cast<uint32_t>(bios_[off + 1]) << 8) |
+                           (static_cast<uint32_t>(bios_[off + 2]) << 16) |
+                           (static_cast<uint32_t>(bios_[off + 3]) << 24);
+      if (a == (cpu_.regs[15] & ~3u)) bios_fetch_latch_ = val;
+      else bios_data_latch_ = val;
+      // BIOS reads do not update system open_bus_latch_
+      return val;
+    }
+    return bios_fetch_latch_;
+  }
+
+  uint32_t val = open_bus_latch_;
+  bool mapped = false;
+
+  if (a >= 0x02000000u && a <= 0x02FFFFFFu) {
+    val = Read32Wrap(ewram_.data(), MirrorOffset(a, 0x02000000u, 0x3FFFFu), 0x3FFFFu);
+    mapped = true;
+  } else if (a >= 0x03000000u && a <= 0x03FFFFFFu) {
+    val = Read32Wrap(iwram_.data(), MirrorOffset(a, 0x03000000u, 0x7FFFu), 0x7FFFu);
+    mapped = true;
+  } else if (a >= 0x04000000u && a <= 0x040003FCu) {
+    val = static_cast<uint32_t>(ReadIO16(a)) | (static_cast<uint32_t>(ReadIO16(a + 2u)) << 16);
+    mapped = true;
+  } else if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
+    val = Read32Wrap(palette_ram_.data(), MirrorOffset(a, 0x05000000u, 0x3FFu), 0x3FFu);
+    if (a >= 0x06000000u && a <= 0x06FFFFFFu) val = Read32Wrap(vram_.data(), VramOffset(a), 0x1FFFFu);
+    else if (a >= 0x07000000u) val = Read32Wrap(oam_.data(), MirrorOffset(a, 0x07000000u, 0x3FFu), 0x3FFu);
+    mapped = true;
+  } else if (a >= 0x08000000u && a <= 0x0DFFFFFFu) {
+    if (backup_type_ == BackupType::kEEPROM && a >= 0x0D000000u) {
+      val = (open_bus_latch_ & ~1u) | (ReadBackup8(a) & 1u);
+    } else if (!rom_.empty()) {
+      const size_t base = static_cast<size_t>((a - 0x08000000u) & 0x01FFFFFFu);
+      val = static_cast<uint32_t>(rom_[base % rom_.size()]) |
+            (static_cast<uint32_t>(rom_[(base + 1) % rom_.size()]) << 8) |
+            (static_cast<uint32_t>(rom_[(base + 2) % rom_.size()]) << 16) |
+            (static_cast<uint32_t>(rom_[(base + 3) % rom_.size()]) << 24);
+    }
+    mapped = true;
   } else if (a >= 0x0E000000u) {
     if (backup_type_ == BackupType::kSRAM) {
       const uint8_t v8 = ReadBackup8(a);
       val = v8 | (v8 << 8) | (v8 << 16) | (v8 << 24);
-      bus_updated = true;
+      mapped = true;
     }
   }
 
-  if (bus_updated) open_bus_latch_ = val;
+  if (mapped) open_bus_latch_ = val;
   const uint32_t rot = (addr & 3u) * 8u;
   return (rot == 0) ? val : RotateRight(val, rot);
 }
@@ -129,211 +198,167 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     return static_cast<uint16_t>(Read8(addr)) | (static_cast<uint16_t>(Read8(addr + 1u)) << 8);
   }
   const uint32_t a = addr & ~1u;
-  const uint32_t shift = (a & 2u) * 8u;
-
-  // 1. BIOS (Internal Bus)
   if (a < 0x00004000u) {
-    // BIOS Read16 returns bits from bios_fetch_latch_ ONLY
-    return static_cast<uint16_t>((bios_fetch_latch_ >> shift) & 0xFFFFu);
+    if (cpu_.regs[15] >= 0x00004000u) return static_cast<uint16_t>((open_bus_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu);
+    return static_cast<uint16_t>((bios_fetch_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu);
   }
 
-  // 2. System Bus
-  uint16_t val = static_cast<uint16_t>((open_bus_latch_ >> shift) & 0xFFFFu);
-  bool bus_updated = false;
-
+  uint32_t full = open_bus_latch_;
+  bool mapped = false;
   if (a >= 0x02000000u && a <= 0x02FFFFFFu) {
-    val = Read16Wrap(ewram_.data(), MirrorOffset(a, 0x02000000u, 0x3FFFFu), 0x3FFFFu);
-    bus_updated = true;
+    full = Read32Wrap(ewram_.data(), MirrorOffset(a & ~3u, 0x02000000u, 0x3FFFFu), 0x3FFFFu);
+    mapped = true;
   } else if (a >= 0x03000000u && a <= 0x03FFFFFFu) {
-    val = Read16Wrap(iwram_.data(), MirrorOffset(a, 0x03000000u, 0x7FFFu), 0x7FFFu);
-    bus_updated = true;
+    full = Read32Wrap(iwram_.data(), MirrorOffset(a & ~3u, 0x03000000u, 0x7FFFu), 0x7FFFu);
+    mapped = true;
   } else if (a >= 0x04000000u && a <= 0x040003FEu) {
-    val = ReadIO16(a);
-    bus_updated = true;
+    full = static_cast<uint32_t>(ReadIO16(a & ~3u)) | (static_cast<uint32_t>(ReadIO16((a & ~3u) + 2u)) << 16);
+    mapped = true;
   } else if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
-    const uint16_t dispstat = ReadIO16(0x04000004u);
-    const bool vblank = (dispstat & 1);
-    const bool hblank = (dispstat & 2);
-    bool allowed = true;
-    if (a >= 0x07000000u) allowed = vblank;
-    else if (a >= 0x05000000u && a <= 0x05FFFFFFu) allowed = (vblank || hblank);
-    if (allowed) {
-      if (a >= 0x05000000u && a <= 0x05FFFFFFu)
-        val = Read16Wrap(palette_ram_.data(), MirrorOffset(a, 0x05000000u, 0x3FFu), 0x3FFu);
-      else if (a >= 0x06000000u && a <= 0x06FFFFFFu)
-        val = Read16Wrap(vram_.data(), VramOffset(a), 0x1FFFFu);
-      else if (a >= 0x07000000u)
-        val = Read16Wrap(oam_.data(), MirrorOffset(a, 0x07000000u, 0x3FFu), 0x3FFu);
-      bus_updated = true;
-    }
+    full = Read32Wrap(palette_ram_.data(), MirrorOffset(a & ~3u, 0x05000000u, 0x3FFu), 0x3FFu);
+    if (a >= 0x06000000u && a <= 0x06FFFFFFu) full = Read32Wrap(vram_.data(), VramOffset(a & ~3u), 0x1FFFFu);
+    else if (a >= 0x07000000u) full = Read32Wrap(oam_.data(), MirrorOffset(a & ~3u, 0x07000000u, 0x3FFu), 0x3FFu);
+    mapped = true;
   } else if (a >= 0x08000000u && a <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && a >= 0x0D000000u) {
-      val = (static_cast<uint16_t>(open_bus_latch_ >> shift) & ~1u) | (ReadBackup8(a) & 1u);
-      bus_updated = true;
+      full = (open_bus_latch_ & ~1u) | (ReadBackup8(a) & 1u);
     } else if (!rom_.empty()) {
-      const size_t base = static_cast<size_t>((a - 0x08000000u) & 0x01FFFFFFu);
-      val = static_cast<uint16_t>(rom_[base % rom_.size()]) |
-            (static_cast<uint16_t>(rom_[(base+1) % rom_.size()]) << 8);
-      bus_updated = true;
+      const size_t base = static_cast<size_t>((a & ~3u) - 0x08000000u) & 0x01FFFFFFu;
+      full = static_cast<uint32_t>(rom_[base % rom_.size()]) |
+             (static_cast<uint32_t>(rom_[(base + 1) % rom_.size()]) << 8) |
+             (static_cast<uint32_t>(rom_[(base + 2) % rom_.size()]) << 16) |
+             (static_cast<uint32_t>(rom_[(base + 3) % rom_.size()]) << 24);
     }
+    mapped = true;
   } else if (a >= 0x0E000000u) {
     if (backup_type_ == BackupType::kSRAM) {
       const uint8_t v8 = ReadBackup8(a);
-      val = v8 | (v8 << 8);
-      bus_updated = true;
+      full = v8 | (v8 << 8) | (v8 << 16) | (v8 << 24);
+      mapped = true;
     }
   }
 
-  if (bus_updated) {
-    open_bus_latch_ = (open_bus_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(val) << shift);
-  }
-  return val;
+  if (mapped) open_bus_latch_ = full;
+  return static_cast<uint16_t>((open_bus_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu);
 }
 
 uint8_t GBACore::Read8(uint32_t addr) const {
-  const uint32_t shift = (addr & 3u) * 8u;
-
-  // 1. BIOS (Internal Bus)
   if (addr < 0x00004000u) {
-    // BIOS Read8 returns bits from bios_fetch_latch_ ONLY
-    return static_cast<uint8_t>((bios_fetch_latch_ >> shift) & 0xFFu);
+    if (cpu_.regs[15] >= 0x00004000u) return static_cast<uint8_t>((open_bus_latch_ >> ((addr & 3u) * 8u)) & 0xFFu);
+    return static_cast<uint8_t>((bios_fetch_latch_ >> ((addr & 3u) * 8u)) & 0xFFu);
   }
 
-  // 2. System Bus
-  uint8_t val = static_cast<uint8_t>((open_bus_latch_ >> shift) & 0xFFu);
-  bool bus_updated = false;
-
+  uint32_t full = open_bus_latch_;
+  bool mapped = false;
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
-    val = ewram_[MirrorOffset(addr, 0x02000000u, 0x3FFFFu)];
-    bus_updated = true;
+    full = Read32Wrap(ewram_.data(), MirrorOffset(addr & ~3u, 0x02000000u, 0x3FFFFu), 0x3FFFFu);
+    mapped = true;
   } else if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
-    val = iwram_[MirrorOffset(addr, 0x03000000u, 0x7FFFu)];
-    bus_updated = true;
+    full = Read32Wrap(iwram_.data(), MirrorOffset(addr & ~3u, 0x03000000u, 0x7FFFu), 0x7FFFu);
+    mapped = true;
   } else if (addr >= 0x04000000u && addr <= 0x040003FFu) {
-    const uint16_t v16 = ReadIO16(addr & ~1u);
-    val = static_cast<uint8_t>((v16 >> ((addr & 1u) * 8u)) & 0xFFu);
-    bus_updated = true;
+    full = static_cast<uint32_t>(ReadIO16(addr & ~3u)) | (static_cast<uint32_t>(ReadIO16((addr & ~3u) + 2u)) << 16);
+    mapped = true;
   } else if (addr >= 0x05000000u && addr <= 0x07FFFFFFu) {
-    const uint16_t dispstat = ReadIO16(0x04000004u);
-    const bool vblank = (dispstat & 1);
-    const bool hblank = (dispstat & 2);
-    bool allowed = true;
-    if (addr >= 0x07000000u) allowed = vblank;
-    else if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) allowed = (vblank || hblank);
-    if (allowed) {
-      if (addr >= 0x05000000u && addr <= 0x05FFFFFFu)
-        val = palette_ram_[MirrorOffset(addr, 0x05000000u, 0x3FFu)];
-      else if (addr >= 0x06000000u && addr <= 0x06FFFFFFu)
-        val = vram_[VramOffset(addr)];
-      else if (addr >= 0x07000000u)
-        val = oam_[MirrorOffset(addr, 0x07000000u, 0x3FFu)];
-      bus_updated = true;
-    }
+    full = Read32Wrap(palette_ram_.data(), MirrorOffset(addr & ~3u, 0x05000000u, 0x3FFu), 0x3FFu);
+    if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) full = Read32Wrap(vram_.data(), VramOffset(addr & ~3u), 0x1FFFFu);
+    else if (addr >= 0x07000000u) full = Read32Wrap(oam_.data(), MirrorOffset(addr & ~3u, 0x07000000u, 0x3FFu), 0x3FFu);
+    mapped = true;
   } else if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
-      val = (val & ~1u) | (ReadBackup8(addr) & 1u);
-      bus_updated = true;
+      full = (open_bus_latch_ & ~1u) | (ReadBackup8(addr) & 1u);
     } else if (!rom_.empty()) {
-      val = rom_[(addr - 0x08000000u) % rom_.size()];
-      bus_updated = true;
+      const size_t base = static_cast<size_t>((addr & ~3u) - 0x08000000u) & 0x01FFFFFFu;
+      full = static_cast<uint32_t>(rom_[base % rom_.size()]) |
+             (static_cast<uint32_t>(rom_[(base + 1) % rom_.size()]) << 8) |
+             (static_cast<uint32_t>(rom_[(base + 2) % rom_.size()]) << 16) |
+             (static_cast<uint32_t>(rom_[(base + 3) % rom_.size()]) << 24);
     }
+    mapped = true;
   } else if (addr >= 0x0E000000u) {
-    val = ReadBackup8(addr);
-    bus_updated = true;
+    if (backup_type_ == BackupType::kSRAM) {
+      const uint8_t v8 = ReadBackup8(addr);
+      full = v8 | (v8 << 8) | (v8 << 16) | (v8 << 24);
+      mapped = true;
+    }
   }
 
-  if (bus_updated) {
-    open_bus_latch_ = (open_bus_latch_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(val) << shift);
-  }
-  return val;
+  if (mapped) open_bus_latch_ = full;
+  return static_cast<uint8_t>((open_bus_latch_ >> ((addr & 3u) * 8u)) & 0xFFu);
 }
 
 void GBACore::Write32(uint32_t addr, uint32_t value) {
+  open_bus_latch_ = value;
   if (addr == 0x040000A0u || addr == 0x040000A4u) {
     PushAudioFifo(addr == 0x040000A0u, value);
-    open_bus_latch_ = value;
     return;
   }
-  if (addr >= 0x05000000u && addr <= 0x07FFFFFFu) {
-    const uint32_t a = addr & ~3u;
-    if (a >= 0x05000000u && a <= 0x05FFFFFFu) {
-      Write32Wrap(palette_ram_.data(), MirrorOffset(a, 0x05000000u, 0x3FFu), 0x3FFu, value);
-    } else if (a >= 0x06000000u && a <= 0x06FFFFFFu) {
-      const uint32_t off = VramOffset(a);
-      if (off + 3 < vram_.size()) {
-        vram_[off] = static_cast<uint8_t>(value & 0xFFu);
-        vram_[off+1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
-        vram_[off+2] = static_cast<uint8_t>((value >> 16) & 0xFFu);
-        vram_[off+3] = static_cast<uint8_t>((value >> 24) & 0xFFu);
-      }
-    } else if (a >= 0x07000000u && a <= 0x07FFFFFFu) {
-      Write32Wrap(oam_.data(), MirrorOffset(a, 0x07000000u, 0x3FFu), 0x3FFu, value);
-    }
-    open_bus_latch_ = value;
-    return;
+  const uint32_t a = addr;
+  if (a >= 0x02000000u && a <= 0x02FFFFFFu) {
+    Write32Wrap(ewram_.data(), MirrorOffset(a, 0x02000000u, 0x3FFFFu), 0x3FFFFu, value);
+  } else if (a >= 0x03000000u && a <= 0x03FFFFFFu) {
+    Write32Wrap(iwram_.data(), MirrorOffset(a, 0x03000000u, 0x7FFFu), 0x7FFFu, value);
+  } else if (a >= 0x04000000u && a <= 0x040003FCu) {
+    WriteIO16(a & ~1u, static_cast<uint16_t>(value & 0xFFFFu));
+    WriteIO16((a + 2u) & ~1u, static_cast<uint16_t>((value >> 16) & 0xFFFFu));
+  } else if (a >= 0x05000000u && a <= 0x05FFFFFFu) {
+    Write32Wrap(palette_ram_.data(), MirrorOffset(a & ~1u, 0x05000000u, 0x3FFu), 0x3FFu, value);
+  } else if (a >= 0x06000000u && a <= 0x06FFFFFFu) {
+    Write32Wrap(vram_.data(), VramOffset(a & ~1u), 0x1FFFFu, value);
+  } else if (a >= 0x07000000u && a <= 0x07FFFFFFu) {
+    Write32Wrap(oam_.data(), MirrorOffset(a & ~1u, 0x07000000u, 0x3FFu), 0x3FFu, value);
+  } else if (a >= 0x0E000000u) {
+    WriteBackup8(a, static_cast<uint8_t>(value & 0xFFu));
+    WriteBackup8(a+1, static_cast<uint8_t>((value >> 8) & 0xFFu));
+    WriteBackup8(a+2, static_cast<uint8_t>((value >> 16) & 0xFFu));
+    WriteBackup8(a+3, static_cast<uint8_t>((value >> 24) & 0xFFu));
   }
-  Write8(addr, static_cast<uint8_t>(value & 0xFFu));
-  Write8(addr + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
-  Write8(addr + 2, static_cast<uint8_t>((value >> 16) & 0xFFu));
-  Write8(addr + 3, static_cast<uint8_t>((value >> 24) & 0xFFu));
-  open_bus_latch_ = value;
 }
 
 void GBACore::Write16(uint32_t addr, uint16_t value) {
-  if (addr >= 0x05000000u && addr <= 0x07FFFFFFu) {
-    const uint32_t a = addr & ~1u;
-    if (a >= 0x05000000u && a <= 0x05FFFFFFu) {
-      Write16Wrap(palette_ram_.data(), MirrorOffset(a, 0x05000000u, 0x3FFu), 0x3FFu, value);
-    } else if (a >= 0x06000000u && a <= 0x06FFFFFFu) {
-      const uint32_t off = VramOffset(a);
-      if (off + 1 < vram_.size()) {
-        vram_[off] = static_cast<uint8_t>(value & 0xFFu);
-        vram_[off+1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
-      }
-    } else if (a >= 0x07000000u && a <= 0x07FFFFFFu) {
-      Write16Wrap(oam_.data(), MirrorOffset(a, 0x07000000u, 0x3FFu), 0x3FFu, value);
-    }
-    const uint32_t shift = (addr & 2u) * 8u;
-    open_bus_latch_ = (open_bus_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(value) << shift);
-    return;
+  open_bus_latch_ = (value | (static_cast<uint32_t>(value) << 16));
+  const uint32_t a = addr;
+  if (a >= 0x02000000u && a <= 0x02FFFFFFu) {
+    Write16Wrap(ewram_.data(), MirrorOffset(a, 0x02000000u, 0x3FFFFu), 0x3FFFFu, value);
+  } else if (a >= 0x03000000u && a <= 0x03FFFFFFu) {
+    Write16Wrap(iwram_.data(), MirrorOffset(a, 0x03000000u, 0x7FFFu), 0x7FFFu, value);
+  } else if (a >= 0x04000000u && a <= 0x040003FEu) {
+    WriteIO16(a & ~1u, value);
+  } else if (a >= 0x05000000u && a <= 0x05FFFFFFu) {
+    Write16Wrap(palette_ram_.data(), MirrorOffset(a & ~1u, 0x05000000u, 0x3FFu), 0x3FFu, value);
+  } else if (a >= 0x06000000u && a <= 0x06FFFFFFu) {
+    Write16Wrap(vram_.data(), VramOffset(a & ~1u), 0x1FFFFu, value);
+  } else if (a >= 0x07000000u && a <= 0x07FFFFFFu) {
+    Write16Wrap(oam_.data(), MirrorOffset(a & ~1u, 0x07000000u, 0x3FFu), 0x3FFu, value);
+  } else if (a >= 0x0E000000u) {
+    WriteBackup8(a, static_cast<uint8_t>(value & 0xFFu));
+    WriteBackup8(a+1, static_cast<uint8_t>((value >> 8) & 0xFFu));
   }
-  Write8(addr, static_cast<uint8_t>(value & 0xFFu));
-  Write8(addr + 1, static_cast<uint8_t>((value >> 8) & 0xFFu));
-  const uint32_t shift = (addr & 2u) * 8u;
-  open_bus_latch_ = (open_bus_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(value) << shift);
 }
 
 void GBACore::Write8(uint32_t addr, uint8_t value) {
+  open_bus_latch_ = (value | (value << 8) | (value << 16) | (value << 24));
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     ewram_[MirrorOffset(addr, 0x02000000u, 0x3FFFFu)] = value;
   } else if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
     iwram_[MirrorOffset(addr, 0x03000000u, 0x7FFFu)] = value;
   } else if (addr >= 0x04000000u && addr <= 0x040003FFu) {
     const uint16_t old = ReadIO16(addr & ~1u);
-    if (addr & 1u) {
-      WriteIO16(addr & ~1u, static_cast<uint16_t>((old & 0x00FFu) | (static_cast<uint16_t>(value) << 8)));
-    } else {
-      WriteIO16(addr & ~1u, static_cast<uint16_t>((old & 0xFF00u) | value));
-    }
+    if (addr & 1u) WriteIO16(addr & ~1u, (old & 0xFFu) | (static_cast<uint16_t>(value) << 8));
+    else WriteIO16(addr & ~1u, (old & 0xFF00u) | value);
   } else if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
     const uint32_t off = MirrorOffset(addr & ~1u, 0x05000000u, 0x3FFu);
     palette_ram_[off] = value;
     palette_ram_[off + 1] = value;
   } else if (addr >= 0x0E000000u) {
     WriteBackup8(addr, value);
-  } else if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u && addr <= 0x0DFFFFFFu) {
-    WriteBackup8(addr, static_cast<uint8_t>(value & 1u));
   }
-  const uint32_t shift = (addr & 3u) * 8u;
-  open_bus_latch_ = (open_bus_latch_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(value) << shift);
 }
 
 uint16_t GBACore::ReadIO16(uint32_t addr) const {
-  const uint32_t a = addr & ~1u;
-  const uint32_t shift = (a & 2u) * 8u;
-  if (a < 0x04000000u || a > 0x040003FEu) return static_cast<uint16_t>((open_bus_latch_ >> shift) & 0xFFFFu);
-  const size_t off = static_cast<size_t>(a - 0x04000000u);
-  if (off + 1 >= io_regs_.size()) return static_cast<uint16_t>((open_bus_latch_ >> shift) & 0xFFFFu);
+  if (addr < 0x04000000u || addr > 0x040003FEu) return 0; // Bus logic handles Open Bus fallback
+  const size_t off = static_cast<size_t>(addr - 0x04000000u);
+  if (off + 1 >= io_regs_.size()) return 0;
   return static_cast<uint16_t>(io_regs_[off]) |
          static_cast<uint16_t>(io_regs_[off + 1] << 8);
 }
