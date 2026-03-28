@@ -53,7 +53,7 @@ inline uint32_t VramOffset(uint32_t addr) {
 uint32_t GBACore::Read32(uint32_t addr) const {
   const uint32_t a = addr & ~3u;
 
-  // 1. BIOS Region
+  // 1. BIOS Region (Internal Path)
   if (a < 0x00004000u) {
     if (bios_loaded_ && cpu_.regs[15] < 0x00004000u) {
       const size_t off = static_cast<size_t>(a);
@@ -63,15 +63,14 @@ uint32_t GBACore::Read32(uint32_t addr) const {
                       (static_cast<uint32_t>(bios_[off + 2]) << 16) |
                       (static_cast<uint32_t>(bios_[off + 3]) << 24);
       }
-      open_bus_latch_ = bios_latch_;
-      return bios_latch_;
-    } else {
-      // Protection active: Return bios_latch_ (not open_bus)
-      return bios_latch_;
     }
+    // BIOS read returns bios_latch_ and NEVER updates open_bus_latch_
+    // Misaligned Read32 from BIOS region (internal bus) still applies rotation
+    const uint32_t rot = (addr & 3u) * 8u;
+    return (rot == 0) ? bios_latch_ : RotateRight(bios_latch_, rot);
   }
 
-  // 2. Mapped Regions
+  // 2. System Bus Regions
   uint32_t val = open_bus_latch_;
   bool updated = false;
 
@@ -107,10 +106,9 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     }
   } else if (a >= 0x0E000000u) {
     if (backup_type_ == BackupType::kSRAM) {
-      val = static_cast<uint32_t>(ReadBackup8(a)) |
-            (static_cast<uint32_t>(ReadBackup8(a + 1)) << 8) |
-            (static_cast<uint32_t>(ReadBackup8(a + 2)) << 16) |
-            (static_cast<uint32_t>(ReadBackup8(a + 3)) << 24);
+      const uint8_t v8 = ReadBackup8(a);
+      val = static_cast<uint32_t>(v8) | (static_cast<uint32_t>(v8) << 8) |
+            (static_cast<uint32_t>(v8) << 16) | (static_cast<uint32_t>(v8) << 24);
       updated = true;
     }
   }
@@ -123,22 +121,17 @@ uint32_t GBACore::Read32(uint32_t addr) const {
 
 uint16_t GBACore::Read16(uint32_t addr) const {
   const uint32_t a = addr & ~1u;
-  const uint32_t shift = (a & 2u) * 8u;
+  const uint32_t word_addr = addr & ~3u;
+  const uint32_t shift = (addr & 2u) * 8u;
 
-  // 1. BIOS Region
-  if (a < 0x00004000u) {
-    if (bios_loaded_ && cpu_.regs[15] < 0x00004000u) {
-      const uint16_t val = static_cast<uint16_t>((bios_latch_ >> shift) & 0xFFFFu);
-      open_bus_latch_ = (open_bus_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(val) << shift);
-      if (addr & 1u) return static_cast<uint16_t>((val >> 8) | (val << 8));
-      return val;
-    } else {
-      // Protection active: Return bios_latch_ bits
-      return static_cast<uint16_t>((bios_latch_ >> shift) & 0xFFFFu);
-    }
+  // 1. BIOS Region (Internal Path)
+  if (word_addr < 0x00004000u) {
+    const uint16_t val = static_cast<uint16_t>((bios_latch_ >> shift) & 0xFFFFu);
+    // BIOS read NEVER updates open_bus_latch_
+    return val;
   }
 
-  // 2. Mapped Regions
+  // 2. System Bus Regions
   uint16_t val = static_cast<uint16_t>((open_bus_latch_ >> shift) & 0xFFFFu);
   bool updated = false;
 
@@ -167,11 +160,12 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     } else if (!rom_.empty()) {
       const size_t base = static_cast<size_t>((a - 0x08000000u) & 0x01FFFFFFu);
       val = static_cast<uint16_t>(rom_[base % rom_.size()]) |
-            static_cast<uint16_t>(rom_[(base + 1) % rom_.size()] << 8);
+            (static_cast<uint16_t>(rom_[(base + 1) % rom_.size()]) << 8);
       updated = true;
     }
   } else if (a >= 0x0E000000u) {
-    val = static_cast<uint16_t>(ReadBackup8(a)) | static_cast<uint16_t>(ReadBackup8(a + 1) << 8);
+    const uint8_t v8 = ReadBackup8(a);
+    val = static_cast<uint16_t>(v8) | (static_cast<uint16_t>(v8) << 8);
     updated = true;
   }
 
@@ -179,26 +173,24 @@ uint16_t GBACore::Read16(uint32_t addr) const {
     open_bus_latch_ = (open_bus_latch_ & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(val) << shift);
   }
 
-  if (addr & 1u) return static_cast<uint16_t>((val >> 8) | (val << 8));
+  // Misaligned halfword read behavior (on system bus)
+  if (addr & 1u) {
+     return static_cast<uint16_t>((val >> 8) | (val << 8));
+  }
   return val;
 }
 
 uint8_t GBACore::Read8(uint32_t addr) const {
+  const uint32_t word_addr = addr & ~3u;
   const uint32_t shift = (addr & 3u) * 8u;
 
-  // 1. BIOS Region
-  if (addr < 0x00004000u) {
-    if (bios_loaded_ && cpu_.regs[15] < 0x00004000u) {
-      const uint8_t val = bios_[addr & 0x3FFFu];
-      open_bus_latch_ = (open_bus_latch_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(val) << shift);
-      return val;
-    } else {
-      // Protection active: Return bios_latch_ bits
-      return static_cast<uint8_t>((bios_latch_ >> shift) & 0xFFu);
-    }
+  // 1. BIOS Region (Internal Path)
+  if (word_addr < 0x00004000u) {
+    // Returns byte from bios_latch_ (already fetched instruction data)
+    return static_cast<uint8_t>((bios_latch_ >> shift) & 0xFFu);
   }
 
-  // 2. Mapped Regions
+  // 2. System Bus Regions
   uint8_t val = static_cast<uint8_t>((open_bus_latch_ >> shift) & 0xFFu);
   bool updated = false;
 
