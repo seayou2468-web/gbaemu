@@ -193,9 +193,9 @@ uint16_t GBACore::Read16(uint32_t addr) const {
   }
   if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u) {
-      const uint16_t prev = static_cast<uint16_t>((open_bus_latch_ >> ((addr & 2u) * 8u)) & 0xFFFFu);
+      const uint16_t prev = static_cast<uint16_t>((open_bus_latch_ >> ((req_addr & 2u) * 8u)) & 0xFFFFu);
       const uint16_t bit = static_cast<uint16_t>(ReadBackup8(addr) & 1u);
-      const uint16_t merged = static_cast<uint16_t>((prev & ~0x0101u) | (bit ? 0x0101u : 0u));
+      const uint16_t merged = static_cast<uint16_t>((prev & ~1u) | bit);
       return ret16(merged);
     }
     if (!rom_.empty()) {
@@ -456,12 +456,15 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
 }
 
 void GBACore::Write8(uint32_t addr, uint8_t value) {
-  const uint32_t shift = (addr & 3u) * 8u;
-  open_bus_latch_ = (open_bus_latch_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(value) << shift);
+  auto latch8 = [&]() {
+    const uint32_t shift = (addr & 3u) * 8u;
+    open_bus_latch_ = (open_bus_latch_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(value) << shift);
+  };
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
     const uint32_t off32 = MirrorOffset(addr, 0x02000000u, 0x3FFFFu);
     if (off32 < ewram_.size()) {
       ewram_[static_cast<size_t>(off32)] = value;
+      latch8();
       return;
     }
   }
@@ -469,6 +472,7 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     const uint32_t off32 = MirrorOffset(addr, 0x03000000u, 0x7FFFu);
     if (off32 < iwram_.size()) {
       iwram_[static_cast<size_t>(off32)] = value;
+      latch8();
       return;
     }
   }
@@ -478,6 +482,7 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
       const size_t off = static_cast<size_t>(off32);
       palette_ram_[off] = value;
       palette_ram_[off + 1] = value;
+      latch8();
       return;
     }
   }
@@ -491,10 +496,12 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
   }
   if (addr >= 0x0E000000u) {
     WriteBackup8(addr, value);
+    latch8();
     return;
   }
   if (backup_type_ == BackupType::kEEPROM && addr >= 0x0D000000u && addr <= 0x0DFFFFFFu) {
     WriteBackup8(addr, static_cast<uint8_t>(value & 0x1u));
+    latch8();
     return;
   }
   if (addr >= 0x04000000u && addr <= 0x040003FFu) {
@@ -506,6 +513,7 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
       } else {
         WriteIO16(addr & ~1u, static_cast<uint16_t>((old & 0xFF00u) | value));
       }
+      latch8();
     }
   }
 }
