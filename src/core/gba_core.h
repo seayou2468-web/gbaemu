@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -204,6 +205,7 @@ class GBACore {
   std::vector<uint8_t> rom_;
   std::array<uint8_t, 16 * 1024> bios_{};
   mutable uint32_t bios_latch_ = 0;
+  mutable uint32_t open_bus_latch_ = 0;
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;
   bool bios_boot_via_vector_ = false;
@@ -221,8 +223,8 @@ class GBACore {
   std::vector<uint32_t> frame_buffer_;
   uint32_t ppu_cycle_accum_ = 0;
   uint16_t audio_mix_level_ = 0;
-  std::vector<uint8_t> fifo_a_;
-  std::vector<uint8_t> fifo_b_;
+  std::deque<uint8_t> fifo_a_;
+  std::deque<uint8_t> fifo_b_;
   int16_t fifo_a_last_sample_ = 0;
   int16_t fifo_b_last_sample_ = 0;
   uint32_t apu_phase_sq1_ = 0;
@@ -268,6 +270,12 @@ class GBACore {
   CpuState cpu_{};
   GameplayState gameplay_state_{};
   uint64_t frame_count_ = 0;
+  std::array<int32_t, mgba_compat::kVideoTotalLines> bg2_refx_line_{};
+  std::array<int32_t, mgba_compat::kVideoTotalLines> bg2_refy_line_{};
+  std::array<int32_t, mgba_compat::kVideoTotalLines> bg3_refx_line_{};
+  std::array<int32_t, mgba_compat::kVideoTotalLines> bg3_refy_line_{};
+  std::array<uint8_t, mgba_compat::kVideoTotalLines> affine_line_captured_{};
+  bool affine_line_refs_valid_ = false;
   uint64_t executed_cycles_ = 0;
   uint16_t keys_pressed_mask_ = 0;
   uint16_t previous_keys_mask_ = 0;

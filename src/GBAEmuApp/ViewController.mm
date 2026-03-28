@@ -208,40 +208,8 @@
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
             [self.engine reset];
-            // Auto-pulse START for a couple of frames to pass "press start"
-            // waits commonly used in bundled test ROMs.
-            [self.engine setKeysPressedMask:0x0008];
-            [self.engine stepFrame];
-            [self.engine stepFrame];
             [self.engine setKeysPressedMask:0x0000];
-            // Many commercial titles need dozens of frames after reset/BIOS init
-            // before first visible draw. Warm up the core once on load.
-            for (NSInteger i = 0; i < 90; i++) {
-                [self.engine stepFrame];
-            }
-            // If frame is still uniform/blank-like, try a short key-probe sequence
-            // to pass simple title/input waits in ROM startup flows.
-            NSData *probeFrame = [self.engine copyCurrentFrameData];
-            if ([self isFrameLikelyUniform:probeFrame]) {
-                [self appendLog:@"起動補助: 画面が均一のため入力プローブ実施"];
-                const uint16_t keyCandidates[] = {0x0008, 0x0001, 0x0002, 0x0004}; // START/A/B/SELECT
-                const NSUInteger keyCount = sizeof(keyCandidates) / sizeof(keyCandidates[0]);
-                for (NSUInteger k = 0; k < keyCount; k++) {
-                    [self.engine setKeysPressedMask:keyCandidates[k]];
-                    for (NSInteger i = 0; i < 6; i++) {
-                        [self.engine stepFrame];
-                    }
-                    [self.engine setKeysPressedMask:0x0000];
-                    for (NSInteger i = 0; i < 24; i++) {
-                        [self.engine stepFrame];
-                    }
-                    probeFrame = [self.engine copyCurrentFrameData];
-                    if (![self isFrameLikelyUniform:probeFrame]) {
-                        [self appendLog:[NSString stringWithFormat:@"起動補助: 入力プローブで進行 (%u)", keyCandidates[k]]];
-                        break;
-                    }
-                }
-            }
+            // 1フレームずつ進める方針: ROMロード時に隠しfast-forwardをしない。
             [self renderCurrentFrame];
             NSString *coreMessage = [self.engine lastErrorMessage];
             if (coreMessage.length > 0 && ![coreMessage isEqualToString:@"(no error)"]) {
@@ -280,9 +248,9 @@
         return;
     }
 
-    self.startupSuppressFrames = 45; // 約0.75秒分を抑制して起動直後の点滅を吸収
+    self.startupSuppressFrames = 0;
     self.startupStableFrames = 0;
-    self.startupSettled = NO;
+    self.startupSettled = YES;
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(handleDisplayLink:)];
     [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.statusLabel.text = @"再生中";
@@ -296,22 +264,6 @@
     NSData *frameData = [self.engine copyCurrentFrameData];
     if (frameData.length == 0) {
         return;
-    }
-    if (!self.startupSettled) {
-        if (![self isFrameLikelyUniform:frameData]) {
-            self.startupStableFrames += 1;
-        } else {
-            self.startupStableFrames = 0;
-        }
-        if (self.startupSuppressFrames > 0) {
-            self.startupSuppressFrames -= 1;
-        }
-        if (self.startupStableFrames >= 3 || self.startupSuppressFrames <= 0) {
-            self.startupSettled = YES;
-            [self appendLog:@"再生起動: 初期点滅抑制を解除"];
-        } else {
-            return;
-        }
     }
     [self presentFrameData:frameData];
 }
