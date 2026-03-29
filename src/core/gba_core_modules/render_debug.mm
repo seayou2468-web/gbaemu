@@ -4,11 +4,6 @@
 namespace gba {
 
 void GBACore::ApplyColorEffects() {
-  const size_t required = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
-  if (frame_buffer_.size() != required) {
-    frame_buffer_.assign(required, 0xFF000000U);
-  }
-
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
@@ -23,6 +18,7 @@ void GBACore::ApplyColorEffects() {
   auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semi = ObjSemiTransMaskBuffer();
   auto& bg_base = BgBaseColorBuffer(); auto& bg_sec = BgSecondColorBuffer();
   auto& bg_sec_layer = BgSecondLayerBuffer();
+  const size_t required = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
   if (bg_layer.size() != required) EnsureBgLayerBufferSize();
   if (obj_drawn.size() != required) EnsureObjDrawnMaskBufferSize();
   if (obj_semi.size() != required) EnsureObjSemiTransMaskBufferSize();
@@ -65,9 +61,8 @@ void GBACore::ApplyColorEffects() {
 }
 
 void GBACore::RenderDebugFrame() {
-  const size_t required = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
-  if (frame_buffer_.size() != required) {
-    frame_buffer_.assign(required, 0xFF000000U);
+  if (frame_buffer_.empty()) {
+    frame_buffer_.assign(kScreenWidth * kScreenHeight, 0xFF000000U);
   }
 
   const uint16_t dispcnt = ReadIO16(0x04000000u);
