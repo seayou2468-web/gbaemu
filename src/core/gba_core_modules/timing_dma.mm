@@ -21,37 +21,40 @@ void GBACore::StepPpu(uint32_t cycles) {
 
     const bool in_hblank = (dispstat & 2) != 0;
     const uint32_t next_event = in_hblank ? kScanlineCycles : kHDrawCycles;
-    const uint32_t distance = (ppu_cycle_accum_ < next_event) ? (next_event - ppu_cycle_accum_) : 1u;
-    const uint32_t step = std::min(remaining, distance);
+    const uint32_t dist = (ppu_cycle_accum_ < next_event) ? (next_event - ppu_cycle_accum_) : 1u;
+    const uint32_t step = std::min(remaining, dist);
 
     ppu_cycle_accum_ += step;
     remaining -= step;
 
+    // HBlank Priority logic
     if (ppu_cycle_accum_ >= kHDrawCycles && !in_hblank) {
       dispstat |= 0x0002u;
       if (dispstat & (1u << 4)) RaiseInterrupt(1u << 1);
       write_io_raw16(0x04000004u, dispstat);
-      StepDma(); // Start DMA immediately after HBlank flag is set
+      StepDma();
     }
 
+    // Scanline End (including VBlank logic)
     if (ppu_cycle_accum_ >= kScanlineCycles) {
-      ppu_cycle_accum_ -= kScanlineCycles;
+      ppu_cycle_accum_ = 0;
       const uint16_t next_vcount = (vcount + 1u) % mgba_compat::kVideoTotalLines;
       write_io_raw16(0x04000006u, next_vcount);
 
-      dispstat &= ~0x0002u;
+      // Update DISPSTAT for the new line
+      dispstat &= ~0x0002u; // Exit HBlank
       const bool was_vblank = (dispstat & 1) != 0;
       const bool now_vblank = (next_vcount >= 160 && next_vcount < 227);
+
       if (now_vblank) {
         dispstat |= 0x0001u;
         if (!was_vblank && (dispstat & (1u << 3))) RaiseInterrupt(1u << 0);
-        write_io_raw16(0x04000004u, dispstat);
-        if (!was_vblank) StepDma(); // VBlank trigger
+        if (!was_vblank) StepDma();
       } else {
         dispstat &= ~0x0001u;
-        write_io_raw16(0x04000004u, dispstat);
       }
 
+      // VCOUNT match logic
       const uint16_t vcount_compare = (dispstat >> 8) & 0x00FFu;
       if (next_vcount == vcount_compare) {
         if (!(dispstat & 0x0004u) && (dispstat & (1u << 5))) RaiseInterrupt(1u << 2);
@@ -59,13 +62,14 @@ void GBACore::StepPpu(uint32_t cycles) {
       } else {
         dispstat &= ~0x0004u;
       }
+
       write_io_raw16(0x04000004u, dispstat);
 
+      // Corrected 28-bit sign extension for affine refs
       if (next_vcount < mgba_compat::kVideoTotalLines) {
         auto rb28 = [&](uint32_t addr) {
           uint32_t r = Read32(addr) & 0x0FFFFFFFu;
-          if (r & 0x08000000u) r |= 0xF0000000u;
-          return static_cast<int32_t>(r);
+          return static_cast<int32_t>(r << 4) >> 4;
         };
         bg2_refx_line_[next_vcount] = rb28(0x04000028u);
         bg2_refy_line_[next_vcount] = rb28(0x0400002Cu);
@@ -90,47 +94,35 @@ void GBACore::StepTimers(uint32_t cycles) {
 
   uint32_t remaining = cycles;
   while (remaining > 0) {
-    // Determine the step to next interesting event (prescaler tick or end of chunk)
-    uint32_t step = remaining;
-    for (int i = 0; i < 4; ++i) {
-      if (!(timers_[i].control & 0x80u) || (i > 0 && (timers_[i].control & 4))) continue;
-      const uint32_t prescaler = kPrescalerLut[timers_[i].control & 3];
-      const uint32_t to_next = prescaler - (timers_[i].prescaler_accum % prescaler);
-      if (to_next < step) step = to_next;
-    }
-
-    remaining -= step;
+    // Step by step for accuracy across cascaded timers
+    remaining--;
     bool overflowed[4] = {false, false, false, false};
 
     for (int i = 0; i < 4; ++i) {
       TimerState& t = timers_[i];
       if (!(t.control & 0x80u)) continue;
 
-      if (i > 0 && (t.control & 4)) { // Count-up mode
-        if (overflowed[i - 1]) {
-          t.counter++;
-          if (t.counter == 0) {
-            t.counter = t.reload;
-            overflowed[i] = true;
-            if (t.control & 0x40u) RaiseInterrupt(1u << (3 + i));
-            ConsumeAudioFifoOnTimer(i);
-          }
-          write_timer_raw(i, t.counter);
-        }
+      bool tick = false;
+      if (i > 0 && (t.control & 4)) {
+        if (overflowed[i - 1]) tick = true;
       } else {
         const uint32_t prescaler = kPrescalerLut[t.control & 3];
-        t.prescaler_accum += step;
-        while (t.prescaler_accum >= prescaler) {
-          t.prescaler_accum -= prescaler;
-          t.counter++;
-          if (t.counter == 0) {
-            t.counter = t.reload;
-            overflowed[i] = true;
-            if (t.control & 0x40u) RaiseInterrupt(1u << (3 + i));
-            ConsumeAudioFifoOnTimer(i);
-          }
-          write_timer_raw(i, t.counter);
+        t.prescaler_accum++;
+        if (t.prescaler_accum >= prescaler) {
+          t.prescaler_accum = 0;
+          tick = true;
         }
+      }
+
+      if (tick) {
+        t.counter++;
+        if (t.counter == 0) {
+          t.counter = t.reload;
+          overflowed[i] = true;
+          if (t.control & 0x40u) RaiseInterrupt(1u << (3 + i));
+          ConsumeAudioFifoOnTimer(i);
+        }
+        write_timer_raw(i, t.counter);
       }
     }
   }
@@ -158,6 +150,7 @@ void GBACore::StepDma() {
       dma_shadows_[ch].sad = Read32(base + 0);
       dma_shadows_[ch].dad = Read32(base + 4);
       uint32_t c = ReadIO16(base + 8);
+      // Correct default counts for GBA
       if (c == 0) c = (ch == 3) ? 0x10000u : 0x4000u;
       dma_shadows_[ch].count = c;
       dma_shadows_[ch].active = true;
@@ -179,7 +172,7 @@ void GBACore::StepDma() {
     uint32_t src = dma_shadows_[ch].sad;
     uint32_t dst = dma_shadows_[ch].dad;
     uint32_t count = dma_shadows_[ch].count;
-    if (start_timing == 3 && (ch == 1 || ch == 2)) count = 4;
+    if (start_timing == 3 && (ch == 1 || ch == 2)) count = 4; // Sound FIFO always 4
 
     const bool word32 = (cnt_h & 0x0400u) != 0;
     const uint32_t addr_mask = (ch == 0) ? 0x07FFFFFFu : 0x0FFFFFFFu;
@@ -201,12 +194,12 @@ void GBACore::StepDma() {
     const bool repeat = (cnt_h & 0x0200u) != 0;
     if (repeat && start_timing != 0) {
       if (dst_ctl == 3) {
-        // Reload destination from I/O DAD
+        // Correct reload: DAD shadow is reloaded from DAD I/O
         dma_shadows_[ch].dad = Read32(base + 4);
       } else {
         dma_shadows_[ch].dad = dst;
       }
-      // Reload count from I/O CNT_L for next trigger
+      // Re-load count for next trigger
       uint32_t c = ReadIO16(base + 8);
       if (c == 0) c = (ch == 3) ? 0x10000u : 0x4000u;
       dma_shadows_[ch].count = c;
@@ -220,6 +213,7 @@ void GBACore::StepDma() {
       io_regs_[off+1] = (next_cnt >> 8) & 0xFF;
     }
 
+    // Interrupt fires ONLY after full transfer
     if (cnt_h & 0x4000u) RaiseInterrupt(1u << (8 + ch));
   }
 }
@@ -229,28 +223,35 @@ void GBACore::PushAudioFifo(bool fifo_a, uint32_t value) {
   for (int i = 0; i < 4; ++i) {
     fifo.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFFu));
   }
+  // If size is too big, discard old samples
   while (fifo.size() > mgba_compat::kAudioFifoCapacityBytes) fifo.pop_front();
+
+  // Re-check DMA request: if size dropped to threshold, set request?
+  // Usually request is set when pop occurs.
 }
 
 void GBACore::ConsumeAudioFifoOnTimer(size_t timer_index) {
   const uint16_t soundcnt_h = ReadIO16(0x04000082u);
   const bool fifo_a_timer1 = (soundcnt_h & (1u << 10)) != 0;
   const bool fifo_b_timer1 = (soundcnt_h & (1u << 14)) != 0;
-  auto pop_fifo = [&](std::deque<uint8_t>* fifo, int16_t* last_sample) {
+
+  auto pop_fifo = [&](std::deque<uint8_t>* fifo, int16_t* last_sample, bool* dma_req) {
     if (!fifo->empty()) {
       const int8_t sample = static_cast<int8_t>(fifo->front());
       fifo->pop_front();
       *last_sample = static_cast<int16_t>(sample);
     }
-    // Else: keep the last_sample value as is (hardware behavior)
+    // Set DMA request if size falls to threshold (16 bytes)
+    if (fifo->size() <= mgba_compat::kAudioFifoDmaRequestThreshold) {
+      *dma_req = true;
+    }
   };
+
   if ((timer_index == 0u && !fifo_a_timer1) || (timer_index == 1u && fifo_a_timer1)) {
-    pop_fifo(&fifo_a_, &fifo_a_last_sample_);
-    if (fifo_a_.size() <= mgba_compat::kAudioFifoDmaRequestThreshold) dma_fifo_a_request_ = true;
+    pop_fifo(&fifo_a_, &fifo_a_last_sample_, &dma_fifo_a_request_);
   }
   if ((timer_index == 0u && !fifo_b_timer1) || (timer_index == 1u && fifo_b_timer1)) {
-    pop_fifo(&fifo_b_, &fifo_b_last_sample_);
-    if (fifo_b_.size() <= mgba_compat::kAudioFifoDmaRequestThreshold) dma_fifo_b_request_ = true;
+    pop_fifo(&fifo_b_, &fifo_b_last_sample_, &dma_fifo_b_request_);
   }
 }
 
