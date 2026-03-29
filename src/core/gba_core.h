@@ -276,6 +276,7 @@ class GBACore {
   struct DmaState {
     uint32_t sad = 0, dad = 0, count = 0;
     bool active = false;
+    uint32_t initial_dad = 0, initial_count = 0;
   };
   std::array<DmaState, 4> dma_shadows_{};
 

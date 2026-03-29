@@ -225,22 +225,47 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       const uint16_t old = ReadIO16(addr);
       const uint16_t vcount = ReadIO16(0x04000006u);
       const uint16_t lyc = (value >> 8) & 0xFF;
-      value = (value & 0xFFB8u) | (old & 0x0003u);
+      value = (value & 0xFFB8u) | (old & 0x0007u);
       if (vcount == lyc) value |= 0x0004u; else value &= ~0x0004u;
       break;
     }
     case 0x04000006u: return;
-    case 0x04000028u: bg2_refx_internal_ = (int32_t)( (static_cast<uint32_t>(value) | (static_cast<uint32_t>(ReadIO16(0x0400002Au)) << 16)) << 4 ) >> 4; break;
-    case 0x0400002Au: bg2_refx_internal_ = (int32_t)( (static_cast<uint32_t>(ReadIO16(0x04000028u)) | (static_cast<uint32_t>(value) << 16)) << 4 ) >> 4; break;
-    case 0x0400002Cu: bg2_refy_internal_ = (int32_t)( (static_cast<uint32_t>(value) | (static_cast<uint32_t>(ReadIO16(0x0400002Eu)) << 16)) << 4 ) >> 4; break;
-    case 0x0400002Eu: bg2_refy_internal_ = (int32_t)( (static_cast<uint32_t>(ReadIO16(0x0400002Cu)) | (static_cast<uint32_t>(value) << 16)) << 4 ) >> 4; break;
-    case 0x04000038u: bg3_refx_internal_ = (int32_t)( (static_cast<uint32_t>(value) | (static_cast<uint32_t>(ReadIO16(0x0400003Au)) << 16)) << 4 ) >> 4; break;
-    case 0x0400003Au: bg3_refx_internal_ = (int32_t)( (static_cast<uint32_t>(ReadIO16(0x04000038u)) | (static_cast<uint32_t>(value) << 16)) << 4 ) >> 4; break;
-    case 0x0400003Cu: bg3_refy_internal_ = (int32_t)( (static_cast<uint32_t>(value) | (static_cast<uint32_t>(ReadIO16(0x0400003Eu)) << 16)) << 4 ) >> 4; break;
-    case 0x0400003Eu: bg3_refy_internal_ = (int32_t)( (static_cast<uint32_t>(ReadIO16(0x0400003Cu)) | (static_cast<uint32_t>(value) << 16)) << 4 ) >> 4; break;
     case 0x04000202u: {
       const uint16_t old = ReadIO16(addr);
       value = old & ~value;
+      break;
+    }
+    case 0x04000130u: return;
+
+    // DMA Control Registers
+    case 0x040000B8u: // DMA0CNT_H
+    case 0x040000C4u: // DMA1CNT_H
+    case 0x040000D0u: // DMA2CNT_H
+    case 0x040000DCu: { // DMA3CNT_H
+      const int ch = (addr - 0x040000B8u) / 12 + ((addr == 0x040000B8u) ? 0 : 0); // Wait, offset is fixed
+      int actual_ch = 0;
+      if (addr == 0x040000B8u) actual_ch = 0;
+      else if (addr == 0x040000C4u) actual_ch = 1;
+      else if (addr == 0x040000D0u) actual_ch = 2;
+      else actual_ch = 3;
+
+      const uint16_t old = ReadIO16(addr);
+      uint16_t mask = (actual_ch == 3) ? 0xFFE0u : 0xF7E0u;
+      value &= mask;
+      if (((value >> 12) & 3) == 3 && actual_ch == 0) value &= ~(3u << 12);
+
+      if (!(old & 0x8000u) && (value & 0x8000u)) {
+        // Latch SAD/DAD/CNT into shadows on enable transition
+        const uint32_t base = 0x040000B0u + actual_ch * 12u;
+        dma_shadows_[actual_ch].sad = Read32(base);
+        dma_shadows_[actual_ch].initial_dad = Read32(base + 4);
+        dma_shadows_[actual_ch].dad = dma_shadows_[actual_ch].initial_dad;
+        uint32_t c = ReadIO16(base + 8);
+        if (c == 0) c = (actual_ch == 3) ? 0x10000u : 0x4000u;
+        dma_shadows_[actual_ch].initial_count = c;
+        dma_shadows_[actual_ch].count = c;
+        dma_shadows_[actual_ch].active = true;
+      }
       break;
     }
   }
@@ -264,6 +289,11 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
 
   io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
   io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+
+  // Trigger immediate DMA
+  if (addr == 0x040000B8u || addr == 0x040000C4u || addr == 0x040000D0u || addr == 0x040000DCu) {
+    if ((value & 0x8000u) && ((value >> 12) & 3) == 0) StepDma();
+  }
 }
 
 }  // namespace gba
