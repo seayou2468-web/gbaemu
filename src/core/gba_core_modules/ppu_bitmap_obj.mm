@@ -8,29 +8,32 @@ bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_
                          bool obj_1d, bool color_256, int src_w, int tx, int ty,
                          uint16_t tile_id, uint16_t palbank, uint16_t* out_color_index) {
   if (out_color_index == nullptr) return false;
-  const int tile_x = tx / 8;
-  const int tile_y = ty / 8;
-  const int in_x = tx & 7;
-  const int in_y = ty & 7;
+  const int tile_x = tx / 8, tile_y = ty / 8;
+  const int in_x = tx & 7, in_y = ty & 7;
 
-  const int tiles_per_row = src_w / 8;
-  const int row_stride_units = obj_1d ? (color_256 ? tiles_per_row * 2 : tiles_per_row) : 32;
-  const uint32_t tile_base = color_256 ? static_cast<uint32_t>(tile_id & ~1u) : static_cast<uint32_t>(tile_id);
-  const uint32_t tile_units = tile_base + static_cast<uint32_t>(tile_y * row_stride_units + (color_256 ? tile_x * 2 : tile_x));
+  uint32_t t_id = tile_id;
+  if (color_256) t_id &= ~1u;
+
+  uint32_t tile_units;
+  if (obj_1d) {
+    const int tiles_per_row = src_w / 8;
+    tile_units = t_id + static_cast<uint32_t>(tile_y * (color_256 ? tiles_per_row * 2 : tiles_per_row) + (color_256 ? tile_x * 2 : tile_x));
+  } else {
+    // 2D Mapping: Hardware uses 32-tile stride (1024 bytes per row of tiles)
+    tile_units = t_id + static_cast<uint32_t>(tile_y * 32 + (color_256 ? tile_x * 2 : tile_x));
+  }
 
   const size_t chr_base_off = obj_chr_base + static_cast<size_t>(tile_units) * 32u;
   if (chr_base_off >= vram.size()) return false;
 
   if (color_256) {
-    const size_t chr_off = (chr_base_off + static_cast<size_t>(in_y * 8 + in_x)) % vram.size();
-    const uint8_t color = vram[chr_off];
+    const uint8_t color = vram[(chr_base_off + static_cast<size_t>(in_y * 8 + in_x)) % vram.size()];
     if (color == 0u) return false;
     *out_color_index = color;
     return true;
   }
 
-  const size_t chr_off = (chr_base_off + static_cast<size_t>(in_y * 4 + in_x / 2)) % vram.size();
-  const uint8_t packed = vram[chr_off];
+  const uint8_t packed = vram[(chr_base_off + static_cast<size_t>(in_y * 4 + in_x / 2)) % vram.size()];
   const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
   if (nib == 0u) return false;
   *out_color_index = static_cast<uint16_t>(palbank * 16u + nib);
@@ -41,14 +44,25 @@ bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_
 
 void GBACore::RenderMode3Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t off = static_cast<size_t>(y * kScreenWidth + x);
+      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
+        frame_buffer_[off] = backdrop;
+        BgPriorityBuffer()[off] = 4;
+        BgLayerBuffer()[off] = 4;
+        continue;
+      }
       const uint32_t vram_off = off * 2;
       const uint16_t bgr = static_cast<uint16_t>(vram_[vram_off]) | (static_cast<uint16_t>(vram_[vram_off+1]) << 8);
       frame_buffer_[off] = Bgr555ToRgba8888(bgr);
-      BgPriorityBuffer()[off] = 3; // Mode 3 has BG2 at priority 3
+      BgPriorityBuffer()[off] = 3;
       BgLayerBuffer()[off] = 2;
     }
   }
@@ -56,11 +70,22 @@ void GBACore::RenderMode3Frame() {
 
 void GBACore::RenderMode4Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
-  const uint16_t dispcnt = ReadIO16(0x04000000);
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
+  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
   const uint32_t page_base = (dispcnt & 0x10) ? 0xA000 : 0;
+
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
       const size_t off = static_cast<size_t>(y * kScreenWidth + x);
+      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
+        frame_buffer_[off] = backdrop;
+        BgPriorityBuffer()[off] = 4;
+        BgLayerBuffer()[off] = 4;
+        continue;
+      }
       const uint8_t idx = vram_[page_base + off];
       const size_t pal_off = static_cast<size_t>(idx) * 2;
       const uint16_t bgr = static_cast<uint16_t>(palette_ram_[pal_off]) | (static_cast<uint16_t>(palette_ram_[pal_off+1]) << 8);
@@ -73,19 +98,24 @@ void GBACore::RenderMode4Frame() {
 
 void GBACore::RenderMode5Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
-  const uint16_t dispcnt = ReadIO16(0x04000000);
   const uint32_t page_base = (dispcnt & 0x10) ? 0xA000 : 0;
 
   for (int y = 0; y < 128; ++y) {
     for (int x = 0; x < 160; ++x) {
+      const int tx = x + (240-160)/2, ty = y + (160-128)/2;
+      const size_t fb_off = static_cast<size_t>(ty * kScreenWidth + tx);
+      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, tx, ty)) {
+        continue;
+      }
       const size_t off = static_cast<size_t>(y * 160 + x);
       const uint32_t vram_off = page_base + off * 2;
       const uint16_t bgr = static_cast<uint16_t>(vram_[vram_off]) | (static_cast<uint16_t>(vram_[vram_off+1]) << 8);
-      const int target_x = x + (240-160)/2;
-      const int target_y = y + (160-128)/2;
-      const size_t fb_off = static_cast<size_t>(target_y * kScreenWidth + target_x);
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr);
       BgPriorityBuffer()[fb_off] = 3;
       BgLayerBuffer()[fb_off] = 2;

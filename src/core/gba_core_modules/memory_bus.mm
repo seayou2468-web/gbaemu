@@ -33,6 +33,42 @@ inline void Write32Wrap(uint8_t* buf, uint32_t off, uint32_t mask, size_t size, 
 }
 }  // namespace
 
+void GBACore::AddWaitstates(uint32_t addr, int size) const {
+  uint32_t region = addr >> 24;
+  bool seq = ((addr & ~3u) == (last_access_addr_ & ~3u)) && (addr >= last_access_addr_);
+  last_access_addr_ = addr;
+
+  int cycles = 1;
+  switch (region) {
+    case 0x00: cycles = 1; break;
+    case 0x02: cycles = (size == 4) ? 6 : 3; break;
+    case 0x03: cycles = 1; break;
+    case 0x04: cycles = 1; break;
+    case 0x05:
+    case 0x06: cycles = (size == 4) ? 2 : 1; break;
+    case 0x07: cycles = 1; break;
+    case 0x08:
+    case 0x09:
+    case 0x0A:
+    case 0x0B:
+    case 0x0C:
+    case 0x0D: {
+      // ROM Waitstates (N=4, S=2 default)
+      uint16_t waitcnt = ReadIO16(0x04000204u);
+      int n_clks[4] = {4, 3, 2, 8};
+      int s_clks[2] = {2, 1};
+      int n = n_clks[(waitcnt >> 2) & 3];
+      int s = s_clks[(waitcnt >> 4) & 1];
+      cycles = seq ? s : n;
+      if (size == 4) cycles += s;
+      break;
+    }
+    case 0x0E:
+    case 0x0F: cycles = (size == 4) ? 4 : (size == 2 ? 2 : 1); break;
+  }
+  waitstates_accum_ += cycles;
+}
+
 void GBACore::UpdateOpenBus(uint32_t addr, uint32_t val, int size) const {
   if (addr < 0x02000000u) return; // BIOS/Protected or invalid
 
@@ -104,6 +140,7 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
 }
 
 uint32_t GBACore::Read32(uint32_t addr) const {
+  AddWaitstates(addr, 4);
   if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) return open_bus_latch_;
   const uint32_t val = ReadBus32(addr);
   UpdateOpenBus(addr, val, 4);
@@ -112,6 +149,7 @@ uint32_t GBACore::Read32(uint32_t addr) const {
 }
 
 uint16_t GBACore::Read16(uint32_t addr) const {
+  AddWaitstates(addr, 2);
   if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) return static_cast<uint16_t>(open_bus_latch_ >> ((addr & 2u) * 8u));
   const uint32_t val = ReadBus32(addr);
   UpdateOpenBus(addr, val, 2);
@@ -122,6 +160,7 @@ uint16_t GBACore::Read16(uint32_t addr) const {
 }
 
 uint8_t GBACore::Read8(uint32_t addr) const {
+  AddWaitstates(addr, 1);
   if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) return static_cast<uint8_t>(open_bus_latch_ >> ((addr & 3u) * 8u));
   const uint32_t val = ReadBus32(addr);
   UpdateOpenBus(addr, val, 1);
@@ -129,59 +168,52 @@ uint8_t GBACore::Read8(uint32_t addr) const {
 }
 
 void GBACore::Write32(uint32_t addr, uint32_t value) {
+  AddWaitstates(addr, 4);
   if (addr == 0x040000A0u || addr == 0x040000A4u) { PushAudioFifo(addr == 0x040000A0u, value); return; }
-
-  // Update latch with word
   UpdateOpenBus(addr, value, 4);
-
-  // Decomposition
   Write16(addr, static_cast<uint16_t>(value));
   Write16(addr + 2u, static_cast<uint16_t>(value >> 16));
 }
 
 void GBACore::Write16(uint32_t addr, uint16_t value) {
+  AddWaitstates(addr, 2);
   UpdateOpenBus(addr, value, 2);
-
   const uint32_t a = addr;
   if (a >= 0x04000000u && a <= 0x040003FEu) { WriteIO16(a & ~1u, value); return; }
-
   if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
     const uint16_t dispstat = ReadIO16(0x04000004u);
     const bool vblank = (dispstat & 1);
     const bool hblank = (dispstat & 2);
-
-    // Aligned write check
     const uint32_t aligned = a & ~1u;
-
-    if (aligned >= 0x07000000u) { // OAM
-      if (vblank) Write16Wrap(oam_.data(), aligned & 0x3FFu, 0x3FFu, oam_.size(), value);
-    } else { // Palette or VRAM
-      if (vblank || hblank) {
-        if (aligned >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(aligned), 0x1FFFFu, vram_.size(), value);
-        else Write16Wrap(palette_ram_.data(), aligned & 0x3FFu, 0x3FFu, palette_ram_.size(), value);
-      }
+    if (aligned >= 0x07000000u) { if (vblank) Write16Wrap(oam_.data(), aligned & 0x3FFu, 0x3FFu, oam_.size(), value); }
+    else if (vblank || hblank) {
+       if (aligned >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(aligned), 0x1FFFFu, vram_.size(), value);
+       else Write16Wrap(palette_ram_.data(), aligned & 0x3FFu, 0x3FFu, palette_ram_.size(), value);
     }
     return;
   }
-
   Write8(a, static_cast<uint8_t>(value));
   Write8(a + 1u, static_cast<uint8_t>(value >> 8));
 }
 
 void GBACore::Write8(uint32_t addr, uint8_t value) {
-  UpdateOpenBus(addr, value, 1);
+  AddWaitstates(addr, 1);
+  UpdateOpenBus(addr, (value * 0x01010101u), 1);
 
-  if (addr >= 0x05000000u && addr <= 0x05FFFFFFu) {
-    // Palette RAM: 8-bit write duplicated to 16-bit
+  if (addr >= 0x05000000u && addr <= 0x07FFFFFFu) {
+    // Replicate byte to both halves of aligned 16-bit word
+    const uint32_t a = addr & ~1u;
+    const uint16_t v16 = value | (static_cast<uint16_t>(value) << 8);
     const uint16_t dispstat = ReadIO16(0x04000004u);
-    if ((dispstat & 1) || (dispstat & 2)) {
-      const uint32_t aligned = addr & ~1u;
-      const uint16_t v16 = value | (static_cast<uint16_t>(value) << 8);
-      Write16Wrap(palette_ram_.data(), aligned & 0x3FFu, 0x3FFu, palette_ram_.size(), v16);
+
+    if (a >= 0x07000000u) { // OAM
+      if (dispstat & 1) Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), v16);
+    } else if ((dispstat & 1) || (dispstat & 2)) {
+      if (a >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size(), v16);
+      else Write16Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size(), v16);
     }
     return;
   }
-  if (addr >= 0x06000000u && addr <= 0x07FFFFFFu) return; // VRAM/OAM ignore 8-bit writes
 
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) { ewram_[addr & 0x3FFFFu] = value; }
   else if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) { iwram_[addr & 0x7FFFu] = value; }
