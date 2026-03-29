@@ -261,6 +261,10 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       // Bit3 is CGB mode (read-only on GBA). Keep all other writable bits,
       // including bit7 Forced Blank.
       value &= static_cast<uint16_t>(~0x0008u);
+      // Keep forced-blank behavior during real BIOS-vector boot, but avoid
+      // permanent blank screens in direct/HLE execution paths that do not
+      // model all display-timing corner cases yet.
+      if (!bios_boot_via_vector_) value &= static_cast<uint16_t>(~0x0080u);
       break;
     case 0x04000004u: {
       const uint16_t old = ReadIO16(addr);
