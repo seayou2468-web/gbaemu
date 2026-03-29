@@ -32,16 +32,6 @@ inline void Write32Wrap(uint8_t* buf, uint32_t off, uint32_t mask, size_t size, 
   buf[(off + 3) % size] = static_cast<uint8_t>((value >> 24) & 0xFFu);
 }
 
-inline bool IsForcedBlank(uint16_t dispcnt) {
-  return (dispcnt & 0x0080u) != 0;
-}
-
-inline bool CanAccessDisplayRam(uint16_t dispcnt, uint16_t dispstat) {
-  const bool forced_blank = IsForcedBlank(dispcnt);
-  const bool vblank = (dispstat & 1u) != 0;
-  const bool hblank = (dispstat & 2u) != 0;
-  return vblank || hblank || forced_blank;
-}
 }  // namespace
 
 void GBACore::AddWaitstates(uint32_t addr, int size) const {
@@ -124,16 +114,11 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
   if (a >= 0x03000000u && a <= 0x03FFFFFFu) return Read32Wrap(iwram_.data(), a & 0x7FFFu, 0x7FFFu, iwram_.size());
   if (a >= 0x04000000u && a <= 0x040003FCu) return static_cast<uint32_t>(ReadIO16(a)) | (static_cast<uint32_t>(ReadIO16(a + 2u)) << 16);
   if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
-    const uint16_t dispcnt = ReadIO16(0x04000000u);
-    const uint16_t dispstat = ReadIO16(0x04000004u);
-    const bool can_access = CanAccessDisplayRam(dispcnt, dispstat);
     if (a >= 0x07000000u) {
-      if (can_access) return Read32Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size());
-    } else if (can_access) {
-      if (a >= 0x06000000u) return Read32Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size());
-      return Read32Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size());
+      return Read32Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size());
     }
-    return open_bus_latch_;
+    if (a >= 0x06000000u) return Read32Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size());
+    return Read32Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size());
   }
   if (a >= 0x08000000u && a <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && a >= 0x0D000000u) return (open_bus_latch_ & ~1u) | (ReadBackup8(a) & 1u);
@@ -261,10 +246,6 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       // Bit3 is CGB mode (read-only on GBA). Keep all other writable bits,
       // including bit7 Forced Blank.
       value &= static_cast<uint16_t>(~0x0008u);
-      // Keep forced-blank behavior during real BIOS-vector boot, but avoid
-      // permanent blank screens in direct/HLE execution paths that do not
-      // model all display-timing corner cases yet.
-      if (!bios_boot_via_vector_) value &= static_cast<uint16_t>(~0x0080u);
       break;
     case 0x04000004u: {
       const uint16_t old = ReadIO16(addr);
