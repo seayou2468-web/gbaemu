@@ -265,6 +265,10 @@ class GBACore {
     uint32_t prescaler_accum = 0;
   };
   std::array<TimerState, 4> timers_{};
+  int32_t bg2_refx_internal_ = 0;
+  int32_t bg2_refy_internal_ = 0;
+  int32_t bg3_refx_internal_ = 0;
+  int32_t bg3_refy_internal_ = 0;
   bool dma_was_in_vblank_ = false;
   bool dma_was_in_hblank_ = false;
   bool dma_fifo_a_request_ = false;

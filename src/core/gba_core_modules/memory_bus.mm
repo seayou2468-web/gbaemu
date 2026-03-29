@@ -104,11 +104,7 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
 }
 
 uint32_t GBACore::Read32(uint32_t addr) const {
-  // BIOS Protection
-  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) {
-    return open_bus_latch_;
-  }
-
+  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) return open_bus_latch_;
   const uint32_t val = ReadBus32(addr);
   UpdateOpenBus(addr, val, 4);
   const uint32_t rot = (addr & 3u) * 8u;
@@ -116,28 +112,20 @@ uint32_t GBACore::Read32(uint32_t addr) const {
 }
 
 uint16_t GBACore::Read16(uint32_t addr) const {
-  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) {
-    return static_cast<uint16_t>(open_bus_latch_ >> ((addr & 2u) * 8u));
-  }
-
+  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) return static_cast<uint16_t>(open_bus_latch_ >> ((addr & 2u) * 8u));
   const uint32_t val = ReadBus32(addr);
+  UpdateOpenBus(addr, val, 2);
   const uint32_t shift = (addr & 2u) * 8u;
   uint16_t res = static_cast<uint16_t>(val >> shift);
-  if (addr & 1u) res = (res >> 8) | (res << 8); // Unaligned rotation
-  UpdateOpenBus(addr, res, 2);
+  if (addr & 1u) res = (res >> 8) | (res << 8);
   return res;
 }
 
 uint8_t GBACore::Read8(uint32_t addr) const {
-  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) {
-    return static_cast<uint8_t>(open_bus_latch_ >> ((addr & 3u) * 8u));
-  }
-
+  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) return static_cast<uint8_t>(open_bus_latch_ >> ((addr & 3u) * 8u));
   const uint32_t val = ReadBus32(addr);
-  const uint32_t shift = (addr & 3u) * 8u;
-  uint8_t res = static_cast<uint8_t>(val >> shift);
-  UpdateOpenBus(addr, res, 1);
-  return res;
+  UpdateOpenBus(addr, val, 1);
+  return static_cast<uint8_t>(val >> ((addr & 3u) * 8u));
 }
 
 void GBACore::Write32(uint32_t addr, uint32_t value) {
@@ -232,70 +220,35 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (off + 1 >= io_regs_.size()) return;
 
   switch(addr) {
-    case 0x04000000u: value &= 0xFF7Fu; break; // DISPCNT
-    case 0x04000004u: { // DISPSTAT
+    case 0x04000000u: value &= 0xFF7Fu; break;
+    case 0x04000004u: {
       const uint16_t old = ReadIO16(addr);
-      value = (value & 0xFFB8u) | (old & 0x0007u);
+      const uint16_t vcount = ReadIO16(0x04000006u);
+      const uint16_t lyc = (value >> 8) & 0xFF;
+      value = (value & 0xFFB8u) | (old & 0x0003u);
+      if (vcount == lyc) value |= 0x0004u; else value &= ~0x0004u;
       break;
     }
-    case 0x04000006u: return; // VCOUNT RO
-    case 0x04000008u: // BG0CNT
-    case 0x0400000Au: // BG1CNT
-      value &= 0xDFFFu; break;
-    case 0x0400000Cu: // BG2CNT
-    case 0x0400000Eu: // BG3CNT
-      value &= 0xFFFFu; break;
-
-    // DMA Source/Dest Address High Halfwords
-    case 0x040000B2u: // DMA0SAD_H
-    case 0x040000B6u: // DMA0DAD_H
-      value &= 0x07FFu; break; // 27-bit
-    case 0x040000BEu: // DMA1SAD_H
-    case 0x040000C6u: // DMA2SAD_H
-    case 0x040000D2u: // DMA3SAD_H
-    case 0x040000DAu: // DMA3DAD_H
-      value &= 0x0FFFu; break; // 28-bit
-    case 0x040000C2u: // DMA1DAD_H
-    case 0x040000CAu: // DMA2DAD_H
-      value &= 0x07FFu; break; // 27-bit
-
-    case 0x040000B8u: // DMA0CNT_H
-    case 0x040000C4u: // DMA1CNT_H
-    case 0x040000D0u: // DMA2CNT_H
-      value &= 0xF7E0u;
-      if (((value >> 12) & 3) == 3) value &= ~(3u << 12);
-      break;
-    case 0x040000DCu: // DMA3CNT_H
-      value &= 0xFFE0u; break;
-
-    case 0x04000082u: { // SOUNDCNT_H
-      if (value & (1u << 11)) { fifo_a_.clear(); fifo_a_last_sample_ = 0; value &= ~(1u << 11); }
-      if (value & (1u << 15)) { fifo_b_.clear(); fifo_b_last_sample_ = 0; value &= ~(1u << 15); }
-      break;
-    }
-    case 0x04000084u: { // SOUNDCNT_X
-      const uint16_t old = ReadIO16(addr);
-      value = (value & 0x0080u) | (old & 0x000Fu);
-      if ((old & 0x0080u) && !(value & 0x0080u)) {
-        for (size_t i = 0x60; i <= 0x81; ++i) io_regs_[i] = 0;
-        apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
-      }
-      break;
-    }
-    case 0x04000202u: { // IF W1C
+    case 0x04000006u: return;
+    case 0x04000028u: bg2_refx_internal_ = (int32_t)( (static_cast<uint32_t>(value) | (static_cast<uint32_t>(ReadIO16(0x0400002Au)) << 16)) << 4 ) >> 4; break;
+    case 0x0400002Au: bg2_refx_internal_ = (int32_t)( (static_cast<uint32_t>(ReadIO16(0x04000028u)) | (static_cast<uint32_t>(value) << 16)) << 4 ) >> 4; break;
+    case 0x0400002Cu: bg2_refy_internal_ = (int32_t)( (static_cast<uint32_t>(value) | (static_cast<uint32_t>(ReadIO16(0x0400002Eu)) << 16)) << 4 ) >> 4; break;
+    case 0x0400002Eu: bg2_refy_internal_ = (int32_t)( (static_cast<uint32_t>(ReadIO16(0x0400002Cu)) | (static_cast<uint32_t>(value) << 16)) << 4 ) >> 4; break;
+    case 0x04000038u: bg3_refx_internal_ = (int32_t)( (static_cast<uint32_t>(value) | (static_cast<uint32_t>(ReadIO16(0x0400003Au)) << 16)) << 4 ) >> 4; break;
+    case 0x0400003Au: bg3_refx_internal_ = (int32_t)( (static_cast<uint32_t>(ReadIO16(0x04000038u)) | (static_cast<uint32_t>(value) << 16)) << 4 ) >> 4; break;
+    case 0x0400003Cu: bg3_refy_internal_ = (int32_t)( (static_cast<uint32_t>(value) | (static_cast<uint32_t>(ReadIO16(0x0400003Eu)) << 16)) << 4 ) >> 4; break;
+    case 0x0400003Eu: bg3_refy_internal_ = (int32_t)( (static_cast<uint32_t>(ReadIO16(0x0400003Cu)) | (static_cast<uint32_t>(value) << 16)) << 4 ) >> 4; break;
+    case 0x04000202u: {
       const uint16_t old = ReadIO16(addr);
       value = old & ~value;
       break;
     }
-    case 0x04000130u: return; // KEYINPUT RO
   }
 
-  // Timer side effects
   if (addr >= 0x04000100u && addr <= 0x0400010Eu) {
     const uint32_t tidx = (addr - 0x04000100u) / 4u;
     if (addr & 2) {
       const uint16_t old = ReadIO16(addr);
-      if (tidx == 0) value &= 0x00C3u; else value &= 0x00C7u;
       timers_[tidx].control = value;
       if (!(old & 0x80u) && (value & 0x80u)) {
         timers_[tidx].counter = timers_[tidx].reload;
@@ -311,19 +264,6 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
 
   io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
   io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
-  // Trigger immediate DMA if enabled
-  if (addr == 0x040000B8u || addr == 0x040000C4u || addr == 0x040000D0u || addr == 0x040000DCu) {
-    if ((value & 0x8000u) && ((value >> 12) & 3) == 0) {
-      StepDma();
-    }
-  }
-  // Immediate DMA trigger
-  if (addr == 0x040000B8u || addr == 0x040000C4u || addr == 0x040000D0u || addr == 0x040000DCu) {
-    if ((value & 0x8000u) && ((value >> 12) & 3) == 0) {
-      StepDma();
-    }
-  }
-
 }
 
 }  // namespace gba

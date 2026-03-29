@@ -293,61 +293,62 @@ void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode, bool disab
   debug_last_exception_vector_ = vector_addr;
   debug_last_exception_pc_ = cpu_.regs[15];
   debug_last_exception_cpsr_ = old_cpsr;
-  const bool old_thumb = (old_cpsr & (1u << 5)) != 0;
-  uint32_t lr_adjust = old_thumb ? 2u : 4u;
-  // IRQ/FIQ handlers typically return with "SUBS PC, LR, #4".
-  // This requires LR to hold (next instruction + 4) in the pre-exception
-  // instruction set state:
-  //   ARM   : next = PC+4  -> LR = PC+8
-  //   Thumb : next = PC+2  -> LR = PC+6
-  if (vector_addr == 0x00000018u || vector_addr == 0x0000001Cu) {
-    lr_adjust = old_thumb ? 6u : 8u;
+
+  // GBA return address logic:
+  // PC is the address of the instruction that would have been executed next.
+  // For IRQ/FIQ: Handler returns with SUBS PC, LR, #4.
+  // To return to PC, LR must be PC + 4.
+  // For SWI/Undef: Handler returns with MOVS PC, LR (ARM) or similar.
+  // To return to PC, LR must be PC.
+  uint32_t lr_adjust = 0;
+  if (vector_addr == 0x18u || vector_addr == 0x1Cu) { // IRQ or FIQ
+    lr_adjust = 4;
   }
+
   SwitchCpuMode(target_mode);
   if (HasSpsr(target_mode)) cpu_.spsr[target_mode] = old_cpsr;
   cpu_.regs[14] = cpu_.regs[15] + lr_adjust;
+
   cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | target_mode;
   cpu_.active_mode = target_mode;
   if (disable_irq) cpu_.cpsr |= (1u << 7);
-  if (thumb_state) {
-    cpu_.cpsr |= (1u << 5);
-    cpu_.regs[15] = vector_addr & ~1u;
-  } else {
-    cpu_.cpsr &= ~(1u << 5);
-    cpu_.regs[15] = vector_addr & ~3u;
-  }
+
+  cpu_.cpsr &= ~(1u << 5); // Exceptions always enter ARM mode
+  cpu_.regs[15] = vector_addr;
 }
 
 void GBACore::ServiceInterruptIfNeeded() {
-  const uint16_t ime = ReadIO16(0x04000208u) & 0x1u;
-  if (ime == 0) return;
-  if (cpu_.cpsr & (1u << 7)) return;  // I flag set
   const uint16_t ie = ReadIO16(0x04000200u);
   const uint16_t iflags = ReadIO16(0x04000202u);
   const uint16_t pending = static_cast<uint16_t>(ie & iflags);
+
+  if (pending != 0) {
+    cpu_.halted = false; // Always wake up if any enabled interrupt is pending
+  }
+
+  const uint16_t ime = ReadIO16(0x04000208u) & 0x1u;
+  if (ime == 0) return;
+  if (cpu_.cpsr & (1u << 7)) return;  // I flag set
   if (pending == 0) return;
-  // Keep BIOS-style IRQ flags mirror in IWRAM for IntrWait/VBlankIntrWait users.
+
+  // Keep BIOS-style IRQ flags mirror in IWRAM
   const uint32_t irq_flags_addr = 0x03007FF8u;
   const uint32_t old_irq_flags = Read32(irq_flags_addr);
   Write32(irq_flags_addr, old_irq_flags | pending);
 
-  // Route IRQ through BIOS vector only while running true BIOS flow
-  // (POSTFLG==0). In direct-boot mode, use cartridge IRQ vector in IWRAM.
   const bool use_bios_irq = bios_loaded_ && bios_boot_via_vector_;
   if (use_bios_irq) {
     EnterException(0x00000018u, 0x12u, true, false);
     return;
   }
-  // No BIOS: prefer cartridge-provided IRQ vector (0x03007FFC).
   const uint32_t irq_vector = Read32(0x03007FFCu);
   const bool vector_thumb = (irq_vector & 1u) != 0;
   const uint32_t vector_addr = irq_vector & ~1u;
-  const bool vector_valid = (vector_addr >= 0x08000000u && vector_addr <= 0x0DFFFFFFu);
+  const bool vector_valid = (vector_addr >= 0x02000000u && vector_addr <= 0x0DFFFFFFu);
   if (vector_valid) {
     EnterException(vector_addr, 0x12u, true, vector_thumb);
     return;
   }
-  // No safe vector installed; keep pending flags latched for polling code.
 }
 
 }  // namespace gba

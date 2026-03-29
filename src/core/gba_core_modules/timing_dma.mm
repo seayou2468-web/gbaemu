@@ -18,16 +18,13 @@ void GBACore::StepPpu(uint32_t cycles) {
   while (remaining > 0) {
     uint16_t dispstat = ReadIO16(0x04000004u);
     const uint16_t vcount = ReadIO16(0x04000006u);
-
     const bool in_hblank = (dispstat & 2) != 0;
     const uint32_t next_event = in_hblank ? kScanlineCycles : kHDrawCycles;
     const uint32_t dist = (ppu_cycle_accum_ < next_event) ? (next_event - ppu_cycle_accum_) : 1u;
     const uint32_t step = std::min(remaining, dist);
-
     ppu_cycle_accum_ += step;
     remaining -= step;
 
-    // HBlank Priority logic
     if (ppu_cycle_accum_ >= kHDrawCycles && !in_hblank) {
       dispstat |= 0x0002u;
       if (dispstat & (1u << 4)) RaiseInterrupt(1u << 1);
@@ -35,26 +32,23 @@ void GBACore::StepPpu(uint32_t cycles) {
       StepDma();
     }
 
-    // Scanline End (including VBlank logic)
     if (ppu_cycle_accum_ >= kScanlineCycles) {
       ppu_cycle_accum_ = 0;
       const uint16_t next_vcount = (vcount + 1u) % mgba_compat::kVideoTotalLines;
       write_io_raw16(0x04000006u, next_vcount);
 
-      // Update DISPSTAT for the new line
-      dispstat &= ~0x0002u; // Exit HBlank
+      dispstat &= ~0x0002u;
       const bool was_vblank = (dispstat & 1) != 0;
       const bool now_vblank = (next_vcount >= 160 && next_vcount < 227);
-
       if (now_vblank) {
         dispstat |= 0x0001u;
         if (!was_vblank && (dispstat & (1u << 3))) RaiseInterrupt(1u << 0);
+        write_io_raw16(0x04000004u, dispstat);
         if (!was_vblank) StepDma();
       } else {
         dispstat &= ~0x0001u;
       }
 
-      // VCOUNT match logic
       const uint16_t vcount_compare = (dispstat >> 8) & 0x00FFu;
       if (next_vcount == vcount_compare) {
         if (!(dispstat & 0x0004u) && (dispstat & (1u << 5))) RaiseInterrupt(1u << 2);
@@ -62,19 +56,31 @@ void GBACore::StepPpu(uint32_t cycles) {
       } else {
         dispstat &= ~0x0004u;
       }
-
       write_io_raw16(0x04000004u, dispstat);
 
-      // Corrected 28-bit sign extension for affine refs
-      if (next_vcount < mgba_compat::kVideoTotalLines) {
+      if (next_vcount == 0) {
+        // Frame start: reload internal affine refs
         auto rb28 = [&](uint32_t addr) {
           uint32_t r = Read32(addr) & 0x0FFFFFFFu;
           return static_cast<int32_t>(r << 4) >> 4;
         };
-        bg2_refx_line_[next_vcount] = rb28(0x04000028u);
-        bg2_refy_line_[next_vcount] = rb28(0x0400002Cu);
-        bg3_refx_line_[next_vcount] = rb28(0x04000038u);
-        bg3_refy_line_[next_vcount] = rb28(0x0400003Cu);
+        bg2_refx_internal_ = rb28(0x04000028u);
+        bg2_refy_internal_ = rb28(0x0400002Cu);
+        bg3_refx_internal_ = rb28(0x04000038u);
+        bg3_refy_internal_ = rb28(0x0400003Cu);
+      } else {
+        // End of line: advance internal affine refs
+        bg2_refx_internal_ += (int16_t)ReadIO16(0x04000022u); // PB
+        bg2_refy_internal_ += (int16_t)ReadIO16(0x04000026u); // PD
+        bg3_refx_internal_ += (int16_t)ReadIO16(0x04000032u); // PB
+        bg3_refy_internal_ += (int16_t)ReadIO16(0x04000036u); // PD
+      }
+
+      if (next_vcount < mgba_compat::kVideoTotalLines) {
+        bg2_refx_line_[next_vcount] = bg2_refx_internal_;
+        bg2_refy_line_[next_vcount] = bg2_refy_internal_;
+        bg3_refx_line_[next_vcount] = bg3_refx_internal_;
+        bg3_refy_line_[next_vcount] = bg3_refy_internal_;
         affine_line_captured_[next_vcount] = 1;
         affine_line_refs_valid_ = true;
       }

@@ -469,41 +469,38 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
 }
 
 void GBACore::RunCpuSlice(uint32_t cycles) {
-  if (cpu_.halted) {
-    bool woke_from_intrwait = false;
-    if (swi_intrwait_active_) {
-      const uint16_t iflags = ReadIO16(0x04000202u);
-      const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
-      if (matched != 0u) {
-        WriteIO16(0x04000202u, matched);
-        swi_intrwait_active_ = false;
-        swi_intrwait_mask_ = 0;
-        cpu_.halted = false;
-        woke_from_intrwait = true;
-      }
-    }
-    if (!woke_from_intrwait) {
-      const uint16_t ie = ReadIO16(0x04000200u);
-      const uint16_t iflags = ReadIO16(0x04000202u);
-      if ((ie & iflags) == 0) return;
-      cpu_.halted = false;
-    }
+  // 1. Wake up from HALT if any enabled interrupt is pending
+  const uint16_t ie = ReadIO16(0x04000200u);
+  const uint16_t iflags = ReadIO16(0x04000202u);
+  if (cpu_.halted && (ie & iflags) != 0) {
+    cpu_.halted = false;
   }
+
+  if (cpu_.halted) return;
+
   auto is_exec_addr_valid = [&](uint32_t addr) -> bool {
-    if (bios_loaded_ && addr < 0x00004000u) return true;  // BIOS
-    if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) return true;  // EWRAM mirror
-    if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) return true;  // IWRAM mirror
-    if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) return true;  // ROM mirrors
+    if (bios_loaded_ && addr < 0x00004000u) return true;
+    if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) return true;
+    if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) return true;
+    if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) return true;
     return false;
   };
+
   uint32_t consumed = 0;
-  while (consumed < cycles) {
+  while (consumed < cycles && !cpu_.halted) {
     ServiceInterruptIfNeeded();
-    const bool thumb_state = (cpu_.cpsr & (1u << 5)) != 0;
-    // Keep architectural PC aligned to current execution state.
-    cpu_.regs[15] &= thumb_state ? ~1u : ~3u;
+    if (cpu_.halted) break;
+
+    const bool thumb = (cpu_.cpsr & (1u << 5)) != 0;
+    cpu_.regs[15] &= thumb ? ~1u : ~3u;
     const uint32_t pc = cpu_.regs[15];
-    if (thumb_state) {
+
+    if (!is_exec_addr_valid(pc)) {
+      // If PC is invalid, skip slice to avoid infinite loops
+      break;
+    }
+
+    if (thumb) {
       const uint16_t opcode = Read16(pc);
       consumed += EstimateThumbCycles(opcode);
       ExecuteThumbInstruction(opcode);
@@ -511,11 +508,6 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       const uint32_t opcode = Read32(pc);
       consumed += EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
-    }
-    // Invalid execute address: do not remap to a pseudo-random ROM address.
-    // Use the undefined-instruction path to keep control flow deterministic.
-    if (!is_exec_addr_valid(cpu_.regs[15])) {
-      HandleUndefinedInstruction((cpu_.cpsr & (1u << 5)) != 0);
     }
   }
 }
