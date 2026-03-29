@@ -177,18 +177,16 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
 
 void GBACore::Write16(uint32_t addr, uint16_t value) {
   AddWaitstates(addr, 2);
-  UpdateOpenBus(addr, value, 2);
-  const uint32_t a = addr;
-  if (a >= 0x04000000u && a <= 0x040003FEu) { WriteIO16(a & ~1u, value); return; }
+  UpdateOpenBus(addr, (static_cast<uint32_t>(value) | (static_cast<uint32_t>(value) << 16)), 2);
+  const uint32_t a = addr & ~1u;
+  if (a >= 0x04000000u && a <= 0x040003FEu) { WriteIO16(a, value); return; }
   if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
     const uint16_t dispstat = ReadIO16(0x04000004u);
-    const bool vblank = (dispstat & 1);
-    const bool hblank = (dispstat & 2);
-    const uint32_t aligned = a & ~1u;
-    if (aligned >= 0x07000000u) { if (vblank) Write16Wrap(oam_.data(), aligned & 0x3FFu, 0x3FFu, oam_.size(), value); }
-    else if (vblank || hblank) {
-       if (aligned >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(aligned), 0x1FFFFu, vram_.size(), value);
-       else Write16Wrap(palette_ram_.data(), aligned & 0x3FFu, 0x3FFu, palette_ram_.size(), value);
+    if (a >= 0x07000000u) {
+      if (dispstat & 1) Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), value);
+    } else if ((dispstat & 1) || (dispstat & 2)) {
+      if (a >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size(), value);
+      else Write16Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size(), value);
     }
     return;
   }
@@ -198,15 +196,13 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
 
 void GBACore::Write8(uint32_t addr, uint8_t value) {
   AddWaitstates(addr, 1);
-  UpdateOpenBus(addr, (value * 0x01010101u), 1);
+  UpdateOpenBus(addr, (static_cast<uint32_t>(value) * 0x01010101u), 1);
 
   if (addr >= 0x05000000u && addr <= 0x07FFFFFFu) {
-    // Replicate byte to both halves of aligned 16-bit word
     const uint32_t a = addr & ~1u;
-    const uint16_t v16 = value | (static_cast<uint16_t>(value) << 8);
+    const uint16_t v16 = static_cast<uint16_t>(value) | (static_cast<uint16_t>(value) << 8);
     const uint16_t dispstat = ReadIO16(0x04000004u);
-
-    if (a >= 0x07000000u) { // OAM
+    if (a >= 0x07000000u) {
       if (dispstat & 1) Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), v16);
     } else if ((dispstat & 1) || (dispstat & 2)) {
       if (a >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size(), v16);

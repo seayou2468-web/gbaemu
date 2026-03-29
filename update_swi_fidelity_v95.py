@@ -1,4 +1,9 @@
-#include "../gba_core.h"
+import sys
+import re
+
+path = "src/core/gba_core_modules/cpu_swi.mm"
+
+swi_content = """#include "../gba_core.h"
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -7,6 +12,8 @@ namespace gba {
 namespace {
 
 int16_t GbaSinLocal(uint16_t angle) {
+  // GBA sine table: 512 entries, 1.14 fixed point
+  // 0x0000..0xFFFF maps to 0..2*PI
   double rad = (double)(angle & 0xFFFF) * 2.0 * M_PI / 65536.0;
   return static_cast<int16_t>(round(sin(rad) * 16384.0));
 }
@@ -59,6 +66,22 @@ uint32_t BiosSqrtLocal(uint32_t x) {
   }
 }
 
+void HandleDivLocal(CpuState* cpu, int32_t num, int32_t den) {
+  if (den == 0) {
+    cpu->regs[0] = static_cast<uint32_t>(num);
+    cpu->regs[1] = 0;
+    cpu->regs[3] = static_cast<uint32_t>(num);
+  } else if (den == -1 && num == std::numeric_limits<int32_t>::min()) {
+    cpu->regs[0] = static_cast<uint32_t>(num);
+    cpu->regs[1] = 0;
+    cpu->regs[3] = static_cast<uint32_t>(std::abs((int64_t)num / den));
+  } else {
+    cpu->regs[0] = static_cast<uint32_t>(num / den);
+    cpu->regs[1] = static_cast<uint32_t>(num % den);
+    cpu->regs[3] = static_cast<uint32_t>(std::abs(num / den));
+  }
+}
+
 } // namespace
 
 bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
@@ -87,20 +110,8 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       }
       return true;
     }
-    case 0x06u: {
-      int32_t num = (int32_t)cpu_.regs[0], den = (int32_t)cpu_.regs[1];
-      if (den == 0) { cpu_.regs[0] = (uint32_t)num; cpu_.regs[1] = 0; cpu_.regs[3] = (uint32_t)std::abs(num); }
-      else if (den == -1 && num == std::numeric_limits<int32_t>::min()) { cpu_.regs[0] = (uint32_t)num; cpu_.regs[1] = 0; cpu_.regs[3] = (uint32_t)std::abs((int64_t)num); }
-      else { cpu_.regs[0] = (uint32_t)(num / den); cpu_.regs[1] = (uint32_t)(num % den); cpu_.regs[3] = (uint32_t)std::abs(num / den); }
-      cpu_.regs[15] = next_pc; return true;
-    }
-    case 0x07u: {
-      int32_t den = (int32_t)cpu_.regs[0], num = (int32_t)cpu_.regs[1];
-      if (den == 0) { cpu_.regs[0] = (uint32_t)num; cpu_.regs[1] = 0; cpu_.regs[3] = (uint32_t)num; }
-      else if (den == -1 && num == std::numeric_limits<int32_t>::min()) { cpu_.regs[0] = (uint32_t)num; cpu_.regs[1] = 0; cpu_.regs[3] = (uint32_t)std::abs((int64_t)num); }
-      else { cpu_.regs[0] = (uint32_t)(num / den); cpu_.regs[1] = (uint32_t)(num % den); cpu_.regs[3] = (uint32_t)std::abs(num / den); }
-      cpu_.regs[15] = next_pc; return true;
-    }
+    case 0x06u: HandleDivLocal(&cpu_, (int32_t)cpu_.regs[0], (int32_t)cpu_.regs[1]); cpu_.regs[15] = next_pc; return true;
+    case 0x07u: HandleDivLocal(&cpu_, (int32_t)cpu_.regs[1], (int32_t)cpu_.regs[0]); cpu_.regs[15] = next_pc; return true;
     case 0x08u: cpu_.regs[0] = BiosSqrtLocal(cpu_.regs[0]); cpu_.regs[15] = next_pc; return true;
     case 0x09u: cpu_.regs[0] = (uint32_t)(uint16_t)BiosArcTanPolyLocal((int32_t)cpu_.regs[0]); cpu_.regs[15] = next_pc; return true;
     case 0x0Au: cpu_.regs[0] = (uint32_t)(uint16_t)BiosArcTan2Local((int32_t)cpu_.regs[0], (int32_t)cpu_.regs[1]); cpu_.regs[15] = next_pc; return true;
@@ -109,18 +120,21 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     case 0x0Eu: { // BgAffineSet
        uint32_t src = cpu_.regs[0], dst = cpu_.regs[1], count = cpu_.regs[2];
        for (uint32_t i=0; i<count; ++i) {
-         int32_t sx = (int32_t)Read32(src), sy = (int32_t)Read32(src+4);
-         int16_t dx = (int16_t)Read16(src+8), dy = (int16_t)Read16(src+10);
-         int16_t scx = (int16_t)Read16(src+12), scy = (int16_t)Read16(src+14);
-         uint16_t theta = Read16(src+16);
-         int16_t s = GbaSinLocal(theta), c = GbaCosLocal(theta);
-         int16_t pa = (int16_t)((static_cast<int32_t>(c) * scx) >> 14);
-         int16_t pb = (int16_t)((static_cast<int32_t>(-s) * scx) >> 14);
-         int16_t pc = (int16_t)((static_cast<int32_t>(s) * scy) >> 14);
-         int16_t pd = (int16_t)((static_cast<int32_t>(c) * scy) >> 14);
+         int32_t src_x = (int32_t)Read32(src);     // 8.24
+         int32_t src_y = (int32_t)Read32(src+4);   // 8.24
+         int16_t disp_x = (int16_t)Read16(src+8);  // int16
+         int16_t disp_y = (int16_t)Read16(src+10); // int16
+         int16_t scale_x = (int16_t)Read16(src+12); // 8.8
+         int16_t scale_y = (int16_t)Read16(src+14); // 8.8
+         uint16_t angle = Read16(src+16);
+         int16_t s = GbaSinLocal(angle), c = GbaCosLocal(angle);
+         int16_t pa = (int16_t)((static_cast<int32_t>(c) * scale_x) >> 14);
+         int16_t pb = (int16_t)((static_cast<int32_t>(-s) * scale_x) >> 14);
+         int16_t pc = (int16_t)((static_cast<int32_t>(s) * scale_y) >> 14);
+         int16_t pd = (int16_t)((static_cast<int32_t>(c) * scale_y) >> 14);
          Write16(dst, pa); Write16(dst+2, pb); Write16(dst+4, pc); Write16(dst+6, pd);
-         int32_t rx = sx - (int32_t)((static_cast<int64_t>(pa) * dx + static_cast<int64_t>(pb) * dy) << 8);
-         int32_t ry = sy - (int32_t)((static_cast<int64_t>(pc) * dx + static_cast<int64_t>(pd) * dy) << 8);
+         int32_t rx = src_x - (int32_t)((static_cast<int64_t>(pa) * disp_x + static_cast<int64_t>(pb) * disp_y) << 8);
+         int32_t ry = src_y - (int32_t)((static_cast<int64_t>(pc) * disp_x + static_cast<int64_t>(pd) * disp_y) << 8);
          Write32(dst+8, (uint32_t)rx); Write32(dst+12, (uint32_t)ry);
          src += 20; dst += 16;
        }
@@ -131,8 +145,8 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
        if (step == 0) step = 8;
        for (uint32_t i=0; i<count; ++i) {
          int16_t sx = (int16_t)Read16(src), sy = (int16_t)Read16(src+2);
-         uint16_t theta = Read16(src+4);
-         int16_t s = GbaSinLocal(theta), c = GbaCosLocal(theta);
+         uint16_t angle = Read16(src+4);
+         int16_t s = GbaSinLocal(angle), c = GbaCosLocal(angle);
          Write16(dst, (int16_t)((static_cast<int32_t>(c) * sx) >> 14));
          Write16(dst+step, (int16_t)((static_cast<int32_t>(-s) * sx) >> 14));
          Write16(dst+step*2, (int16_t)((static_cast<int32_t>(s) * sy) >> 14));
@@ -174,5 +188,8 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     default: return false;
   }
 }
-
 } // namespace gba
+"""
+
+with open(path, "w") as f:
+    f.write(swi_content)

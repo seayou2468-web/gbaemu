@@ -1,4 +1,9 @@
-#include "../gba_core.h"
+import sys
+import re
+
+path = "src/core/gba_core_modules/cpu_swi.mm"
+
+swi_content = """#include "../gba_core.h"
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -176,3 +181,7 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
 }
 
 } // namespace gba
+"""
+
+with open(path, "w") as f:
+    f.write(swi_content)
