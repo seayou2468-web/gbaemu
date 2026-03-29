@@ -269,6 +269,11 @@ class GBACore {
   bool dma_was_in_hblank_ = false;
   bool dma_fifo_a_request_ = false;
   bool dma_fifo_b_request_ = false;
+  struct DmaState {
+    uint32_t sad = 0, dad = 0, count = 0;
+    bool active = false;
+  };
+  std::array<DmaState, 4> dma_shadows_{};
 
   CpuState cpu_{};
   GameplayState gameplay_state_{};

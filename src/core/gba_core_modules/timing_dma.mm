@@ -5,12 +5,10 @@ namespace gba {
 void GBACore::StepPpu(uint32_t cycles) {
   constexpr uint32_t kHBlankStartCycle = mgba_compat::kVideoHDrawCycles;
   auto read_affine_ref28 = [&](uint32_t addr) -> int32_t {
-    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
-                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
-                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
-                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
+    // Correct 28-bit sign extension
+    const uint32_t v = Read32(addr);
     uint32_t raw28 = v & 0x0FFFFFFFu;
-    if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
+    if (raw28 & 0x08000000u) raw28 |= 0xF0000000u;
     return static_cast<int32_t>(raw28);
   };
   auto capture_affine_refs_for_line = [&](uint16_t vcount) {
@@ -25,151 +23,162 @@ void GBACore::StepPpu(uint32_t cycles) {
     affine_line_refs_valid_ = true;
   };
   auto update_vcount_match = [&](uint16_t* dispstat, uint16_t vcount) {
-    const uint16_t vcount_compare = static_cast<uint16_t>((*dispstat >> 8) & 0x00FFu);
+    const uint16_t vcount_compare = (*dispstat >> 8) & 0x00FFu;
     const bool had_match = (*dispstat & 0x0004u) != 0;
     const bool match = (vcount == vcount_compare);
     if (match) {
-      *dispstat = static_cast<uint16_t>(*dispstat | 0x0004u);
+      *dispstat |= 0x0004u;
       if (!had_match && (*dispstat & (1u << 5))) {
-        RaiseInterrupt(1u << 2);  // VCount IRQ
+        RaiseInterrupt(1u << 2);
       }
     } else {
-      *dispstat = static_cast<uint16_t>(*dispstat & ~0x0004u);
+      *dispstat &= ~0x0004u;
     }
   };
   auto write_io_raw16 = [&](uint32_t addr, uint16_t value) {
     const size_t off = static_cast<size_t>(addr - 0x04000000u);
-    if (off + 1 >= io_regs_.size()) return;
-    io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
-    io_regs_[off + 1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+    if (off + 1 < io_regs_.size()) {
+      io_regs_[off] = value & 0xFF;
+      io_regs_[off + 1] = (value >> 8) & 0xFF;
+    }
   };
+
   uint32_t remaining = cycles;
   while (remaining > 0) {
     uint16_t dispstat = ReadIO16(0x04000004u);
-    const uint16_t cur_vcount = ReadIO16(0x04000006u);
-    capture_affine_refs_for_line(cur_vcount);
-    const uint16_t dispstat_before_match = dispstat;
-    update_vcount_match(&dispstat, cur_vcount);
-    if (dispstat != dispstat_before_match) {
-      write_io_raw16(0x04000004u, dispstat);
-    }
-    const bool in_hblank = (dispstat & 0x0002u) != 0;
-    const uint32_t next_hblank = in_hblank ? kCyclesPerScanline : kHBlankStartCycle;
-    const uint32_t until_boundary = (ppu_cycle_accum_ < next_hblank) ? (next_hblank - ppu_cycle_accum_) : 1u;
-    const uint32_t advance = std::min<uint32_t>(remaining, until_boundary);
-    ppu_cycle_accum_ += advance;
-    remaining -= advance;
+    const uint16_t vcount = ReadIO16(0x04000006u);
 
-    // HBlank edge
-    if (!in_hblank && ppu_cycle_accum_ >= kHBlankStartCycle) {
-      dispstat = static_cast<uint16_t>(dispstat | 0x0002u);
-      if (dispstat & (1u << 4)) {
-        RaiseInterrupt(1u << 1);  // HBlank IRQ
-      }
+    // Determine next interesting cycle boundary
+    const bool in_hblank = (dispstat & 2) != 0;
+    const uint32_t next_event = in_hblank ? mgba_compat::kVideoScanlineCycles : kHBlankStartCycle;
+    const uint32_t dist = (ppu_cycle_accum_ < next_event) ? (next_event - ppu_cycle_accum_) : 1u;
+    const uint32_t step = std::min(remaining, dist);
+
+    ppu_cycle_accum_ += step;
+    remaining -= step;
+
+    if (ppu_cycle_accum_ >= kHBlankStartCycle && !in_hblank) {
+      // Entering HBlank
+      dispstat |= 0x0002u;
+      if (dispstat & (1u << 4)) RaiseInterrupt(1u << 1);
       write_io_raw16(0x04000004u, dispstat);
+      StepDma(); // DMA HBlank trigger
     }
 
-    // End-of-scanline edge
-    if (ppu_cycle_accum_ >= kCyclesPerScanline) {
-      ppu_cycle_accum_ -= kCyclesPerScanline;
+    if (ppu_cycle_accum_ >= mgba_compat::kVideoScanlineCycles) {
+      // End of scanline
+      ppu_cycle_accum_ = 0;
+      const uint16_t next_vcount = (vcount + 1u) % mgba_compat::kVideoTotalLines;
+      write_io_raw16(0x04000006u, next_vcount);
 
-      uint16_t vcount = ReadIO16(0x04000006u);
-      vcount = static_cast<uint16_t>((vcount + 1u) % mgba_compat::kVideoTotalLines);
-      if (vcount == 0u) {
-        affine_line_captured_.fill(0u);
-      }
-      write_io_raw16(0x04000006u, vcount);
-      capture_affine_refs_for_line(vcount);
-
-      dispstat = ReadIO16(0x04000004u);
-      const bool was_vblank = (dispstat & 0x0001u) != 0;
-      const bool now_vblank = vcount >= mgba_compat::kVideoVisibleLines;
+      // Update VBlank status
+      dispstat &= ~0x0002u; // Exit HBlank
+      const bool was_vblank = (dispstat & 1) != 0;
+      const bool now_vblank = (next_vcount >= 160 && next_vcount < 227);
       if (now_vblank) {
-        dispstat = static_cast<uint16_t>(dispstat | 0x0001u);
-        if (!was_vblank && (dispstat & (1u << 3))) {
-          RaiseInterrupt(0x0001u);  // VBlank IRQ
-        }
+        dispstat |= 0x0001u;
+        if (!was_vblank && (dispstat & (1u << 3))) RaiseInterrupt(1u << 0);
+        if (!was_vblank) StepDma(); // DMA VBlank trigger
       } else {
-        dispstat = static_cast<uint16_t>(dispstat & ~0x0001u);
+        dispstat &= ~0x0001u;
       }
-      update_vcount_match(&dispstat, vcount);
 
-      // New scanline starts outside HBlank.
-      dispstat = static_cast<uint16_t>(dispstat & ~0x0002u);
+      update_vcount_match(&dispstat, next_vcount);
       write_io_raw16(0x04000004u, dispstat);
+      capture_affine_refs_for_line(next_vcount);
     }
   }
 }
 
 void GBACore::StepTimers(uint32_t cycles) {
   static constexpr uint32_t kPrescalerLut[4] = {1, 64, 256, 1024};
-  auto write_timer_counter_raw = [&](size_t i, uint16_t counter) {
+  auto write_timer_raw = [&](size_t i, uint16_t val) {
     const size_t off = 0x100u + i * 4u;
-    if (off + 1u >= io_regs_.size()) return;
-    io_regs_[off] = static_cast<uint8_t>(counter & 0xFFu);
-    io_regs_[off + 1u] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
+    if (off + 1 < io_regs_.size()) {
+      io_regs_[off] = val & 0xFF;
+      io_regs_[off + 1] = (val >> 8) & 0xFF;
+    }
   };
-  uint32_t overflow_count[4] = {0u, 0u, 0u, 0u};
-  for (size_t i = 0; i < timers_.size(); ++i) {
-    TimerState& t = timers_[i];
-    const uint16_t cnt_h = ReadIO16(static_cast<uint32_t>(0x04000102u + i * 4u));
-    t.control = cnt_h;
-    if ((cnt_h & 0x0080u) == 0) continue;  // disabled
-    const bool count_up = (cnt_h & 0x0004u) != 0;
 
-    auto tick_once = [&]() {
-      t.counter = static_cast<uint16_t>(t.counter + 1u);
-      if (t.counter == 0u) {
-        t.counter = t.reload;
-        ConsumeAudioFifoOnTimer(i);
-        if (cnt_h & 0x0040u) {
-          RaiseInterrupt(static_cast<uint16_t>(1u << static_cast<uint16_t>(3u + i)));
+  uint32_t remaining = cycles;
+  while (remaining > 0) {
+    // Determine the minimum ticks to the next overflow across all enabled timers
+    uint32_t slice = remaining;
+
+    // For now, simplify and process 1 cycle at a time or in small chunks.
+    // Real hardware updates sequential timers on the same cycle.
+    const uint32_t sub_step = 1;
+    remaining -= sub_step;
+
+    bool overflowed[4] = {false, false, false, false};
+
+    for (size_t i = 0; i < 4; ++i) {
+      TimerState& t = timers_[i];
+      if (!(t.control & 0x80u)) continue;
+
+      const bool count_up = (i > 0) && (t.control & 0x0004u);
+      if (count_up) {
+        if (overflowed[i-1]) {
+          t.counter++;
+          if (t.counter == 0) {
+            t.counter = t.reload;
+            overflowed[i] = true;
+            if (t.control & 0x40u) RaiseInterrupt(1u << (3 + i));
+            ConsumeAudioFifoOnTimer(i);
+          }
+          write_timer_raw(i, t.counter);
         }
-        ++overflow_count[i];
+      } else {
+        const uint32_t prescaler = kPrescalerLut[t.control & 0x3u];
+        t.prescaler_accum += sub_step;
+        if (t.prescaler_accum >= prescaler) {
+          t.prescaler_accum -= prescaler;
+          t.counter++;
+          if (t.counter == 0) {
+            t.counter = t.reload;
+            overflowed[i] = true;
+            if (t.control & 0x40u) RaiseInterrupt(1u << (3 + i));
+            ConsumeAudioFifoOnTimer(i);
+          }
+          write_timer_raw(i, t.counter);
+        }
       }
-    };
-
-    if (count_up && i > 0) {
-      const uint32_t ticks = overflow_count[i - 1];
-      for (uint32_t n = 0; n < ticks; ++n) {
-        tick_once();
-      }
-      write_timer_counter_raw(i, t.counter);
-      continue;
     }
-
-    const uint32_t prescaler = kPrescalerLut[cnt_h & 0x3u];
-    t.prescaler_accum += cycles;
-    while (t.prescaler_accum >= prescaler) {
-      t.prescaler_accum -= prescaler;
-      tick_once();
-    }
-    write_timer_counter_raw(i, t.counter);
   }
 }
 
 void GBACore::StepDma() {
   const uint16_t dispstat = ReadIO16(0x04000004u);
-  const bool in_vblank = (dispstat & 0x0001u) != 0;
-  const bool in_hblank = (dispstat & 0x0002u) != 0;
-  const bool vblank_rising = in_vblank && !dma_was_in_vblank_;
-  const bool hblank_rising = in_hblank && !dma_was_in_hblank_;
-  dma_was_in_vblank_ = in_vblank;
-  dma_was_in_hblank_ = in_hblank;
+  const bool vblank_rising = (dispstat & 1) && !dma_was_in_vblank_;
+  const bool hblank_rising = (dispstat & 2) && !dma_was_in_hblank_;
+  dma_was_in_vblank_ = (dispstat & 1);
+  dma_was_in_hblank_ = (dispstat & 2);
 
   for (int ch = 0; ch < 4; ++ch) {
     const uint32_t base = 0x040000B0u + ch * 12u;
     const uint16_t cnt_h = ReadIO16(base + 10u);
-    if (!(cnt_h & 0x8000u)) continue;
+    if (!(cnt_h & 0x8000u)) {
+      dma_shadows_[ch].active = false;
+      continue;
+    }
 
     const uint16_t start_timing = (cnt_h >> 12) & 0x3u;
     bool fire = false;
-    if (start_timing == 0) fire = true; // Immediate
-    else if (start_timing == 1 && vblank_rising) fire = true;
-    else if (start_timing == 2 && hblank_rising) fire = true;
-    else if (start_timing == 3) {
-      if (ch == 1 || ch == 2) fire = (ch == 1) ? dma_fifo_a_request_ : dma_fifo_b_request_;
-      else if (ch == 3) fire = hblank_rising; // Simplified Video Capture trigger
+    if (!dma_shadows_[ch].active) {
+      // First enable: reload all shadows from I/O regs
+      dma_shadows_[ch].sad = Read32(base + 0);
+      dma_shadows_[ch].dad = Read32(base + 4);
+      uint32_t c = ReadIO16(base + 8);
+      if (c == 0) c = (ch == 3) ? 0x10000u : 0x4000u;
+      dma_shadows_[ch].count = c;
+      dma_shadows_[ch].active = true;
+      if (start_timing == 0) fire = true; // Immediate trigger on enable
+    } else {
+      if (start_timing == 1 && vblank_rising) fire = true;
+      else if (start_timing == 2 && hblank_rising) fire = true;
+      else if (start_timing == 3) {
+        if (ch == 1 || ch == 2) fire = (ch == 1) ? dma_fifo_a_request_ : dma_fifo_b_request_;
+      }
     }
 
     if (!fire) continue;
@@ -178,10 +187,9 @@ void GBACore::StepDma() {
       if (ch == 2) dma_fifo_b_request_ = false;
     }
 
-    uint32_t src = Read32(base + 0);
-    uint32_t dst = Read32(base + 4);
-    uint32_t count = ReadIO16(base + 8);
-    if (count == 0) count = (ch == 3) ? 0x10000u : 0x4000u;
+    uint32_t src = dma_shadows_[ch].sad;
+    uint32_t dst = dma_shadows_[ch].dad;
+    uint32_t count = dma_shadows_[ch].count;
     if (start_timing == 3 && (ch == 1 || ch == 2)) count = 4;
 
     const bool word32 = (cnt_h & 0x0400u) != 0;
@@ -200,20 +208,27 @@ void GBACore::StepDma() {
       dst &= addr_mask;
     }
 
-    // Shadow register logic: reload destination only if repeat and NOT immediate
+    dma_shadows_[ch].sad = src;
     const bool repeat = (cnt_h & 0x0200u) != 0;
-    Write32(base + 0, src);
     if (repeat && start_timing != 0) {
       if (dst_ctl == 3) {
-        // Conceptually reload initial DAD.
-        // We'll use the value from WriteIO16's original write if we had shadow regs.
-        // For now, we update the register with the current 'dst' unless it's reload type.
+        // Reload destination from I/O DAD
+        dma_shadows_[ch].dad = Read32(base + 4);
       } else {
-        Write32(base + 4, dst);
+        dma_shadows_[ch].dad = dst;
       }
+      // Reload count from I/O CNT_L for next trigger
+      uint32_t c = ReadIO16(base + 8);
+      if (c == 0) c = (ch == 3) ? 0x10000u : 0x4000u;
+      dma_shadows_[ch].count = c;
     } else {
-      Write32(base + 4, dst);
-      WriteIO16(base + 10, cnt_h & ~0x8000u); // Auto-disable
+      dma_shadows_[ch].dad = dst;
+      dma_shadows_[ch].active = false;
+      // Auto-disable DMA in I/O register
+      uint16_t next_cnt = ReadIO16(base + 10) & ~0x8000u;
+      const size_t off = static_cast<size_t>((base + 10) - 0x04000000u);
+      io_regs_[off] = next_cnt & 0xFF;
+      io_regs_[off+1] = (next_cnt >> 8) & 0xFF;
     }
 
     if (cnt_h & 0x4000u) RaiseInterrupt(1u << (8 + ch));
@@ -237,9 +252,8 @@ void GBACore::ConsumeAudioFifoOnTimer(size_t timer_index) {
       const int8_t sample = static_cast<int8_t>(fifo->front());
       fifo->pop_front();
       *last_sample = static_cast<int16_t>(sample);
-    } else {
-      *last_sample = 0;
     }
+    // Else: keep the last_sample value as is (hardware behavior)
   };
   if ((timer_index == 0u && !fifo_a_timer1) || (timer_index == 1u && fifo_a_timer1)) {
     pop_fifo(&fifo_a_, &fifo_a_last_sample_);
