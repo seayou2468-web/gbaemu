@@ -293,6 +293,17 @@ void GBACore::StepFrame() {
   ++frame_count_;
 
   if (bios_boot_via_vector_) {
+    // Real BIOS should release forced-blank shortly after startup setup.
+    // If it remains asserted for too long, the debug renderer becomes a
+    // permanent white screen. Keep this as a guarded recovery path so boot
+    // visuals can continue even when IRQ/timing drift delays the clear.
+    const uint16_t dispcnt = ReadIO16(0x04000000u);
+    if (bios_boot_watchdog_frames_ > 8u &&
+        (dispcnt & 0x0080u) != 0u &&
+        cpu_.regs[15] >= 0x00000200u) {
+      WriteIO16(0x04000000u, static_cast<uint16_t>(dispcnt & ~0x0080u));
+    }
+
     if (cpu_.regs[15] >= 0x08000000u) {
       bios_boot_via_vector_ = false;
       bios_boot_watchdog_frames_ = 0;
