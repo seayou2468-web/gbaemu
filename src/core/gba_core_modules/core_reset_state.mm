@@ -120,7 +120,7 @@ void GBACore::Reset() {
   // IE/IF/IME
   WriteIO16(0x04000200u, 0x0000u);
   WriteIO16(0x04000202u, 0x0000u);
-  WriteIO16(0x04000208u, 0x0001u);
+  WriteIO16(0x04000208u, 0x0000u);
   // POSTFLG: 0 during BIOS flow, 1 when skipping to cartridge entry.
   Write8(0x04000300u, use_real_bios_boot ? 0x00u : 0x01u);
   SyncKeyInputRegister();

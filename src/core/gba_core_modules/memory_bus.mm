@@ -187,14 +187,9 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
   const uint32_t a = addr & ~1u;
   if (a >= 0x04000000u && a <= 0x040003FEu) { WriteIO16(a, value); return; }
   if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
-    const uint16_t dispcnt = ReadIO16(0x04000000u);
-    const uint16_t dispstat = ReadIO16(0x04000004u);
-    const bool forced_blank = IsForcedBlank(dispcnt);
     if (a >= 0x07000000u) {
-      if ((dispstat & 1) || (dispstat & 2) || forced_blank) {
-        Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), value);
-      }
-    } else if ((dispstat & 1) || (dispstat & 2) || forced_blank) {
+      Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), value);
+    } else {
       if (a >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size(), value);
       else Write16Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size(), value);
     }
@@ -211,14 +206,9 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
   if (addr >= 0x05000000u && addr <= 0x07FFFFFFu) {
     const uint32_t a = addr & ~1u;
     const uint16_t v16 = static_cast<uint16_t>(value) | (static_cast<uint16_t>(value) << 8);
-    const uint16_t dispcnt = ReadIO16(0x04000000u);
-    const uint16_t dispstat = ReadIO16(0x04000004u);
-    const bool forced_blank = IsForcedBlank(dispcnt);
     if (a >= 0x07000000u) {
-      if ((dispstat & 1) || (dispstat & 2) || forced_blank) {
-        Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), v16);
-      }
-    } else if ((dispstat & 1) || (dispstat & 2) || forced_blank) {
+      Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), v16);
+    } else {
       if (a >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size(), v16);
       else Write16Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size(), v16);
     }
@@ -262,7 +252,11 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (off + 1 >= io_regs_.size()) return;
 
   switch(addr) {
-    case 0x04000000u: value &= 0xFF7Fu; break;
+    case 0x04000000u:
+      // Bit3 is CGB mode (read-only on GBA). Keep all other writable bits,
+      // including bit7 Forced Blank.
+      value &= static_cast<uint16_t>(~0x0008u);
+      break;
     case 0x04000004u: {
       const uint16_t old = ReadIO16(addr);
       const uint16_t vcount = ReadIO16(0x04000006u);
