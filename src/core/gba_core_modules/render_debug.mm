@@ -18,6 +18,12 @@ void GBACore::ApplyColorEffects() {
   auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semi = ObjSemiTransMaskBuffer();
   auto& bg_base = BgBaseColorBuffer(); auto& bg_sec = BgSecondColorBuffer();
   auto& bg_sec_layer = BgSecondLayerBuffer();
+  const size_t required = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
+  if (bg_layer.size() != required) EnsureBgLayerBufferSize();
+  if (obj_drawn.size() != required) EnsureObjDrawnMaskBufferSize();
+  if (obj_semi.size() != required) EnsureObjSemiTransMaskBufferSize();
+  if (bg_base.size() != required) EnsureBgBaseColorBufferSize();
+  if (bg_sec.size() != required || bg_sec_layer.size() != required) EnsureBgSecondBuffersSize();
 
   for (int i = 0; i < kScreenWidth * kScreenHeight; ++i) {
     const int x = i % kScreenWidth, y = i / kScreenWidth;

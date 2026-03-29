@@ -31,6 +31,10 @@ inline void Write32Wrap(uint8_t* buf, uint32_t off, uint32_t mask, size_t size, 
   buf[(off + 2) % size] = static_cast<uint8_t>((value >> 16) & 0xFFu);
   buf[(off + 3) % size] = static_cast<uint8_t>((value >> 24) & 0xFFu);
 }
+
+inline bool IsForcedBlank(uint16_t dispcnt) {
+  return (dispcnt & 0x0080u) != 0;
+}
 }  // namespace
 
 void GBACore::AddWaitstates(uint32_t addr, int size) const {
@@ -113,12 +117,14 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
   if (a >= 0x03000000u && a <= 0x03FFFFFFu) return Read32Wrap(iwram_.data(), a & 0x7FFFu, 0x7FFFu, iwram_.size());
   if (a >= 0x04000000u && a <= 0x040003FCu) return static_cast<uint32_t>(ReadIO16(a)) | (static_cast<uint32_t>(ReadIO16(a + 2u)) << 16);
   if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
+    const uint16_t dispcnt = ReadIO16(0x04000000u);
     const uint16_t dispstat = ReadIO16(0x04000004u);
+    const bool forced_blank = IsForcedBlank(dispcnt);
     const bool vblank = (dispstat & 1);
     const bool hblank = (dispstat & 2);
     if (a >= 0x07000000u) {
-      if (vblank) return Read32Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size());
-    } else if (vblank || hblank) {
+      if (vblank || hblank || forced_blank) return Read32Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size());
+    } else if (vblank || hblank || forced_blank) {
       if (a >= 0x06000000u) return Read32Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size());
       return Read32Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size());
     }
@@ -181,10 +187,14 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
   const uint32_t a = addr & ~1u;
   if (a >= 0x04000000u && a <= 0x040003FEu) { WriteIO16(a, value); return; }
   if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
+    const uint16_t dispcnt = ReadIO16(0x04000000u);
     const uint16_t dispstat = ReadIO16(0x04000004u);
+    const bool forced_blank = IsForcedBlank(dispcnt);
     if (a >= 0x07000000u) {
-      if (dispstat & 1) Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), value);
-    } else if ((dispstat & 1) || (dispstat & 2)) {
+      if ((dispstat & 1) || (dispstat & 2) || forced_blank) {
+        Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), value);
+      }
+    } else if ((dispstat & 1) || (dispstat & 2) || forced_blank) {
       if (a >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size(), value);
       else Write16Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size(), value);
     }
@@ -201,10 +211,14 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
   if (addr >= 0x05000000u && addr <= 0x07FFFFFFu) {
     const uint32_t a = addr & ~1u;
     const uint16_t v16 = static_cast<uint16_t>(value) | (static_cast<uint16_t>(value) << 8);
+    const uint16_t dispcnt = ReadIO16(0x04000000u);
     const uint16_t dispstat = ReadIO16(0x04000004u);
+    const bool forced_blank = IsForcedBlank(dispcnt);
     if (a >= 0x07000000u) {
-      if (dispstat & 1) Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), v16);
-    } else if ((dispstat & 1) || (dispstat & 2)) {
+      if ((dispstat & 1) || (dispstat & 2) || forced_blank) {
+        Write16Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size(), v16);
+      }
+    } else if ((dispstat & 1) || (dispstat & 2) || forced_blank) {
       if (a >= 0x06000000u) Write16Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size(), v16);
       else Write16Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size(), v16);
     }
