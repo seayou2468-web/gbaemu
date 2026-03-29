@@ -45,303 +45,55 @@ bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_
 }  // namespace
 
 void GBACore::RenderMode3Frame() {
-  // Mode 3: 240x160 direct color (BGR555) in VRAM.
-  EnsureBgPriorityBufferSize();
-  EnsureBgLayerBufferSize();
-  EnsureBgSecondBuffersSize();
-  auto& bg_layer = BgLayerBuffer();
-  auto& bg_priority = BgPriorityBuffer();
-  auto& second_color = BgSecondColorBuffer();
-  auto& second_layer = BgSecondLayerBuffer();
-  const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
-  const uint16_t winin = ReadIO16(0x04000048u);
-  const uint16_t winout = ReadIO16(0x0400004Au);
-  const uint16_t win0h = ReadIO16(0x04000040u);
-  const uint16_t win0v = ReadIO16(0x04000042u);
-  const uint16_t win1h = ReadIO16(0x04000044u);
-  const uint16_t win1v = ReadIO16(0x04000046u);
-  const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
-  const uint8_t bg2_priority = static_cast<uint8_t>(bg2cnt & 0x3u);
-  const bool wrap = (bg2cnt & (1u << 13)) != 0;
-  const bool mosaic = (bg2cnt & (1u << 6)) != 0;
-  const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
-  const int mos_h = static_cast<int>((mosaic_reg & 0xFu) + 1u);
-  const int mos_v = static_cast<int>(((mosaic_reg >> 4) & 0xFu) + 1u);
+  EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
-  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
-  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
-  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
-  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
-  auto read_s32_le = [&](uint32_t addr) -> int32_t {
-    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
-                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
-                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
-                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
-    uint32_t raw28 = v & 0x0FFFFFFFu;
-    if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
-    return static_cast<int32_t>(raw28);
-  };
-  const int32_t reg_refx = read_s32_le(0x04000028u);
-  const int32_t reg_refy = read_s32_le(0x0400002Cu);
-
-  if (!bg2_enabled) {
-    std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
-    std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
-    std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
-    std::fill(second_color.begin(), second_color.end(), backdrop);
-    std::fill(second_layer.begin(), second_layer.end(), kLayerBackdrop);
-    return;
-  }
-
   for (int y = 0; y < kScreenHeight; ++y) {
-    const int32_t refx = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
-      ? bg2_refx_line_[static_cast<size_t>(y)] : reg_refx;
-    const int32_t refy = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
-      ? bg2_refy_line_[static_cast<size_t>(y)] : reg_refy;
-    const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
-    const int64_t line_base_x = static_cast<int64_t>(refx) + static_cast<int64_t>(pb) * sample_y;
-    const int64_t line_base_y = static_cast<int64_t>(refy) + static_cast<int64_t>(pd) * sample_y;
     for (int x = 0; x < kScreenWidth; ++x) {
-      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
-      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
-        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
-        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
-        bg_layer[fb_off] = kLayerBackdrop;
-        second_color[fb_off] = backdrop;
-        second_layer[fb_off] = kLayerBackdrop;
-        continue;
-      }
-      const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
-      const int64_t tex_x_fp = line_base_x + static_cast<int64_t>(pa) * sample_x;
-      const int64_t tex_y_fp = line_base_y + static_cast<int64_t>(pc) * sample_x;
-      int sx = static_cast<int>(tex_x_fp >> 8);
-      int sy = static_cast<int>(tex_y_fp >> 8);
-      if (wrap) {
-        sx = ((sx % kScreenWidth) + kScreenWidth) % kScreenWidth;
-        sy = ((sy % kScreenHeight) + kScreenHeight) % kScreenHeight;
-      }
-      if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
-        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
-        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
-        bg_layer[fb_off] = kLayerBackdrop;
-        second_color[fb_off] = backdrop;
-        second_layer[fb_off] = kLayerBackdrop;
-        continue;
-      }
-      const size_t off = static_cast<size_t>((sy * kScreenWidth + sx) * 2);
-      if (off + 1 >= vram_.size()) {
-        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
-        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
-        bg_layer[fb_off] = kLayerBackdrop;
-        second_color[fb_off] = backdrop;
-        second_layer[fb_off] = kLayerBackdrop;
-        continue;
-      }
-      const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
-                              static_cast<uint16_t>(vram_[off + 1] << 8);
-      frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
-      bg_priority[fb_off] = bg2_priority;
-      bg_layer[fb_off] = kLayerBg2;
-      second_color[fb_off] = backdrop;
-      second_layer[fb_off] = kLayerBackdrop;
+      const size_t off = static_cast<size_t>(y * kScreenWidth + x);
+      const uint32_t vram_off = off * 2;
+      const uint16_t bgr = static_cast<uint16_t>(vram_[vram_off]) | (static_cast<uint16_t>(vram_[vram_off+1]) << 8);
+      frame_buffer_[off] = Bgr555ToRgba8888(bgr);
+      BgPriorityBuffer()[off] = 3; // Mode 3 has BG2 at priority 3
+      BgLayerBuffer()[off] = 2;
     }
   }
 }
 
 void GBACore::RenderMode4Frame() {
-  EnsureBgPriorityBufferSize();
-  EnsureBgLayerBufferSize();
-  EnsureBgSecondBuffersSize();
-  auto& bg_layer = BgLayerBuffer();
-  auto& bg_priority = BgPriorityBuffer();
-  auto& second_color = BgSecondColorBuffer();
-  auto& second_layer = BgSecondLayerBuffer();
-  EnsureObjDrawnMaskBufferSize();
-  auto& obj_drawn = ObjDrawnMaskBuffer();
-  const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
-  const uint16_t winin = ReadIO16(0x04000048u);
-  const uint16_t winout = ReadIO16(0x0400004Au);
-  const uint16_t win0h = ReadIO16(0x04000040u);
-  const uint16_t win0v = ReadIO16(0x04000042u);
-  const uint16_t win1h = ReadIO16(0x04000044u);
-  const uint16_t win1v = ReadIO16(0x04000046u);
-  const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
-  const uint8_t bg2_priority = static_cast<uint8_t>(bg2cnt & 0x3u);
-  const bool wrap = (bg2cnt & (1u << 13)) != 0;
-  const bool mosaic = (bg2cnt & (1u << 6)) != 0;
-  const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
-  const int mos_h = static_cast<int>((mosaic_reg & 0xFu) + 1u);
-  const int mos_v = static_cast<int>(((mosaic_reg >> 4) & 0xFu) + 1u);
-  const bool page1 = (dispcnt & (1u << 4)) != 0;
-  const size_t page_base = page1 ? 0xA000u : 0u;
-  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
-  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
-  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
-  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
-  auto read_s32_le = [&](uint32_t addr) -> int32_t {
-    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
-                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
-                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
-                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
-    uint32_t raw28 = v & 0x0FFFFFFFu;
-    if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
-    return static_cast<int32_t>(raw28);
-  };
-  const int32_t reg_refx = read_s32_le(0x04000028u);
-  const int32_t reg_refy = read_s32_le(0x0400002Cu);
-
-  const uint16_t backdrop_bgr = ReadBackdropBgr(palette_ram_);
-  const uint32_t backdrop = Bgr555ToRgba8888(backdrop_bgr);
-
-  auto palette_color = [&](uint16_t idx) -> uint32_t {
-    const size_t off = static_cast<size_t>((idx & 0xFFu) * 2u);
-    if (off + 1 >= palette_ram_.size()) return backdrop;
-    const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
-                         static_cast<uint16_t>(palette_ram_[off + 1] << 8);
-    return Bgr555ToRgba8888(bgr);
-  };
-
-  if (!bg2_enabled) {
-    std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
-    std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
-    std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
-    std::fill(second_color.begin(), second_color.end(), backdrop);
-    std::fill(second_layer.begin(), second_layer.end(), kLayerBackdrop);
-    return;
-  }
-
+  EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
+  const uint16_t dispcnt = ReadIO16(0x04000000);
+  const uint32_t page_base = (dispcnt & 0x10) ? 0xA000 : 0;
   for (int y = 0; y < kScreenHeight; ++y) {
     for (int x = 0; x < kScreenWidth; ++x) {
-      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
-      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
-        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
-        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
-        bg_layer[fb_off] = kLayerBackdrop;
-        second_color[fb_off] = backdrop;
-        second_layer[fb_off] = kLayerBackdrop;
-        continue;
-      }
-      const int32_t refx = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
-        ? bg2_refx_line_[static_cast<size_t>(y)] : reg_refx;
-      const int32_t refy = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
-        ? bg2_refy_line_[static_cast<size_t>(y)] : reg_refy;
-      const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
-      const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
-      const int64_t tex_x_fp =
-          static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * sample_x + static_cast<int64_t>(pb) * sample_y;
-      const int64_t tex_y_fp =
-          static_cast<int64_t>(refy) + static_cast<int64_t>(pc) * sample_x + static_cast<int64_t>(pd) * sample_y;
-      int sx = static_cast<int>(tex_x_fp >> 8);
-      int sy = static_cast<int>(tex_y_fp >> 8);
-      if (wrap) {
-        sx = ((sx % kScreenWidth) + kScreenWidth) % kScreenWidth;
-        sy = ((sy % kScreenHeight) + kScreenHeight) % kScreenHeight;
-      }
-      if (sx < 0 || sy < 0 || sx >= kScreenWidth || sy >= kScreenHeight) {
-        frame_buffer_[fb_off] = backdrop; second_color[fb_off] = backdrop;
-        bg_priority[fb_off] = static_cast<uint8_t>(kBackdropPriority);
-        bg_layer[fb_off] = kLayerBackdrop;
-        second_color[fb_off] = backdrop;
-        second_layer[fb_off] = kLayerBackdrop;
-        continue;
-      }
-      const size_t off = page_base + static_cast<size_t>(sy * kScreenWidth + sx);
-      const uint8_t index = (off < vram_.size()) ? vram_[off] : 0;
-      frame_buffer_[fb_off] = palette_color(index);
-      bg_priority[fb_off] = bg2_priority;
-      bg_layer[fb_off] = kLayerBg2;
-      second_color[fb_off] = backdrop;
-      second_layer[fb_off] = kLayerBackdrop;
+      const size_t off = static_cast<size_t>(y * kScreenWidth + x);
+      const uint8_t idx = vram_[page_base + off];
+      const size_t pal_off = static_cast<size_t>(idx) * 2;
+      const uint16_t bgr = static_cast<uint16_t>(palette_ram_[pal_off]) | (static_cast<uint16_t>(palette_ram_[pal_off+1]) << 8);
+      frame_buffer_[off] = Bgr555ToRgba8888(bgr);
+      BgPriorityBuffer()[off] = 3;
+      BgLayerBuffer()[off] = 2;
     }
   }
 }
 
 void GBACore::RenderMode5Frame() {
-  EnsureBgPriorityBufferSize();
-  EnsureBgLayerBufferSize();
-  EnsureBgSecondBuffersSize();
-  auto& bg_layer = BgLayerBuffer();
-  auto& bg_priority = BgPriorityBuffer();
-  auto& second_color = BgSecondColorBuffer();
-  auto& second_layer = BgSecondLayerBuffer();
-  const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
-  const uint16_t winin = ReadIO16(0x04000048u);
-  const uint16_t winout = ReadIO16(0x0400004Au);
-  const uint16_t win0h = ReadIO16(0x04000040u);
-  const uint16_t win0v = ReadIO16(0x04000042u);
-  const uint16_t win1h = ReadIO16(0x04000044u);
-  const uint16_t win1v = ReadIO16(0x04000046u);
-  const bool bg2_enabled = (dispcnt & (1u << 10)) != 0;
-  const uint8_t bg2_priority = static_cast<uint8_t>(bg2cnt & 0x3u);
-  const bool wrap = (bg2cnt & (1u << 13)) != 0;
-  const bool mosaic = (bg2cnt & (1u << 6)) != 0;
-  const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
-  const int mos_h = static_cast<int>((mosaic_reg & 0xFu) + 1u);
-  const int mos_v = static_cast<int>(((mosaic_reg >> 4) & 0xFu) + 1u);
-  const bool page1 = (dispcnt & (1u << 4)) != 0;
-  const size_t page_base = page1 ? 0xA000u : 0u;
-  constexpr int kMode5Width = 160;
-  constexpr int kMode5Height = 128;
+  EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
-  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
-  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
-  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
-  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
-  auto read_s32_le = [&](uint32_t addr) -> int32_t {
-    const uint32_t v = static_cast<uint32_t>(Read8(addr)) |
-                       (static_cast<uint32_t>(Read8(addr + 1u)) << 8) |
-                       (static_cast<uint32_t>(Read8(addr + 2u)) << 16) |
-                       (static_cast<uint32_t>(Read8(addr + 3u)) << 24);
-    uint32_t raw28 = v & 0x0FFFFFFFu;
-    if ((raw28 & 0x08000000u) != 0) raw28 |= 0xF0000000u;
-    return static_cast<int32_t>(raw28);
-  };
-  const int32_t reg_refx = read_s32_le(0x04000028u);
-  const int32_t reg_refy = read_s32_le(0x0400002Cu);
-
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
-  std::fill(bg_priority.begin(), bg_priority.end(), static_cast<uint8_t>(kBackdropPriority));
-  std::fill(bg_layer.begin(), bg_layer.end(), kLayerBackdrop);
-  std::fill(second_color.begin(), second_color.end(), backdrop);
-  std::fill(second_layer.begin(), second_layer.end(), kLayerBackdrop);
+  const uint16_t dispcnt = ReadIO16(0x04000000);
+  const uint32_t page_base = (dispcnt & 0x10) ? 0xA000 : 0;
 
-  if (!bg2_enabled) return;
-
-  for (int y = 0; y < kScreenHeight; ++y) {
-    for (int x = 0; x < kScreenWidth; ++x) {
-      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
-      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
-        continue;
-      }
-      const int32_t refx = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
-        ? bg2_refx_line_[static_cast<size_t>(y)] : reg_refx;
-      const int32_t refy = (affine_line_refs_valid_ && y >= 0 && y < static_cast<int>(mgba_compat::kVideoTotalLines))
-        ? bg2_refy_line_[static_cast<size_t>(y)] : reg_refy;
-      const int sample_x = mosaic ? ((x / mos_h) * mos_h) : x;
-      const int sample_y = mosaic ? ((y / mos_v) * mos_v) : y;
-      const int64_t tex_x_fp =
-          static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * sample_x + static_cast<int64_t>(pb) * sample_y;
-      const int64_t tex_y_fp =
-          static_cast<int64_t>(refy) + static_cast<int64_t>(pc) * sample_x + static_cast<int64_t>(pd) * sample_y;
-      int sx = static_cast<int>(tex_x_fp >> 8);
-      int sy = static_cast<int>(tex_y_fp >> 8);
-      if (wrap) {
-        sx = ((sx % kMode5Width) + kMode5Width) % kMode5Width;
-        sy = ((sy % kMode5Height) + kMode5Height) % kMode5Height;
-      }
-      if (sx < 0 || sy < 0 || sx >= kMode5Width || sy >= kMode5Height) continue;
-      const size_t off = page_base + static_cast<size_t>((sy * kMode5Width + sx) * 2);
-      if (off + 1 >= vram_.size()) continue;
-      const uint16_t bgr555 = static_cast<uint16_t>(vram_[off]) |
-                              static_cast<uint16_t>(vram_[off + 1] << 8);
-      frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr555);
-      bg_priority[fb_off] = bg2_priority;
-      bg_layer[fb_off] = kLayerBg2;
-      second_color[fb_off] = backdrop;
-      second_layer[fb_off] = kLayerBackdrop;
+  for (int y = 0; y < 128; ++y) {
+    for (int x = 0; x < 160; ++x) {
+      const size_t off = static_cast<size_t>(y * 160 + x);
+      const uint32_t vram_off = page_base + off * 2;
+      const uint16_t bgr = static_cast<uint16_t>(vram_[vram_off]) | (static_cast<uint16_t>(vram_[vram_off+1]) << 8);
+      const int target_x = x + (240-160)/2;
+      const int target_y = y + (160-128)/2;
+      const size_t fb_off = static_cast<size_t>(target_y * kScreenWidth + target_x);
+      frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr);
+      BgPriorityBuffer()[fb_off] = 3;
+      BgLayerBuffer()[fb_off] = 2;
     }
   }
 }
@@ -463,150 +215,96 @@ void GBACore::BuildObjWindowMask() {
 
 void GBACore::RenderSprites() {
   const uint16_t dispcnt = ReadIO16(0x04000000u);
-  if ((dispcnt & (1u << 12)) == 0) return;  // OBJ disable
-  const uint16_t winin = ReadIO16(0x04000048u);
-  const uint16_t winout = ReadIO16(0x0400004Au);
-  const uint16_t win0h = ReadIO16(0x04000040u);
-  const uint16_t win0v = ReadIO16(0x04000042u);
-  const uint16_t win1h = ReadIO16(0x04000044u);
-  const uint16_t win1v = ReadIO16(0x04000046u);
+  if ((dispcnt & (1u << 12)) == 0) return;
+  const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
 
   EnsureBgPriorityBufferSize();
+  EnsureObjDrawnMaskBufferSize(); EnsureObjSemiTransMaskBufferSize();
   auto& bg_priority = BgPriorityBuffer();
-  EnsureObjDrawnMaskBufferSize();
-  auto& obj_drawn = ObjDrawnMaskBuffer();
-  EnsureObjSemiTransMaskBufferSize();
-  auto& obj_semitrans = ObjSemiTransMaskBuffer();
+  auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semitrans = ObjSemiTransMaskBuffer();
 
   static constexpr int kObjDim[3][4][2] = {
       {{8, 8}, {16, 16}, {32, 32}, {64, 64}},     // square
       {{16, 8}, {32, 8}, {32, 16}, {64, 32}},     // horizontal
       {{8, 16}, {8, 32}, {16, 32}, {32, 64}},     // vertical
   };
-  const bool obj_1d = (dispcnt & (1u << 6)) != 0;
-  const uint8_t bg_mode = static_cast<uint8_t>(dispcnt & 0x7u);
-  const bool bitmap_mode = bg_mode >= 3u;
-  const size_t obj_chr_base = bitmap_mode ? 0x14000u : 0x10000u;
+  const bool obj_1d = (dispcnt & 0x40) != 0;
+  const uint8_t bg_mode = dispcnt & 7;
+  const size_t chr_base = (bg_mode >= 3) ? 0x14000u : 0x10000u;
 
-  auto palette_color = [&](uint16_t idx) -> uint32_t {
-    // OBJ palettes live in palette RAM entries 256..511.
-    const size_t off = static_cast<size_t>(((idx & 0xFFu) + 0x100u) * 2u);
-    if (off + 1 >= palette_ram_.size()) return 0xFF000000u;
-    const uint16_t bgr = static_cast<uint16_t>(palette_ram_[off]) |
-                         static_cast<uint16_t>(palette_ram_[off + 1] << 8);
-    return Bgr555ToRgba8888(bgr);
+  auto get_pal_color = [&](uint16_t idx) {
+    const size_t off = (idx + 0x100) * 2;
+    return Bgr555ToRgba8888(static_cast<uint16_t>(palette_ram_[off]) | (static_cast<uint16_t>(palette_ram_[off+1]) << 8));
   };
 
-  for (int obj = 127; obj >= 0; --obj) {
-    const size_t off = static_cast<size_t>(obj * 8);
-    if (off + 5 >= oam_.size()) continue;
-    const uint16_t attr0 = static_cast<uint16_t>(oam_[off]) |
-                           static_cast<uint16_t>(oam_[off + 1] << 8);
-    const uint16_t attr1 = static_cast<uint16_t>(oam_[off + 2]) |
-                           static_cast<uint16_t>(oam_[off + 3] << 8);
-    const uint16_t attr2 = static_cast<uint16_t>(oam_[off + 4]) |
-                           static_cast<uint16_t>(oam_[off + 5] << 8);
+  // Render sprites from lowest to highest priority index (127 to 0)
+  // so higher index ones are overwritten or checked by priority.
+  // Actually, hardware renders them in order, and priority value (0-3) determines BG interaction.
+  for (int i = 127; i >= 0; --i) {
+    const size_t off = i * 8;
+    const uint16_t a0 = static_cast<uint16_t>(oam_[off]) | (static_cast<uint16_t>(oam_[off+1]) << 8);
+    const uint16_t a1 = static_cast<uint16_t>(oam_[off+2]) | (static_cast<uint16_t>(oam_[off+3]) << 8);
+    const uint16_t a2 = static_cast<uint16_t>(oam_[off+4]) | (static_cast<uint16_t>(oam_[off+5]) << 8);
 
-    const uint16_t obj_mode = (attr0 >> 8) & 0x3u;
-    if (obj_mode == 2u) continue;  // OBJ-window sprites are consumed by BuildObjWindowMask().
-    const bool affine = (attr0 & (1u << 8)) != 0;
-    const bool double_size = affine && ((attr0 & (1u << 9)) != 0);
-
-    const int shape = (attr0 >> 14) & 0x3;
-    const int size = (attr1 >> 14) & 0x3;
+    if ((a0 & 0x0300) == 0x0200) continue; // OBJ-window
+    const bool affine = a0 & 0x0100;
+    const bool double_size = a0 & 0x0200;
+    const int shape = (a0 >> 14) & 3;
+    const int size = (a1 >> 14) & 3;
     if (shape >= 3) continue;
-    const int src_w = kObjDim[shape][size][0];
-    const int src_h = kObjDim[shape][size][1];
-    const int draw_w = double_size ? (src_w * 2) : src_w;
-    const int draw_h = double_size ? (src_h * 2) : src_h;
+    const int sw = kObjDim[shape][size][0], sh = kObjDim[shape][size][1];
+    const int dw = double_size ? sw*2 : sw, dh = double_size ? sh*2 : sh;
 
-    int y = attr0 & 0xFF;
-    int x = attr1 & 0x1FF;
-    if (y >= 160) y -= 256;
-    if (x >= 240) x -= 512;
+    int y_base = a0 & 0xFF; if (y_base >= 160) y_base -= 256;
+    int x_base = a1 & 0x1FF; if (x_base >= 240) x_base -= 512;
 
-    const bool color_256 = (attr0 & (1u << 13)) != 0;
-    const bool mosaic = (attr0 & (1u << 12)) != 0;
-    const bool hflip = (attr1 & (1u << 12)) != 0;
-    const bool vflip = (attr1 & (1u << 13)) != 0;
-    const uint8_t obj_priority = static_cast<uint8_t>((attr2 >> 10) & 0x3u);
-    const uint16_t tile_id = bitmap_mode ? static_cast<uint16_t>(attr2 & 0x01FFu)
-                                         : static_cast<uint16_t>(attr2 & 0x03FFu);
-    const uint16_t palbank = static_cast<uint16_t>((attr2 >> 12) & 0xFu);
+    const bool color_256 = a0 & 0x2000;
+    const uint8_t prio = (a2 >> 10) & 3;
+    const uint16_t tile_base = a2 & 0x3FF;
+    const uint16_t palbank = (a2 >> 12) & 0xF;
 
-    int16_t pa = 0;
-    int16_t pb = 0;
-    int16_t pc = 0;
-    int16_t pd = 0;
+    int16_t pa=256, pb=0, pc=0, pd=256;
     if (affine) {
-      const uint16_t affine_idx = static_cast<uint16_t>((attr1 >> 9) & 0x1Fu);
-      const size_t pa_off = static_cast<size_t>(affine_idx) * 0x20u + 0x06u;
-      const size_t pb_off = static_cast<size_t>(affine_idx) * 0x20u + 0x0Eu;
-      const size_t pc_off = static_cast<size_t>(affine_idx) * 0x20u + 0x16u;
-      const size_t pd_off = static_cast<size_t>(affine_idx) * 0x20u + 0x1Eu;
-      if (pd_off + 1 >= oam_.size()) continue;
-      pa = static_cast<int16_t>(static_cast<uint16_t>(oam_[pa_off]) |
-                                static_cast<uint16_t>(oam_[pa_off + 1] << 8));
-      pb = static_cast<int16_t>(static_cast<uint16_t>(oam_[pb_off]) |
-                                static_cast<uint16_t>(oam_[pb_off + 1] << 8));
-      pc = static_cast<int16_t>(static_cast<uint16_t>(oam_[pc_off]) |
-                                static_cast<uint16_t>(oam_[pc_off + 1] << 8));
-      pd = static_cast<int16_t>(static_cast<uint16_t>(oam_[pd_off]) |
-                                static_cast<uint16_t>(oam_[pd_off + 1] << 8));
+       const int p_idx = (a1 >> 9) & 0x1F;
+       pa = (int16_t)(oam_[p_idx*32 + 6] | (oam_[p_idx*32 + 7] << 8));
+       pb = (int16_t)(oam_[p_idx*32 + 14] | (oam_[p_idx*32 + 15] << 8));
+       pc = (int16_t)(oam_[p_idx*32 + 22] | (oam_[p_idx*32 + 23] << 8));
+       pd = (int16_t)(oam_[p_idx*32 + 30] | (oam_[p_idx*32 + 31] << 8));
     }
 
-    for (int py = 0; py < draw_h; ++py) {
-      const int sy = y + py;
-      if (sy < 0 || sy >= kScreenHeight) continue;
-      for (int px = 0; px < draw_w; ++px) {
-        const int sx = x + px;
-        if (sx < 0 || sx >= kScreenWidth) continue;
-        if (!IsObjVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, sx, sy)) {
-          continue;
-        }
+    for (int py=0; py<dh; ++py) {
+      int sy = y_base + py; if (sy < 0 || sy >= kScreenHeight) continue;
+      for (int px=0; px<dw; ++px) {
+        int sx = x_base + px; if (sx < 0 || sx >= kScreenWidth) continue;
+        if (!IsObjVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, sx, sy)) continue;
 
-        int tx = 0;
-        int ty = 0;
-        int sample_px = px;
-        int sample_py = py;
-        if (mosaic) {
-          const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
-          const int mos_h = static_cast<int>(((mosaic_reg >> 8) & 0xFu) + 1);
-          const int mos_v = static_cast<int>(((mosaic_reg >> 12) & 0xFu) + 1);
-          sample_px = (px / mos_h) * mos_h;
-          sample_py = (py / mos_v) * mos_v;
-        }
+        const size_t fb_off = sy * kScreenWidth + sx;
+        // Priority check: higher priority (lower number) wins
+        // Here we just render and overwrite, assuming order 127..0.
+        // But we must also check BG priority later.
+
+        int tx, ty;
         if (affine) {
-          const int cx = draw_w / 2;
-          const int cy = draw_h / 2;
-          const int dx = sample_px - cx;
-          const int dy = sample_py - cy;
-          const int src_cx = src_w / 2;
-          const int src_cy = src_h / 2;
-          tx = src_cx + static_cast<int>((static_cast<int32_t>(pa) * dx +
-                                          static_cast<int32_t>(pb) * dy) >>
-                                         8);
-          ty = src_cy + static_cast<int>((static_cast<int32_t>(pc) * dx +
-                                          static_cast<int32_t>(pd) * dy) >>
-                                         8);
-          if (tx < 0 || ty < 0 || tx >= src_w || ty >= src_h) continue;
+           int ox = px - dw/2, oy = py - dh/2;
+           tx = (pa * ox + pb * oy) >> 8; ty = (pc * ox + pd * oy) >> 8;
+           tx += sw/2; ty += sh/2;
+           if (tx < 0 || tx >= sw || ty < 0 || ty >= sh) continue;
         } else {
-          tx = hflip ? (src_w - 1 - sample_px) : sample_px;
-          ty = vflip ? (src_h - 1 - sample_py) : sample_py;
+           tx = px; ty = py;
+           if (a1 & 0x1000) tx = sw - 1 - tx;
+           if (a1 & 0x2000) ty = sh - 1 - ty;
         }
 
-        uint16_t color_index = 0;
-        if (!SampleObjColorIndex(vram_, obj_chr_base, obj_1d, color_256, src_w, tx, ty,
-                                 tile_id, palbank, &color_index)) {
-          continue;
+        uint16_t color_idx = 0;
+        if (SampleObjColorIndex(vram_, chr_base, obj_1d, color_256, sw, tx, ty, tile_base, palbank, &color_idx)) {
+           if (prio <= bg_priority[fb_off]) {
+              frame_buffer_[fb_off] = get_pal_color(color_idx);
+              obj_drawn[fb_off] = 1;
+              obj_semitrans[fb_off] = (a0 & 0x0400) ? 1 : 0;
+           }
         }
-        const size_t fb_off = static_cast<size_t>(sy) * kScreenWidth + sx;
-        if (obj_priority > bg_priority[fb_off]) continue;
-        uint32_t obj_px = palette_color(color_index);
-        frame_buffer_[fb_off] = obj_px;
-        bg_priority[fb_off] = obj_priority;
-        obj_drawn[fb_off] = 1u;
-        if (obj_mode == 1u) obj_semitrans[fb_off] = 1u;
       }
     }
   }

@@ -4,13 +4,6 @@
 namespace gba {
 
 void GBACore::ApplyColorEffects() {
-  const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const uint16_t winin = ReadIO16(0x04000048u);
-  const uint16_t winout = ReadIO16(0x0400004Au);
-  const uint16_t win0h = ReadIO16(0x04000040u);
-  const uint16_t win0v = ReadIO16(0x04000042u);
-  const uint16_t win1h = ReadIO16(0x04000044u);
-  const uint16_t win1v = ReadIO16(0x04000046u);
   const uint16_t bldcnt = ReadIO16(0x04000050u);
   const uint16_t bldalpha = ReadIO16(0x04000052u);
   const uint16_t bldy = ReadIO16(0x04000054u);
@@ -19,74 +12,55 @@ void GBACore::ApplyColorEffects() {
   const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
   const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
   const uint32_t evy = std::min<uint32_t>(16u, bldy & 0x1Fu);
-  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
-  const uint8_t back_r = static_cast<uint8_t>((backdrop >> 16) & 0xFFu);
-  const uint8_t back_g = static_cast<uint8_t>((backdrop >> 8) & 0xFFu);
-  const uint8_t back_b = static_cast<uint8_t>(backdrop & 0xFFu);
-  auto& bg_layer = BgLayerBuffer();
-  auto& bg_priority = BgPriorityBuffer();
-  auto& obj_drawn = ObjDrawnMaskBuffer();
-  auto& obj_semitrans = ObjSemiTransMaskBuffer();
-  auto& bg_base = BgBaseColorBuffer();
-  auto& bg_second = BgSecondColorBuffer();
-  auto& bg_second_layer = BgSecondLayerBuffer();
-  for (int y = 0; y < kScreenHeight; ++y) {
-    for (int x = 0; x < kScreenWidth; ++x) {
-      const size_t fb_off = static_cast<size_t>(y) * kScreenWidth + x;
-      const uint8_t window_control =
-          ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
-      if ((window_control & (1u << 5)) == 0) continue;  // color effects masked by window
-      const bool top_is_obj = (fb_off < obj_drawn.size()) && (obj_drawn[fb_off] != 0u);
-      const bool top_is_semitrans_obj =
-          top_is_obj && (fb_off < obj_semitrans.size()) && (obj_semitrans[fb_off] != 0u);
-      const uint8_t top_layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
-      const uint16_t top_mask = LayerToBlendMask(top_layer, top_is_obj);
-      const uint32_t effect_mode = top_is_semitrans_obj ? 1u : mode;
-      if (effect_mode == 0u) continue;
-      if (!top_is_semitrans_obj && (bldcnt & top_mask) == 0) continue;  // top pixel is not 1st target
 
-      uint32_t& px = frame_buffer_[fb_off];
-      uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFFu);
-      uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFFu);
-      uint8_t b = static_cast<uint8_t>(px & 0xFFu);
-      if (effect_mode == 1u) {
-        uint8_t sr = back_r;
-        uint8_t sg = back_g;
-        uint8_t sb = back_b;
-        uint16_t second_mask = static_cast<uint16_t>(1u << (8 + 5));  // backdrop
-        if (top_is_obj && fb_off < bg_base.size() && fb_off < bg_priority.size() &&
-            bg_priority[fb_off] != kBackdropPriority) {
-          const uint8_t under_layer = (fb_off < bg_layer.size()) ? bg_layer[fb_off] : kLayerBackdrop;
-          second_mask = static_cast<uint16_t>(1u << (8u + std::min<uint8_t>(under_layer, 5u)));
-          const uint32_t under = bg_base[fb_off];
-          sr = static_cast<uint8_t>((under >> 16) & 0xFFu);
-          sg = static_cast<uint8_t>((under >> 8) & 0xFFu);
-          sb = static_cast<uint8_t>(under & 0xFFu);
-        } else if (!top_is_obj && fb_off < bg_second.size() && fb_off < bg_second_layer.size() &&
-                   bg_second_layer[fb_off] != kLayerBackdrop) {
-          const uint8_t under_layer = bg_second_layer[fb_off];
-          second_mask = static_cast<uint16_t>(1u << (8u + std::min<uint8_t>(under_layer, 5u)));
-          const uint32_t under = bg_second[fb_off];
-          sr = static_cast<uint8_t>((under >> 16) & 0xFFu);
-          sg = static_cast<uint8_t>((under >> 8) & 0xFFu);
-          sb = static_cast<uint8_t>(under & 0xFFu);
-        }
-        if ((bldcnt & second_mask) == 0) continue;
-        r = ClampToByteLocal(static_cast<int>((r * eva + sr * evb) / 16u));
-        g = ClampToByteLocal(static_cast<int>((g * eva + sg * evb) / 16u));
-        b = ClampToByteLocal(static_cast<int>((b * eva + sb * evb) / 16u));
-      } else if (effect_mode == 2u) {  // brighten
-        r = ClampToByteLocal(static_cast<int>(r + ((255 - r) * evy) / 16u));
-        g = ClampToByteLocal(static_cast<int>(g + ((255 - g) * evy) / 16u));
-        b = ClampToByteLocal(static_cast<int>(b + ((255 - b) * evy) / 16u));
-      } else if (effect_mode == 3u) {  // darken
-        r = ClampToByteLocal(static_cast<int>(r - (r * evy) / 16u));
-        g = ClampToByteLocal(static_cast<int>(g - (g * evy) / 16u));
-        b = ClampToByteLocal(static_cast<int>(b - (b * evy) / 16u));
-      }
-      px = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-           (static_cast<uint32_t>(g) << 8) | b;
+  auto& bg_layer = BgLayerBuffer(); auto& bg_priority = BgPriorityBuffer();
+  auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semi = ObjSemiTransMaskBuffer();
+  auto& bg_base = BgBaseColorBuffer(); auto& bg_second = BgSecondColorBuffer();
+  auto& bg_second_layer = BgSecondLayerBuffer();
+
+  const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
+  const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
+  const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
+
+  for (int i = 0; i < kScreenWidth * kScreenHeight; ++i) {
+    const int x = i % kScreenWidth, y = i / kScreenWidth;
+    const uint8_t win_ctrl = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
+    if (!(win_ctrl & 0x20)) continue;
+
+    const bool top_is_obj = obj_drawn[i] != 0;
+    const bool top_is_semi = top_is_obj && obj_semi[i];
+    const uint8_t top_l = top_is_obj ? 4 : bg_layer[i];
+    const uint16_t top_m = 1 << top_l;
+
+    uint32_t effect = top_is_semi ? 1 : mode;
+    if (effect == 0) continue;
+    if (!top_is_semi && !(bldcnt & top_m)) continue;
+
+    uint32_t top_color = frame_buffer_[i];
+    int r = (top_color >> 16) & 0xFF, g = (top_color >> 8) & 0xFF, b = top_color & 0xFF;
+
+    if (effect == 1) {
+      uint8_t bot_l = (top_is_obj) ? bg_layer[i] : bg_second_layer[i];
+      uint16_t bot_m = 1 << (8 + bot_l);
+      if (!(bldcnt & bot_m)) continue;
+
+      uint32_t bot_color = (top_is_obj) ? bg_base[i] : bg_second[i];
+      int br = (bot_color >> 16) & 0xFF, bg_val = (bot_color >> 8) & 0xFF, bb = bot_color & 0xFF;
+
+      r = std::min(255, (int)((r * eva + br * evb) >> 4));
+      g = std::min(255, (int)((g * eva + bg_val * evb) >> 4));
+      b = std::min(255, (int)((b * eva + bb * evb) >> 4));
+    } else if (effect == 2) {
+      r += ((255 - r) * evy) >> 4;
+      g += ((255 - g) * evy) >> 4;
+      b += ((255 - b) * evy) >> 4;
+    } else if (effect == 3) {
+      r -= (r * evy) >> 4;
+      g -= (g * evy) >> 4;
+      b -= (b * evy) >> 4;
     }
+    frame_buffer_[i] = 0xFF000000 | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
   }
 }
 
