@@ -35,6 +35,13 @@ inline void Write32Wrap(uint8_t* buf, uint32_t off, uint32_t mask, size_t size, 
 inline bool IsForcedBlank(uint16_t dispcnt) {
   return (dispcnt & 0x0080u) != 0;
 }
+
+inline bool CanAccessDisplayRam(uint16_t dispcnt, uint16_t dispstat) {
+  const bool forced_blank = IsForcedBlank(dispcnt);
+  const bool vblank = (dispstat & 1u) != 0;
+  const bool hblank = (dispstat & 2u) != 0;
+  return vblank || hblank || forced_blank;
+}
 }  // namespace
 
 void GBACore::AddWaitstates(uint32_t addr, int size) const {
@@ -119,12 +126,10 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
   if (a >= 0x05000000u && a <= 0x07FFFFFFu) {
     const uint16_t dispcnt = ReadIO16(0x04000000u);
     const uint16_t dispstat = ReadIO16(0x04000004u);
-    const bool forced_blank = IsForcedBlank(dispcnt);
-    const bool vblank = (dispstat & 1);
-    const bool hblank = (dispstat & 2);
+    const bool can_access = CanAccessDisplayRam(dispcnt, dispstat);
     if (a >= 0x07000000u) {
-      if (vblank || hblank || forced_blank) return Read32Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size());
-    } else if (vblank || hblank || forced_blank) {
+      if (can_access) return Read32Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size());
+    } else if (can_access) {
       if (a >= 0x06000000u) return Read32Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size());
       return Read32Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size());
     }
