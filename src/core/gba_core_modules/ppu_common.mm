@@ -34,6 +34,8 @@ inline std::vector<uint8_t> g_bg_layer_buffer;
 inline std::vector<uint32_t> g_bg_base_color_buffer;
 inline std::vector<uint32_t> g_bg_second_color_buffer;
 inline std::vector<uint8_t> g_bg_second_layer_buffer;
+inline std::vector<uint8_t> g_obj_priority_buffer;
+inline std::vector<uint8_t> g_obj_index_buffer;
 
 std::vector<uint8_t>& BgPriorityBuffer() {
   return g_bg_priority_buffer;
@@ -69,6 +71,17 @@ std::vector<uint32_t>& BgBaseColorBuffer() {
 
 std::vector<uint32_t>& BgSecondColorBuffer() {
   return g_bg_second_color_buffer;
+}
+
+std::vector<uint8_t>& ObjPriorityBuffer() { return g_obj_priority_buffer; }
+std::vector<uint8_t>& ObjIndexBuffer() { return g_obj_index_buffer; }
+
+void EnsureObjPriorityBuffersSize() {
+  const size_t req = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (g_obj_priority_buffer.size() != req) g_obj_priority_buffer.assign(req, 4u);
+  else std::fill(g_obj_priority_buffer.begin(), g_obj_priority_buffer.end(), 4u);
+  if (g_obj_index_buffer.size() != req) g_obj_index_buffer.assign(req, 255u);
+  else std::fill(g_obj_index_buffer.begin(), g_obj_index_buffer.end(), 255u);
 }
 
 std::vector<uint8_t>& BgSecondLayerBuffer() {
@@ -220,6 +233,17 @@ bool IsObjVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
   const uint8_t control = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v,
                                                ObjWindowMaskBuffer(), x, y);
   return (control & (1u << 4)) != 0;
+}
+
+uint32_t AlphaBlendLocal(uint32_t top, uint32_t bot, uint16_t bldalpha) {
+  const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
+  const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
+  const int tr = (top >> 16) & 0xFF, tg = (top >> 8) & 0xFF, tb = top & 0xFF;
+  const int br = (bot >> 16) & 0xFF, bg = (bot >> 8) & 0xFF, bb = bot & 0xFF;
+  const uint8_t r = static_cast<uint8_t>(std::min(255, (tr * (int)eva + br * (int)evb) >> 4));
+  const uint8_t g = static_cast<uint8_t>(std::min(255, (tg * (int)eva + bg * (int)evb) >> 4));
+  const uint8_t b = static_cast<uint8_t>(std::min(255, (tb * (int)eva + bb * (int)evb) >> 4));
+  return 0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b;
 }
 
 uint16_t LayerToBlendMask(uint8_t layer, bool top_is_obj) {

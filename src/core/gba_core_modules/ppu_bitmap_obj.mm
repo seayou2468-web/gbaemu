@@ -13,28 +13,23 @@ bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_
   const int in_x = tx & 7;
   const int in_y = ty & 7;
 
-  // OBJ tile indices are addressed in 32-byte units.
-  // 256-color OBJ tiles consume two 32-byte indices, so both tile base and
-  // row stride need color-depth-aware scaling.
-  const int tile_unit_x = color_256 ? (tile_x * 2) : tile_x;
-  const int row_stride_units = obj_1d ? (color_256 ? (src_w / 4) : (src_w / 8)) : 32;
-  const uint16_t tile_base = color_256 ? static_cast<uint16_t>(tile_id & ~1u) : tile_id;
-  const uint32_t tile_units = static_cast<uint32_t>(tile_base) +
-                              static_cast<uint32_t>(tile_y * row_stride_units + tile_unit_x);
+  const int tiles_per_row = src_w / 8;
+  const int row_stride_units = obj_1d ? (color_256 ? tiles_per_row * 2 : tiles_per_row) : 32;
+  const uint32_t tile_base = color_256 ? static_cast<uint32_t>(tile_id & ~1u) : static_cast<uint32_t>(tile_id);
+  const uint32_t tile_units = tile_base + static_cast<uint32_t>(tile_y * row_stride_units + (color_256 ? tile_x * 2 : tile_x));
+
   const size_t chr_base_off = obj_chr_base + static_cast<size_t>(tile_units) * 32u;
   if (chr_base_off >= vram.size()) return false;
 
   if (color_256) {
-    const size_t chr_off = chr_base_off + static_cast<size_t>(in_y * 8 + in_x);
-    if (chr_off >= vram.size()) return false;
+    const size_t chr_off = (chr_base_off + static_cast<size_t>(in_y * 8 + in_x)) % vram.size();
     const uint8_t color = vram[chr_off];
     if (color == 0u) return false;
     *out_color_index = color;
     return true;
   }
 
-  const size_t chr_off = chr_base_off + static_cast<size_t>(in_y * 4 + in_x / 2);
-  if (chr_off >= vram.size()) return false;
+  const size_t chr_off = (chr_base_off + static_cast<size_t>(in_y * 4 + in_x / 2)) % vram.size();
   const uint8_t packed = vram[chr_off];
   const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
   if (nib == 0u) return false;
@@ -222,8 +217,13 @@ void GBACore::RenderSprites() {
 
   EnsureBgPriorityBufferSize();
   EnsureObjDrawnMaskBufferSize(); EnsureObjSemiTransMaskBufferSize();
+  EnsureObjPriorityBuffersSize(); // NEW: initialize obj priority/index buffers
+
   auto& bg_priority = BgPriorityBuffer();
-  auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semitrans = ObjSemiTransMaskBuffer();
+  auto& obj_drawn = ObjDrawnMaskBuffer();
+  auto& obj_semitrans = ObjSemiTransMaskBuffer();
+  auto& obj_priority_buf = ObjPriorityBuffer();
+  auto& obj_index_buf = ObjIndexBuffer();
 
   static constexpr int kObjDim[3][4][2] = {
       {{8, 8}, {16, 16}, {32, 32}, {64, 64}},     // square
@@ -232,17 +232,16 @@ void GBACore::RenderSprites() {
   };
   const bool obj_1d = (dispcnt & 0x40) != 0;
   const uint8_t bg_mode = dispcnt & 7;
-  const size_t chr_base = (bg_mode >= 3) ? 0x14000u : 0x10000u;
+  const size_t chr_base_val = (bg_mode >= 3) ? 0x14000u : 0x10000u;
 
   auto get_pal_color = [&](uint16_t idx) {
-    const size_t off = (idx + 0x100) * 2;
+    const size_t off = (static_cast<size_t>(idx & 0xFFu) + 0x100u) * 2u;
     return Bgr555ToRgba8888(static_cast<uint16_t>(palette_ram_[off]) | (static_cast<uint16_t>(palette_ram_[off+1]) << 8));
   };
 
-  // Render sprites from lowest to highest priority index (127 to 0)
-  // so higher index ones are overwritten or checked by priority.
-  // Actually, hardware renders them in order, and priority value (0-3) determines BG interaction.
-  for (int i = 127; i >= 0; --i) {
+  // Hardware renders in index order 0..127.
+  // Lower OAM index has priority for same OBJ priority value.
+  for (int i = 0; i < 128; ++i) {
     const size_t off = i * 8;
     const uint16_t a0 = static_cast<uint16_t>(oam_[off]) | (static_cast<uint16_t>(oam_[off+1]) << 8);
     const uint16_t a1 = static_cast<uint16_t>(oam_[off+2]) | (static_cast<uint16_t>(oam_[off+3]) << 8);
@@ -262,7 +261,8 @@ void GBACore::RenderSprites() {
 
     const bool color_256 = a0 & 0x2000;
     const uint8_t prio = (a2 >> 10) & 3;
-    const uint16_t tile_base = a2 & 0x3FF;
+    // Correct tile base for Bitmap modes
+    const uint16_t tile_base = (bg_mode >= 3) ? (a2 & 0x1FF) : (a2 & 0x3FF);
     const uint16_t palbank = (a2 >> 12) & 0xF;
 
     int16_t pa=256, pb=0, pc=0, pd=256;
@@ -280,10 +280,15 @@ void GBACore::RenderSprites() {
         int sx = x_base + px; if (sx < 0 || sx >= kScreenWidth) continue;
         if (!IsObjVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, sx, sy)) continue;
 
-        const size_t fb_off = sy * kScreenWidth + sx;
-        // Priority check: higher priority (lower number) wins
-        // Here we just render and overwrite, assuming order 127..0.
-        // But we must also check BG priority later.
+        const size_t fb_off = static_cast<size_t>(sy * kScreenWidth + sx);
+
+        // Accurate Priority Check:
+        // 1. Lower OBJ priority value (0-3) wins.
+        // 2. Same priority: Lower OAM index wins (hardware order).
+        // Since we are iterating 0..127, we only overwrite if priority is strictly better.
+        if (obj_drawn[fb_off] && prio >= obj_priority_buf[fb_off]) continue;
+        // Interaction with BG:
+        if (prio > bg_priority[fb_off]) continue;
 
         int tx, ty;
         if (affine) {
@@ -298,12 +303,12 @@ void GBACore::RenderSprites() {
         }
 
         uint16_t color_idx = 0;
-        if (SampleObjColorIndex(vram_, chr_base, obj_1d, color_256, sw, tx, ty, tile_base, palbank, &color_idx)) {
-           if (prio <= bg_priority[fb_off]) {
-              frame_buffer_[fb_off] = get_pal_color(color_idx);
-              obj_drawn[fb_off] = 1;
-              obj_semitrans[fb_off] = (a0 & 0x0400) ? 1 : 0;
-           }
+        if (SampleObjColorIndex(vram_, chr_base_val, obj_1d, color_256, sw, tx, ty, tile_base, palbank, &color_idx)) {
+           frame_buffer_[fb_off] = get_pal_color(color_idx);
+           obj_drawn[fb_off] = 1;
+           obj_priority_buf[fb_off] = prio;
+           obj_index_buf[fb_off] = static_cast<uint8_t>(i);
+           obj_semitrans[fb_off] = (a0 & 0x0400) ? 1 : 0;
         }
       }
     }
