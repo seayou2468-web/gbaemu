@@ -46,6 +46,8 @@ void EnsureBgPriorityBufferSize() {
   const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
   if (buffer.size() != required) {
     buffer.assign(required, static_cast<uint8_t>(kBackdropPriority));
+  } else {
+    std::fill(buffer.begin(), buffer.end(), static_cast<uint8_t>(kBackdropPriority));
   }
 }
 
