@@ -39,6 +39,7 @@ void GBACore::Reset() {
   dma_was_in_hblank_ = false;
   dma_fifo_a_request_ = false;
   dma_fifo_b_request_ = false;
+  sio_ = SioState{};
   ppu_cycle_accum_ = 0;
   audio_mix_level_ = 0;
   fifo_a_.clear();
@@ -73,6 +74,11 @@ void GBACore::Reset() {
   swi_intrwait_mask_ = 0;
   bios_fetch_latch_ = 0;
   open_bus_latch_ = 0;
+  last_access_addr_ = 0;
+  last_access_size_ = 0;
+  last_access_valid_ = false;
+  waitstates_accum_ = 0;
+  RebuildGamePakWaitstateTables(0);
   // Prefer true BIOS-vector boot when a real external BIOS is loaded.
   // Built-in BIOS remains HLE/direct-boot oriented.
   const bool use_real_bios_boot = bios_loaded_ && !bios_is_builtin_;
@@ -128,6 +134,9 @@ void GBACore::Reset() {
   }
   // KEYINPUT: all released (active low)
   WriteIO16(0x04000130u, 0x03FFu);
+  WriteIO16(0x04000128u, 0x0000u);  // SIOCNT
+  WriteIO16(0x04000134u, 0x8000u);  // RCNT initial
+  WriteIO16(0x04000158u, 0x0000u);  // JOYSTAT
   // IE/IF/IME
   WriteIO16(0x04000200u, 0x0000u);
   WriteIO16(0x04000202u, 0x0000u);

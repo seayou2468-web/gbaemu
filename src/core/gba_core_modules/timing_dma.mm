@@ -4,97 +4,264 @@
 namespace gba {
 
 void GBACore::StepPpu(uint32_t cycles) {
-  constexpr uint32_t kHD=1006,kSL=1232,kVIS=160,kTOT=228;
-  auto poke=[&](uint32_t a,uint16_t v){size_t o=a-0x04000000u;if(o+1<io_regs_.size()){io_regs_[o]=v&0xFF;io_regs_[o+1]=(v>>8)&0xFF;}};
-  auto peek=[&](uint32_t a)->uint16_t{size_t o=a-0x04000000u;if(o+1>=io_regs_.size())return 0;return(uint16_t)io_regs_[o]|((uint16_t)io_regs_[o+1]<<8);};
-  uint32_t rem=cycles;
-  while(rem>0){
-    bool in_hb=(peek(0x04000004u)&2)!=0;
-    uint32_t dist=in_hb?(ppu_cycle_accum_<kSL?kSL-ppu_cycle_accum_:1u):(ppu_cycle_accum_<kHD?kHD-ppu_cycle_accum_:1u);
-    uint32_t step=std::min(rem,dist);
-    ppu_cycle_accum_+=step; rem-=step;
-    if(!in_hb&&ppu_cycle_accum_>=kHD){
-      uint16_t ds=peek(0x04000004u); ds|=2; poke(0x04000004u,ds);
-      if(ds&(1u<<4))RaiseInterrupt(1u<<1);
-      if(peek(0x04000006u)<kVIS)StepDmaHBlank();
+  constexpr uint32_t kHD = 1006;
+  constexpr uint32_t kSL = 1232;
+  constexpr uint32_t kVIS = 160;
+  constexpr uint32_t kTOT = 228;
+
+  auto rd16 = [&](size_t off) -> uint16_t {
+    return static_cast<uint16_t>(io_regs_[off]) |
+           (static_cast<uint16_t>(io_regs_[off + 1u]) << 8);
+  };
+  auto wr16 = [&](size_t off, uint16_t v) {
+    io_regs_[off] = static_cast<uint8_t>(v & 0xFFu);
+    io_regs_[off + 1u] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+  };
+  auto rd28 = [&](size_t off) -> int32_t {
+    uint32_t raw = static_cast<uint32_t>(io_regs_[off]) |
+                   (static_cast<uint32_t>(io_regs_[off + 1u]) << 8) |
+                   (static_cast<uint32_t>(io_regs_[off + 2u]) << 16) |
+                   (static_cast<uint32_t>(io_regs_[off + 3u]) << 24);
+    raw &= 0x0FFFFFFFu;
+    return static_cast<int32_t>(raw << 4) >> 4;
+  };
+
+  constexpr size_t kDispstatOff = 0x0004u;
+  constexpr size_t kVcountOff = 0x0006u;
+  uint32_t rem = cycles;
+  while (rem > 0u) {
+    uint16_t dispstat = rd16(kDispstatOff);
+    const bool in_hblank = (dispstat & 0x0002u) != 0u;
+    const uint32_t next_edge = in_hblank ? kSL : kHD;
+    const uint32_t dist = (ppu_cycle_accum_ < next_edge) ? (next_edge - ppu_cycle_accum_) : 1u;
+    const uint32_t step = std::min(rem, dist);
+    ppu_cycle_accum_ += step;
+    rem -= step;
+
+    if (!in_hblank && ppu_cycle_accum_ >= kHD) {
+      dispstat |= 0x0002u;
+      wr16(kDispstatOff, dispstat);
+      if (dispstat & (1u << 4)) RaiseInterrupt(1u << 1);
+      const uint16_t vcount = rd16(kVcountOff);
+      if (vcount < kVIS) StepDmaHBlank();
     }
-    if(ppu_cycle_accum_>=kSL){
-      ppu_cycle_accum_=0;
-      uint16_t nvc=(uint16_t)((peek(0x04000006u)+1)%kTOT);
-      poke(0x04000006u,nvc);
-      uint16_t ds=peek(0x04000004u)&~2u;
-      bool was_vb=(ds&1)!=0, now_vb=(nvc>=kVIS&&nvc<kTOT-1);
-      if(now_vb){
-        ds|=1;
-        if(!was_vb){
-          // Render at VBlank start so VBlank handler register writes
-          // (BG scroll/affine/etc.) affect the next frame, not the one that just ended.
-          RenderDebugFrame();
-          frame_rendered_in_vblank_ = true;
-          if(ds&(1u<<3))RaiseInterrupt(1u<<0);
-          poke(0x04000004u,ds);
-          StepDmaVBlank();
-        }
+
+    if (ppu_cycle_accum_ < kSL) continue;
+
+    ppu_cycle_accum_ = 0;
+    const uint16_t prev_vcount = rd16(kVcountOff);
+    const uint16_t nvc = static_cast<uint16_t>((prev_vcount + 1u) % kTOT);
+    wr16(kVcountOff, nvc);
+
+    dispstat = rd16(kDispstatOff);
+    dispstat &= static_cast<uint16_t>(~0x0002u);  // leave HBlank
+    const bool was_vblank = (dispstat & 0x0001u) != 0u;
+    const bool now_vblank = (nvc >= kVIS && nvc < (kTOT - 1u));
+    if (now_vblank) {
+      dispstat |= 0x0001u;
+      if (!was_vblank) {
+        RenderDebugFrame();
+        frame_rendered_in_vblank_ = true;
+        if (dispstat & (1u << 3)) RaiseInterrupt(1u << 0);
+        wr16(kDispstatOff, dispstat);
+        StepDmaVBlank();
       }
-      else ds&=~1u;
-      uint16_t lyc=(ds>>8)&0xFF;
-      if(nvc==lyc){if(!(ds&4)&&(ds&(1u<<5)))RaiseInterrupt(1u<<2);ds|=4;}else ds&=~4u;
-      poke(0x04000004u,ds);
-      if(nvc==0){
-        auto rb28=[&](uint32_t a)->int32_t{
-          size_t o=a-0x04000000u;
-          uint32_t r=(uint32_t)io_regs_[o]|((uint32_t)io_regs_[o+1]<<8)|((uint32_t)io_regs_[o+2]<<16)|((uint32_t)io_regs_[o+3]<<24);
-          r&=0x0FFFFFFFu;return (int32_t)(r<<4)>>4;
-        };
-        bg2_refx_internal_=rb28(0x04000028u);bg2_refy_internal_=rb28(0x0400002Cu);
-        bg3_refx_internal_=rb28(0x04000038u);bg3_refy_internal_=rb28(0x0400003Cu);
-      } else {
-        bg2_refx_internal_+=(int16_t)peek(0x04000022u); bg2_refy_internal_+=(int16_t)peek(0x04000026u);
-        bg3_refx_internal_+=(int16_t)peek(0x04000032u); bg3_refy_internal_+=(int16_t)peek(0x04000036u);
-      }
-      if(nvc<kTOT){
-        bg2_refx_line_[nvc]=bg2_refx_internal_;bg2_refy_line_[nvc]=bg2_refy_internal_;
-        bg3_refx_line_[nvc]=bg3_refx_internal_;bg3_refy_line_[nvc]=bg3_refy_internal_;
-        for (int bg = 0; bg < 4; ++bg) {
-          const uint32_t cnt_reg = 0x04000008u + static_cast<uint32_t>(bg) * 2u;
-          const uint32_t hofs_reg = 0x04000010u + static_cast<uint32_t>(bg) * 4u;
-          const uint32_t vofs_reg = 0x04000012u + static_cast<uint32_t>(bg) * 4u;
-          bg_cnt_line_[nvc][bg] = peek(cnt_reg);
-          bg_hofs_line_[nvc][bg] = peek(hofs_reg);
-          bg_vofs_line_[nvc][bg] = peek(vofs_reg);
-        }
-        bg2_affine_line_[nvc].pa = static_cast<int16_t>(peek(0x04000020u));
-        bg2_affine_line_[nvc].pb = static_cast<int16_t>(peek(0x04000022u));
-        bg2_affine_line_[nvc].pc = static_cast<int16_t>(peek(0x04000024u));
-        bg2_affine_line_[nvc].pd = static_cast<int16_t>(peek(0x04000026u));
-        bg3_affine_line_[nvc].pa = static_cast<int16_t>(peek(0x04000030u));
-        bg3_affine_line_[nvc].pb = static_cast<int16_t>(peek(0x04000032u));
-        bg3_affine_line_[nvc].pc = static_cast<int16_t>(peek(0x04000034u));
-        bg3_affine_line_[nvc].pd = static_cast<int16_t>(peek(0x04000036u));
-        if(nvc<kVIS){
-          affine_line_captured_[nvc]=1;
-          affine_line_refs_valid_=true;
-          bg_scroll_line_valid_ = true;
-          bg_affine_params_line_valid_ = true;
-        }
-      }
+    } else {
+      dispstat &= static_cast<uint16_t>(~0x0001u);
+    }
+
+    const uint16_t lyc = static_cast<uint16_t>((dispstat >> 8) & 0xFFu);
+    if (nvc == lyc) {
+      if ((dispstat & 0x0004u) == 0u && (dispstat & (1u << 5))) RaiseInterrupt(1u << 2);
+      dispstat |= 0x0004u;
+    } else {
+      dispstat &= static_cast<uint16_t>(~0x0004u);
+    }
+    wr16(kDispstatOff, dispstat);
+
+    if (nvc == 0u) {
+      bg2_refx_internal_ = rd28(0x0028u);
+      bg2_refy_internal_ = rd28(0x002Cu);
+      bg3_refx_internal_ = rd28(0x0038u);
+      bg3_refy_internal_ = rd28(0x003Cu);
+    } else {
+      bg2_refx_internal_ += static_cast<int16_t>(rd16(0x0022u));
+      bg2_refy_internal_ += static_cast<int16_t>(rd16(0x0026u));
+      bg3_refx_internal_ += static_cast<int16_t>(rd16(0x0032u));
+      bg3_refy_internal_ += static_cast<int16_t>(rd16(0x0036u));
+    }
+
+    bg2_refx_line_[nvc] = bg2_refx_internal_;
+    bg2_refy_line_[nvc] = bg2_refy_internal_;
+    bg3_refx_line_[nvc] = bg3_refx_internal_;
+    bg3_refy_line_[nvc] = bg3_refy_internal_;
+    for (int bg = 0; bg < 4; ++bg) {
+      const size_t cnt_off = 0x0008u + static_cast<size_t>(bg) * 2u;
+      const size_t hofs_off = 0x0010u + static_cast<size_t>(bg) * 4u;
+      const size_t vofs_off = 0x0012u + static_cast<size_t>(bg) * 4u;
+      bg_cnt_line_[nvc][bg] = rd16(cnt_off);
+      bg_hofs_line_[nvc][bg] = rd16(hofs_off);
+      bg_vofs_line_[nvc][bg] = rd16(vofs_off);
+    }
+    bg2_affine_line_[nvc].pa = static_cast<int16_t>(rd16(0x0020u));
+    bg2_affine_line_[nvc].pb = static_cast<int16_t>(rd16(0x0022u));
+    bg2_affine_line_[nvc].pc = static_cast<int16_t>(rd16(0x0024u));
+    bg2_affine_line_[nvc].pd = static_cast<int16_t>(rd16(0x0026u));
+    bg3_affine_line_[nvc].pa = static_cast<int16_t>(rd16(0x0030u));
+    bg3_affine_line_[nvc].pb = static_cast<int16_t>(rd16(0x0032u));
+    bg3_affine_line_[nvc].pc = static_cast<int16_t>(rd16(0x0034u));
+    bg3_affine_line_[nvc].pd = static_cast<int16_t>(rd16(0x0036u));
+
+    if (nvc < kVIS) {
+      affine_line_captured_[nvc] = 1;
+      affine_line_refs_valid_ = true;
+      bg_scroll_line_valid_ = true;
+      bg_affine_params_line_valid_ = true;
     }
   }
 }
 
 void GBACore::StepTimers(uint32_t cycles){
-  static constexpr uint32_t kPS[4]={1,64,256,1024};
-  auto wt=[&](size_t i,uint16_t v){size_t o=0x100+i*4;if(o+1<io_regs_.size()){io_regs_[o]=v&0xFF;io_regs_[o+1]=(v>>8)&0xFF;}};
-  for(uint32_t c=0;c<cycles;++c){
-    bool ov[4]={};
-    for(int i=0;i<4;++i){
-      TimerState&t=timers_[i];if(!(t.control&0x80u))continue;
-      bool tick=false;
-      if(i>0&&(t.control&4)){if(ov[i-1])tick=true;}
-      else{if(++t.prescaler_accum>=kPS[t.control&3u]){t.prescaler_accum=0;tick=true;}}
-      if(tick){if(++t.counter==0){t.counter=t.reload;ov[i]=true;if(t.control&0x40u)RaiseInterrupt(1u<<(3+i));ConsumeAudioFifoOnTimer((size_t)i);}wt((size_t)i,t.counter);}
+  static constexpr uint32_t kPS[4] = {1, 64, 256, 1024};
+  auto wt=[&](size_t i,uint16_t v){
+    size_t o=0x100+i*4;
+    if(o+1<io_regs_.size()){io_regs_[o]=v&0xFF;io_regs_[o+1]=(v>>8)&0xFF;}
+  };
+  auto advance_counter = [&](TimerState& t, uint32_t ticks) -> uint32_t {
+    if (ticks == 0u) return 0u;
+    uint32_t overflows = 0u;
+    uint32_t counter = t.counter;
+    if (counter + ticks < 0x10000u) {
+      t.counter = static_cast<uint16_t>(counter + ticks);
+      return 0u;
     }
+
+    uint32_t remaining = ticks - (0x10000u - counter);
+    overflows = 1u;
+    const uint32_t period = 0x10000u - static_cast<uint32_t>(t.reload);
+    if (period != 0u) {
+      overflows += remaining / period;
+      remaining %= period;
+    } else {
+      // reload == 0x0000 => full 16-bit period
+      overflows += (remaining >> 16);
+      remaining &= 0xFFFFu;
+    }
+    t.counter = static_cast<uint16_t>(static_cast<uint32_t>(t.reload) + remaining);
+    return overflows;
+  };
+
+  uint32_t prev_overflows = 0u;
+  for (int i = 0; i < 4; ++i) {
+    TimerState& t = timers_[i];
+    if ((t.control & 0x80u) == 0u) {
+      prev_overflows = 0u;
+      continue;
+    }
+
+    uint32_t ticks = 0u;
+    if (i > 0 && (t.control & 0x4u) != 0u) {
+      ticks = prev_overflows;
+    } else {
+      const uint32_t prescale = kPS[t.control & 0x3u];
+      const uint32_t total = t.prescaler_accum + cycles;
+      ticks = total / prescale;
+      t.prescaler_accum = total % prescale;
+    }
+
+    const uint32_t overflows = advance_counter(t, ticks);
+    if (overflows != 0u) {
+      if (t.control & 0x40u) RaiseInterrupt(1u << (3 + i));
+      for (uint32_t n = 0; n < overflows; ++n) {
+        ConsumeAudioFifoOnTimer(static_cast<size_t>(i));
+      }
+    }
+    wt(static_cast<size_t>(i), t.counter);
+    prev_overflows = overflows;
   }
+}
+
+void GBACore::UpdateSioMode() {
+  const uint16_t siocnt = ReadIO16(0x04000128u);
+  const uint16_t rcnt = ReadIO16(0x04000134u);
+  sio_.rcnt = rcnt;
+  if ((rcnt & 0x8000u) == 0u) {
+    const uint16_t mode = siocnt & 0x0003u;
+    switch (mode) {
+      case 0: sio_.mode = SioMode::kNormal8; break;
+      case 1: sio_.mode = SioMode::kNormal32; break;
+      case 2: sio_.mode = SioMode::kMulti; break;
+      default: sio_.mode = SioMode::kUart; break;
+    }
+  } else {
+    sio_.mode = (siocnt & 0x3000u) ? SioMode::kJoybus : SioMode::kGpio;
+  }
+}
+
+uint32_t GBACore::EstimateSioTransferCycles(uint16_t siocnt) const {
+  switch (sio_.mode) {
+    case SioMode::kNormal8:
+      return ((siocnt & 0x0002u) != 0u) ? 128u : 1024u;
+    case SioMode::kNormal32:
+      return ((siocnt & 0x0002u) != 0u) ? 512u : 4096u;
+    case SioMode::kMulti: {
+      static constexpr uint32_t kBaudCycles[4] = { 960u, 320u, 128u, 32u };
+      return kBaudCycles[(siocnt >> 0) & 0x3u];
+    }
+    default:
+      return 0u;
+  }
+}
+
+void GBACore::StartSioTransfer(uint16_t siocnt) {
+  const uint32_t cycles = EstimateSioTransferCycles(siocnt);
+  if (cycles == 0u) return;
+  sio_.transfer_active = true;
+  sio_.transfer_cycles_remaining = cycles;
+}
+
+void GBACore::CompleteSioTransfer() {
+  sio_.transfer_active = false;
+  sio_.transfer_cycles_remaining = 0;
+
+  const size_t siocnt_off = static_cast<size_t>(0x04000128u - 0x04000000u);
+  uint16_t siocnt = static_cast<uint16_t>(io_regs_[siocnt_off]) |
+                    (static_cast<uint16_t>(io_regs_[siocnt_off + 1u]) << 8);
+
+  switch (sio_.mode) {
+    case SioMode::kMulti: {
+      const uint16_t send = ReadIO16(0x0400012Au);
+      WriteIO16(0x04000120u, send);
+      WriteIO16(0x04000122u, 0xFFFFu);
+      WriteIO16(0x04000124u, 0xFFFFu);
+      WriteIO16(0x04000126u, 0xFFFFu);
+      siocnt &= static_cast<uint16_t>(~0x0080u);  // busy clear
+      break;
+    }
+    case SioMode::kNormal8:
+      siocnt &= static_cast<uint16_t>(~0x0080u);  // start clear
+      break;
+    case SioMode::kNormal32:
+      siocnt &= static_cast<uint16_t>(~0x0080u);  // start clear
+      break;
+    default:
+      return;
+  }
+
+  io_regs_[siocnt_off] = static_cast<uint8_t>(siocnt & 0xFFu);
+  io_regs_[siocnt_off + 1u] = static_cast<uint8_t>((siocnt >> 8) & 0xFFu);
+  if ((siocnt & 0x4000u) != 0u) {
+    RaiseInterrupt(1u << 7);  // Serial
+  }
+}
+
+void GBACore::StepSio(uint32_t cycles) {
+  if (!sio_.transfer_active || cycles == 0u) return;
+  if (cycles >= sio_.transfer_cycles_remaining) {
+    CompleteSioTransfer();
+    return;
+  }
+  sio_.transfer_cycles_remaining -= cycles;
 }
 
 // DMAシャドウ初期化 (inline)
@@ -128,15 +295,22 @@ void GBACore::ExecuteDmaTransfer(int ch, uint16_t cnt_h){
   uint32_t src=dma_shadows_[ch].sad&src_mask,dst=dma_shadows_[ch].dad&dst_mask;
   src&=w32?~3u:~1u;
   dst&=w32?~3u:~1u;
+  const int32_t src_step = (sc == 1) ? -unit : ((sc == 2) ? 0 : unit);
+  const int32_t dst_step = fifo_dma ? 0 : ((dc == 1) ? -unit : ((dc == 2) ? 0 : unit));
   if (fifo_dma) {
     dst = (ch == 1) ? 0x040000A0u : 0x040000A4u;
   }
-  for(uint32_t n=0;n<cnt;++n){
-    if(w32)Write32(dst,Read32(src));else Write16(dst,Read16(src));
-    if(sc==0||sc==3)src=(src+unit)&src_mask;
-    else if(sc==1)src=(src-unit)&src_mask;
-    if(!fifo_dma){
-      if(dc==0||dc==3)dst=(dst+unit)&dst_mask;else if(dc==1)dst=(dst-unit)&dst_mask;
+  if (w32) {
+    for (uint32_t n = 0; n < cnt; ++n) {
+      Write32(dst, Read32(src));
+      src = static_cast<uint32_t>(static_cast<int32_t>(src) + src_step) & src_mask;
+      if (!fifo_dma) dst = static_cast<uint32_t>(static_cast<int32_t>(dst) + dst_step) & dst_mask;
+    }
+  } else {
+    for (uint32_t n = 0; n < cnt; ++n) {
+      Write16(dst, Read16(src));
+      src = static_cast<uint32_t>(static_cast<int32_t>(src) + src_step) & src_mask;
+      if (!fifo_dma) dst = static_cast<uint32_t>(static_cast<int32_t>(dst) + dst_step) & dst_mask;
     }
   }
   dma_shadows_[ch].sad=src;
