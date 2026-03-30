@@ -12,6 +12,16 @@ uint32_t GetPaletteColor(const std::array<uint8_t, 1024>& palette_ram, uint16_t 
   return Bgr555ToRgba8888(bgr);
 }
 
+void BuildPaletteCache(const std::array<uint8_t, 1024>& palette_ram, std::array<uint32_t, 512>* out) {
+  if (out == nullptr) return;
+  for (size_t i = 0; i < out->size(); ++i) {
+    const size_t off = i * 2u;
+    const uint16_t bgr = static_cast<uint16_t>(palette_ram[off]) |
+                         (static_cast<uint16_t>(palette_ram[off + 1u]) << 8);
+    (*out)[i] = Bgr555ToRgba8888(bgr);
+  }
+}
+
 void SampleTextBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt, uint16_t hofs, uint16_t vofs,
                   uint16_t mosaic_reg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
   *out_opaque = false;
@@ -98,7 +108,9 @@ void SampleAffineBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
 } // namespace
 
 void GBACore::RenderMode0Frame() {
-  const uint32_t backdrop = GetPaletteColor(palette_ram_, 0);
+  std::array<uint32_t, 512> pal_cache{};
+  BuildPaletteCache(palette_ram_, &pal_cache);
+  const uint32_t backdrop = pal_cache[0];
   const uint16_t dispcnt = ReadIO16(0x04000000);
   const uint16_t winin = ReadIO16(0x04000048), winout = ReadIO16(0x0400004A);
   const uint16_t win0h = ReadIO16(0x04000040), win0v = ReadIO16(0x04000042);
@@ -133,9 +145,9 @@ void GBACore::RenderMode0Frame() {
         if (opaque) consider(idx, bgcnt & 3, static_cast<uint8_t>(bg));
       }
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = h_bg ? GetPaletteColor(palette_ram_, b_idx) : backdrop;
+      frame_buffer_[off] = h_bg ? pal_cache[static_cast<size_t>(b_idx) & 0x1FFu] : backdrop;
       bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
-      sec_color[off] = h_sec ? GetPaletteColor(palette_ram_, s_idx) : backdrop;
+      sec_color[off] = h_sec ? pal_cache[static_cast<size_t>(s_idx) & 0x1FFu] : backdrop;
       sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
       sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
     }
@@ -143,7 +155,9 @@ void GBACore::RenderMode0Frame() {
 }
 
 void GBACore::RenderMode1Frame() {
-  const uint32_t backdrop = GetPaletteColor(palette_ram_, 0);
+  std::array<uint32_t, 512> pal_cache{};
+  BuildPaletteCache(palette_ram_, &pal_cache);
+  const uint32_t backdrop = pal_cache[0];
   const uint16_t dispcnt = ReadIO16(0x04000000);
   const uint16_t winin = ReadIO16(0x04000048), winout = ReadIO16(0x0400004A);
   const uint16_t win0h = ReadIO16(0x04000040), win0v = ReadIO16(0x04000042);
@@ -193,9 +207,9 @@ void GBACore::RenderMode1Frame() {
         if (opaque) consider(idx, bg2cnt & 3, 2);
       }
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = h_bg ? GetPaletteColor(palette_ram_, b_idx) : backdrop;
+      frame_buffer_[off] = h_bg ? pal_cache[static_cast<size_t>(b_idx) & 0x1FFu] : backdrop;
       bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
-      sec_color[off] = h_sec ? GetPaletteColor(palette_ram_, s_idx) : backdrop;
+      sec_color[off] = h_sec ? pal_cache[static_cast<size_t>(s_idx) & 0x1FFu] : backdrop;
       sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
       sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
     }
@@ -203,7 +217,9 @@ void GBACore::RenderMode1Frame() {
 }
 
 void GBACore::RenderMode2Frame() {
-  const uint32_t backdrop = GetPaletteColor(palette_ram_, 0);
+  std::array<uint32_t, 512> pal_cache{};
+  BuildPaletteCache(palette_ram_, &pal_cache);
+  const uint32_t backdrop = pal_cache[0];
   const uint16_t dispcnt = ReadIO16(0x04000000);
   const uint16_t winin = ReadIO16(0x04000048), winout = ReadIO16(0x0400004A);
   const uint16_t win0h = ReadIO16(0x04000040), win0v = ReadIO16(0x04000042);
@@ -255,9 +271,9 @@ void GBACore::RenderMode2Frame() {
         if (opaque) consider(idx, bgcnt & 3, static_cast<uint8_t>(bg));
       }
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = h_bg ? GetPaletteColor(palette_ram_, b_idx) : backdrop;
+      frame_buffer_[off] = h_bg ? pal_cache[static_cast<size_t>(b_idx) & 0x1FFu] : backdrop;
       bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
-      sec_color[off] = h_sec ? GetPaletteColor(palette_ram_, s_idx) : backdrop;
+      sec_color[off] = h_sec ? pal_cache[static_cast<size_t>(s_idx) & 0x1FFu] : backdrop;
       sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
       sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
     }
