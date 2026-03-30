@@ -19,8 +19,9 @@ bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_
     const int tiles_per_row = src_w / 8;
     tile_units = t_id + static_cast<uint32_t>(tile_y * (color_256 ? tiles_per_row * 2 : tiles_per_row) + (color_256 ? tile_x * 2 : tile_x));
   } else {
-    // 2D Mapping: Hardware uses 32-tile stride (1024 bytes per row of tiles)
-    tile_units = t_id + static_cast<uint32_t>(tile_y * 32 + (color_256 ? tile_x * 2 : tile_x));
+    // 2D Mapping: Tile-number Y step is +32 (4bpp) or +64 (8bpp, bit0 ignored).
+    // See GBATEK OBJ Tile Number notes.
+    tile_units = t_id + static_cast<uint32_t>(tile_y * (color_256 ? 64 : 32) + (color_256 ? tile_x * 2 : tile_x));
   }
 
   const size_t chr_base_off = obj_chr_base + static_cast<size_t>(tile_units) * 32u;
@@ -57,7 +58,8 @@ void GBACore::RenderMode3Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
@@ -112,7 +114,8 @@ void GBACore::RenderMode4Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
@@ -127,6 +130,7 @@ void GBACore::RenderMode4Frame() {
       if (!bg2_enable || !IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
+        BgLayerBuffer()[off] = 4;
         continue;
       }
       int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
@@ -168,7 +172,8 @@ void GBACore::RenderMode5Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
@@ -222,9 +227,10 @@ void GBACore::BuildObjWindowMask() {
                            static_cast<uint16_t>(oam_[off + 3] << 8);
     const uint16_t attr2 = static_cast<uint16_t>(oam_[off + 4]) |
                            static_cast<uint16_t>(oam_[off + 5] << 8);
-    if (((attr0 >> 8) & 0x3u) != 2u) continue;  // OBJ window
-
     const bool affine = (attr0 & (1u << 8)) != 0;
+    const uint8_t obj_mode = static_cast<uint8_t>((attr0 >> 10) & 0x3u);
+    if (obj_mode != 2u) continue;  // OBJ window mode
+    if (!affine && (attr0 & (1u << 9)) != 0) continue;  // Disabled OBJ
     const bool double_size = affine && ((attr0 & (1u << 9)) != 0);
     const int shape = (attr0 >> 14) & 0x3;
     const int size = (attr1 >> 14) & 0x3;
@@ -349,9 +355,13 @@ void GBACore::RenderSprites() {
     const uint16_t a1 = static_cast<uint16_t>(oam_[off+2]) | (static_cast<uint16_t>(oam_[off+3]) << 8);
     const uint16_t a2 = static_cast<uint16_t>(oam_[off+4]) | (static_cast<uint16_t>(oam_[off+5]) << 8);
 
-    if ((a0 & 0x0300) == 0x0200) continue;
     const bool affine = a0 & 0x0100;
-    const bool double_size = a0 & 0x0200;
+    const uint8_t obj_mode = static_cast<uint8_t>((a0 >> 10) & 0x3u);
+    if (obj_mode == 2u || obj_mode == 3u) continue; // OBJ-window / prohibited
+    if (!affine && (a0 & 0x0200)) continue;  // Disabled OBJ
+    // OBJ "double-size" (bit9) is valid only for affine sprites.
+    // For non-affine sprites bit9 is OBJ-disable/regular mode control.
+    const bool double_size = affine && ((a0 & 0x0200) != 0);
     const int shape = (a0 >> 14) & 3;
     const int size = (a1 >> 14) & 3;
     if (shape >= 3) continue;
