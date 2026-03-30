@@ -394,6 +394,35 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   io_regs_[off]   = static_cast<uint8_t>(value & 0xFFu);
   io_regs_[off+1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
 
+  // Tonc/GBATek: BG2/3X,Y reference registers written outside VBlank are
+  // immediately reflected to the internal affine origin of the current line.
+  if (addr >= 0x04000028u && addr <= 0x0400003Eu) {
+    const bool is_affine_ref_reg =
+        addr == 0x04000028u || addr == 0x0400002Au ||
+        addr == 0x0400002Cu || addr == 0x0400002Eu ||
+        addr == 0x04000038u || addr == 0x0400003Au ||
+        addr == 0x0400003Cu || addr == 0x0400003Eu;
+    if (is_affine_ref_reg) {
+      auto read_ref28 = [&](uint32_t base) -> int32_t {
+        const size_t ro = static_cast<size_t>(base - 0x04000000u);
+        uint32_t raw = static_cast<uint32_t>(io_regs_[ro]) |
+                       (static_cast<uint32_t>(io_regs_[ro + 1u]) << 8) |
+                       (static_cast<uint32_t>(io_regs_[ro + 2u]) << 16) |
+                       (static_cast<uint32_t>(io_regs_[ro + 3u]) << 24);
+        raw &= 0x0FFFFFFFu;
+        return static_cast<int32_t>(raw << 4) >> 4;
+      };
+      const uint16_t vcount = ReadIO16(0x04000006u);
+      const bool in_vblank = (vcount >= 160u);
+      if (!in_vblank) {
+        bg2_refx_internal_ = read_ref28(0x04000028u);
+        bg2_refy_internal_ = read_ref28(0x0400002Cu);
+        bg3_refx_internal_ = read_ref28(0x04000038u);
+        bg3_refy_internal_ = read_ref28(0x0400003Cu);
+      }
+    }
+  }
+
   // DMA即時起動 (start_timing=0)
   if ((addr==0x040000BAu||addr==0x040000C6u||addr==0x040000D2u||addr==0x040000DEu)
       && (value & 0x8000u) && ((value >> 12) & 3u) == 0u) {
