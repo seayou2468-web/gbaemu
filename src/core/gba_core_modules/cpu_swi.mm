@@ -48,15 +48,24 @@ int16_t BiosArcTan2Local(int32_t x, int32_t y) {
 }
 
 uint32_t BiosSqrtLocal(uint32_t x) {
-  if (x == 0) return 0;
-  uint32_t upper = x, bound = 1;
-  while (bound < upper) { upper >>= 1; bound <<= 1; }
-  while (true) {
-    upper = x; uint32_t accum = 0, lower = bound;
-    while (true) { uint32_t old = lower; if (lower <= upper >> 1) lower <<= 1; if (old >= upper >> 1) break; }
-    while (true) { accum <<= 1; if (upper >= lower) { ++accum; upper -= lower; } if (lower == bound) break; lower >>= 1; }
-    uint32_t old_b = bound; bound += accum; bound >>= 1; if (bound >= old_b) return old_b;
-  }
+    if (x == 0) return 0;
+
+    uint32_t res = 0;
+    uint32_t bit = 1UL << 30; // 最初のビットは 2^30
+
+    // x が 2^32-1 以下なので、bit を最初に下げる
+    while (bit > x) bit >>= 2;
+
+    while (bit != 0) {
+        if (x >= res + bit) {
+            x -= res + bit;
+            res = (res >> 1) + bit;
+        } else {
+            res >>= 1;
+        }
+        bit >>= 2;
+    }
+    return res;
 }
 
 } // namespace
