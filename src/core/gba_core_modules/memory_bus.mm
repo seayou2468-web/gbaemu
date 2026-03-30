@@ -274,12 +274,11 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     Write16Wrap(palette_ram_.data(), (addr & ~1u) & 0x3FFu, palette_ram_.size(), v16);
     return;
   }
-  // VRAM 8bit: BGエリア(~0xFFFF)のみ有効、両バイト同値
+  // VRAM 8bit: BGエリア(~0xFFFF)のみ有効
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
     const uint32_t voff = VramOffset(addr);
     if (voff < 0x10000u) {
-      const uint16_t v16 = static_cast<uint16_t>(value)|(static_cast<uint16_t>(value)<<8);
-      Write16Wrap(vram_.data(), voff & ~1u, vram_.size(), v16);
+      vram_[voff] = value;
     }
     // OBJエリア(0x10000+)への8bit書き込みは無視
     return;
