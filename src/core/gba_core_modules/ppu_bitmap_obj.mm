@@ -58,7 +58,8 @@ void GBACore::RenderMode3Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
@@ -113,7 +114,8 @@ void GBACore::RenderMode4Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
@@ -170,7 +172,8 @@ void GBACore::RenderMode5Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
