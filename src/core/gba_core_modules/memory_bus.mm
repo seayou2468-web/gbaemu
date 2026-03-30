@@ -32,6 +32,25 @@ inline void Write32Wrap(uint8_t* buf, uint32_t off, size_t size, uint32_t v) {
   buf[(o+3)%size] = static_cast<uint8_t>((v >> 24) & 0xFFu);
 }
 
+inline uint32_t Read32Vram(const std::array<uint8_t, 96 * 1024>& vram, uint32_t addr) {
+  return static_cast<uint32_t>(vram[VramOffset(addr)]) |
+         (static_cast<uint32_t>(vram[VramOffset(addr + 1u)]) << 8) |
+         (static_cast<uint32_t>(vram[VramOffset(addr + 2u)]) << 16) |
+         (static_cast<uint32_t>(vram[VramOffset(addr + 3u)]) << 24);
+}
+
+inline void Write16Vram(std::array<uint8_t, 96 * 1024>& vram, uint32_t addr, uint16_t v) {
+  vram[VramOffset(addr)] = static_cast<uint8_t>(v & 0xFFu);
+  vram[VramOffset(addr + 1u)] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+}
+
+inline void Write32Vram(std::array<uint8_t, 96 * 1024>& vram, uint32_t addr, uint32_t v) {
+  vram[VramOffset(addr)] = static_cast<uint8_t>(v & 0xFFu);
+  vram[VramOffset(addr + 1u)] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+  vram[VramOffset(addr + 2u)] = static_cast<uint8_t>((v >> 16) & 0xFFu);
+  vram[VramOffset(addr + 3u)] = static_cast<uint8_t>((v >> 24) & 0xFFu);
+}
+
 }  // namespace
 
 // =========================================================================
@@ -118,7 +137,7 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
   if (a >= 0x05000000u && a <= 0x05FFFFFFu)
     return Read32Wrap(palette_ram_.data(), a & 0x3FFu, palette_ram_.size());
   if (a >= 0x06000000u && a <= 0x06FFFFFFu)
-    return Read32Wrap(vram_.data(), VramOffset(a), vram_.size());
+    return Read32Vram(vram_, a);
   if (a >= 0x07000000u && a <= 0x07FFFFFFu)
     return Read32Wrap(oam_.data(), a & 0x3FFu, oam_.size());
 
@@ -195,7 +214,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
     Write32Wrap(palette_ram_.data(), a & 0x3FFu, palette_ram_.size(), value); return;
   }
   if (a >= 0x06000000u && a <= 0x06FFFFFFu) {
-    Write32Wrap(vram_.data(), VramOffset(a), vram_.size(), value); return;
+    Write32Vram(vram_, a, value); return;
   }
   if (a >= 0x07000000u && a <= 0x07FFFFFFu) {
     Write32Wrap(oam_.data(), a & 0x3FFu, oam_.size(), value); return;
@@ -221,7 +240,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
     Write16Wrap(palette_ram_.data(), a & 0x3FFu, palette_ram_.size(), value); return;
   }
   if (a >= 0x06000000u && a <= 0x06FFFFFFu) {
-    Write16Wrap(vram_.data(), VramOffset(a), vram_.size(), value); return;
+    Write16Vram(vram_, a, value); return;
   }
   if (a >= 0x07000000u && a <= 0x07FFFFFFu) {
     Write16Wrap(oam_.data(), a & 0x3FFu, oam_.size(), value); return;
