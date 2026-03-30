@@ -313,9 +313,18 @@ bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error
     cpu_.banked_sp.fill(0);
     cpu_.banked_lr.fill(0);
     cpu_.spsr.fill(0);
-    cpu_.banked_sp[cpu_.active_mode] = cpu_.regs[13];
-    cpu_.banked_lr[cpu_.active_mode] = cpu_.regs[14];
+    const uint32_t bank_mode = NormalizeSpLrBankMode(cpu_.active_mode);
+    cpu_.banked_sp[bank_mode] = cpu_.regs[13];
+    cpu_.banked_lr[bank_mode] = cpu_.regs[14];
   }
+  if (cpu_.banked_sp[0x1Fu] == 0u && cpu_.banked_sp[0x10u] != 0u) {
+    cpu_.banked_sp[0x1Fu] = cpu_.banked_sp[0x10u];
+  }
+  if (cpu_.banked_lr[0x1Fu] == 0u && cpu_.banked_lr[0x10u] != 0u) {
+    cpu_.banked_lr[0x1Fu] = cpu_.banked_lr[0x10u];
+  }
+  cpu_.banked_sp[0x10u] = cpu_.banked_sp[0x1Fu];
+  cpu_.banked_lr[0x10u] = cpu_.banked_lr[0x1Fu];
   auto read_block = [&](auto& arr) -> bool {
     if (off + arr.size() > blob.size()) return false;
     std::copy_n(blob.begin() + static_cast<std::ptrdiff_t>(off), arr.size(), arr.begin());

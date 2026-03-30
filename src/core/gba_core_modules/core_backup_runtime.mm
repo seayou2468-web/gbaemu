@@ -19,7 +19,7 @@ constexpr uint8_t kNintendoLogoLocal[156] = {
 }  // namespace
 
 // =========================================================================
-// バックアップ制御リセット
+// 繝舌ャ繧ｯ繧｢繝・・蛻ｶ蠕｡繝ｪ繧ｻ繝・ヨ
 // =========================================================================
 void GBACore::ResetBackupControllerState() {
   flash_mode_unlocked_    = false;
@@ -38,7 +38,7 @@ void GBACore::ResetBackupControllerState() {
 }
 
 // =========================================================================
-// バックアップ 読み取り
+// 繝舌ャ繧ｯ繧｢繝・・ 隱ｭ縺ｿ蜿悶ｊ
 // =========================================================================
 uint8_t GBACore::ReadBackup8(uint32_t addr) const {
   if (backup_type_ == BackupType::kEEPROM) {
@@ -55,10 +55,10 @@ uint8_t GBACore::ReadBackup8(uint32_t addr) const {
 
   const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
 
-  // Flash IDモード
+  // Flash ID繝｢繝ｼ繝・
   if ((backup_type_ == BackupType::kFlash64K || backup_type_ == BackupType::kFlash128K)
       && flash_id_mode_) {
-    if (off32 == 0) return 0xBFu;  // Sanyo製造者ID
+    if (off32 == 0) return 0xBFu;  // Sanyo陬ｽ騾閠・D
     if (off32 == 1) return (backup_type_ == BackupType::kFlash128K) ? 0x09u : 0xD4u;
   }
 
@@ -69,7 +69,7 @@ uint8_t GBACore::ReadBackup8(uint32_t addr) const {
 }
 
 // =========================================================================
-// バックアップ 書き込み
+// 繝舌ャ繧ｯ繧｢繝・・ 譖ｸ縺崎ｾｼ縺ｿ
 // =========================================================================
 void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
   if (backup_type_ == BackupType::kEEPROM) {
@@ -139,22 +139,22 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
     return;
   }
 
-  // Flash プログラムモード
+  // Flash 繝励Ο繧ｰ繝ｩ繝繝｢繝ｼ繝・
   if (flash_program_mode_) {
     auto& target = (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u)
                    ? flash_bank1_ : sram_;
-    target[off] = static_cast<uint8_t>(target[off] & value);  // NOR: 1→0のみ
+    target[off] = static_cast<uint8_t>(target[off] & value);  // NOR: 1竊・縺ｮ縺ｿ
     flash_program_mode_ = false;
     return;
   }
-  // バンク切り替えモード
+  // 繝舌Φ繧ｯ蛻・ｊ譖ｿ縺医Δ繝ｼ繝・
   if (flash_bank_switch_mode_) {
     flash_bank_ = static_cast<uint8_t>(value & 1u);
     flash_bank_switch_mode_ = false;
     return;
   }
 
-  // Flash コマンドシーケンス
+  // Flash 繧ｳ繝槭Φ繝峨す繝ｼ繧ｱ繝ｳ繧ｹ
   if (!flash_mode_unlocked_) {
     if (off32 == 0x5555u && value == 0xAAu) { flash_mode_unlocked_ = true; flash_command_ = 1; }
     return;
@@ -174,7 +174,7 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
     else ResetBackupControllerState();
     return;
   }
-  // イレースシーケンス
+  // 繧､繝ｬ繝ｼ繧ｹ繧ｷ繝ｼ繧ｱ繝ｳ繧ｹ
   if (flash_command_ == 3) {
     if (off32 == 0x5555u && value == 0xAAu) { flash_command_ = 4; }
     else ResetBackupControllerState();
@@ -205,37 +205,38 @@ void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
 }
 
 // =========================================================================
-// RunCycles - スケジューラメインループ
-// 順序: CPU → Timers → APU → PPU (各スライス)
+// RunCycles - 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｩ繝｡繧､繝ｳ繝ｫ繝ｼ繝・// 鬆・ｺ・ CPU 竊・Timers 竊・APU 竊・PPU (蜷・せ繝ｩ繧､繧ｹ)
 // =========================================================================
 void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
-  executed_cycles_ += cycles;
 
-  // BIOS起動中は細かいスライスで処理 (タイミング精度優先)
-  // それ以外は16サイクルスライス (パフォーマンス優先)
-  const uint32_t kSlice = bios_boot_via_vector_ ? 4u : 16u;
+  // Keep hardware side effects close to the instruction that triggered them.
+  // Large batches skew timer/DMA state because IO writes become visible only
+  // after the whole CPU slice completes.
+  const uint32_t kSlice = 1u;
 
   uint32_t remaining = cycles;
   while (remaining > 0u) {
-    const uint32_t slice = std::min(remaining, kSlice);
+    const uint32_t requested = std::min(remaining, kSlice);
 
-    // CPU実行 (HALTなら即時即時リターン)
-    RunCpuSlice(slice);
+    // CPU螳溯｡・(HALT縺ｪ繧牙叉譎ょ叉譎ゅΜ繧ｿ繝ｼ繝ｳ)
+    uint32_t elapsed = RunCpuSlice(requested);
+    if (elapsed == 0u) elapsed = requested;
+    executed_cycles_ += elapsed;
 
-    // タイマー更新
-    StepTimers(slice);
+    // 繧ｿ繧､繝槭・譖ｴ譁ｰ
+    StepTimers(elapsed);
 
-    // APU更新
-    StepApu(slice);
+    // APU譖ｴ譁ｰ
+    StepApu(elapsed);
 
-    // PPU更新 (HBlank/VBlank イベント発火を含む)
-    StepPpu(slice);
+    // PPU譖ｴ譁ｰ (HBlank/VBlank 繧､繝吶Φ繝育匱轣ｫ繧貞性繧)
+    StepPpu(elapsed);
 
-    // 即時DMA (start_timing=0)
+    // 蜊ｳ譎・MA (start_timing=0)
     StepDma();
 
-    remaining -= slice;
+    remaining = (elapsed >= remaining) ? 0u : (remaining - elapsed);
   }
 }
 
@@ -248,14 +249,14 @@ void GBACore::SetKeys(uint16_t keys_pressed_mask) {
 }
 
 // =========================================================================
-// StepFrame - 1フレーム分実行してレンダリング
+// StepFrame - 1繝輔Ξ繝ｼ繝蛻・ｮ溯｡後＠縺ｦ繝ｬ繝ｳ繝繝ｪ繝ｳ繧ｰ
 // =========================================================================
 void GBACore::StepFrame() {
   if (!loaded_) return;
   RunCycles(kCyclesPerFrame);
   ++frame_count_;
 
-  // BIOS起動完了検出
+  // BIOS襍ｷ蜍募ｮ御ｺ・､懷・
   if (bios_boot_via_vector_) {
     if (cpu_.regs[15] >= 0x08000000u) {
       bios_boot_via_vector_   = false;
@@ -263,7 +264,7 @@ void GBACore::StepFrame() {
       Write8(0x04000300u, 0x01u);  // POSTFLG=1
     } else {
       ++bios_boot_watchdog_frames_;
-      // ウォッチドッグ: 300フレーム以上BIOSから出ない場合は強制終了
+      // 繧ｦ繧ｩ繝・メ繝峨ャ繧ｰ: 300繝輔Ξ繝ｼ繝莉･荳械IOS縺九ｉ蜃ｺ縺ｪ縺・ｴ蜷医・蠑ｷ蛻ｶ邨ゆｺ・
       if (bios_boot_watchdog_frames_ > 300u) {
         bios_boot_via_vector_ = false;
         cpu_.regs[15] = 0x08000000u;
@@ -272,7 +273,7 @@ void GBACore::StepFrame() {
     }
   }
 
-  // HALT ウォッチドッグ: 割り込みなし無限HALTを防ぐ
+  // HALT 繧ｦ繧ｩ繝・メ繝峨ャ繧ｰ: 蜑ｲ繧願ｾｼ縺ｿ縺ｪ縺礼┌髯食ALT繧帝亟縺・
   if (!bios_boot_via_vector_ && cpu_.halted) {
     const uint16_t ie     = ReadIO16(0x04000200u);
     const uint16_t iflags = ReadIO16(0x04000202u);
@@ -297,7 +298,7 @@ void GBACore::StepFrame() {
 }
 
 // =========================================================================
-// ROMヘッダ補完チェック計算
+// ROM繝倥ャ繝陬懷ｮ後メ繧ｧ繝・け險育ｮ・
 // =========================================================================
 uint8_t GBACore::ComputeComplementCheck() const {
   int sum = 0;
@@ -307,7 +308,7 @@ uint8_t GBACore::ComputeComplementCheck() const {
 }
 
 // =========================================================================
-// Nintendoロゴ検証
+// Nintendo繝ｭ繧ｴ讀懆ｨｼ
 // =========================================================================
 bool GBACore::ValidateNintendoLogo() const {
   if (rom_.size() < 0xA0u) return false;
@@ -318,7 +319,7 @@ bool GBACore::ValidateNintendoLogo() const {
 }
 
 // =========================================================================
-// ゲームプレイ状態更新 (デモ用)
+// 繧ｲ繝ｼ繝繝励Ξ繧､迥ｶ諷区峩譁ｰ (繝・Δ逕ｨ)
 // =========================================================================
 void GBACore::UpdateGameplayFromInput() {
   constexpr int kStep = 2;

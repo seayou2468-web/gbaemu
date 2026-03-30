@@ -37,7 +37,7 @@ void GBACore::ApplyColorEffects() {
     const bool top_is_obj = obj_drawn[i] != 0;
     const bool top_is_semi = top_is_obj && obj_semi[i];
     const uint8_t top_l = top_is_obj ? 4 : bg_layer[i];
-    const uint16_t top_m = 1 << top_l;
+    const uint16_t top_m = LayerToBlendMask(top_l, top_is_obj);
 
     uint32_t effect = top_is_semi ? 1 : mode;
     if (effect == 0) continue;
@@ -47,8 +47,8 @@ void GBACore::ApplyColorEffects() {
     int r = (top_color >> 16) & 0xFF, g = (top_color >> 8) & 0xFF, b = top_color & 0xFF;
 
     if (effect == 1) { // Alpha Blending
-      uint8_t bot_l = (top_is_obj) ? bg_layer[i] : bg_sec_layer[i];
-      uint16_t bot_m = 1 << (8 + bot_l);
+      const uint8_t bot_l = top_is_obj ? bg_layer[i] : bg_sec_layer[i];
+      const uint16_t bot_m = static_cast<uint16_t>(LayerToBlendMask(bot_l, false) << 8);
       if (!(bldcnt & bot_m)) continue;
 
       uint32_t bot_color = (top_is_obj) ? bg_base[i] : bg_sec[i];

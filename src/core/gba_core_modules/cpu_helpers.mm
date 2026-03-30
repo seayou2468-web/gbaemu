@@ -216,24 +216,31 @@ bool GBACore::HasSpsr(uint32_t mode) const {
   return mode == 0x11u || mode == 0x12u || mode == 0x13u || mode == 0x17u || mode == 0x1Bu;
 }
 
+uint32_t GBACore::NormalizeSpLrBankMode(uint32_t mode) {
+  mode &= 0x1Fu;
+  return (mode == 0x10u) ? 0x1Fu : mode;
+}
+
 void GBACore::SwitchCpuMode(uint32_t new_mode) {
   new_mode &= 0x1Fu;
   const uint32_t old_mode = cpu_.active_mode & 0x1Fu;
   if (old_mode == new_mode) return;
+  const uint32_t old_bank_mode = NormalizeSpLrBankMode(old_mode);
+  const uint32_t new_bank_mode = NormalizeSpLrBankMode(new_mode);
   if (old_mode == 0x11u) {  // Leaving FIQ: bank out R8-R12.
     for (size_t i = 0; i < cpu_.banked_fiq_r8_r12.size(); ++i) {
       cpu_.banked_fiq_r8_r12[i] = cpu_.regs[8 + i];
     }
   }
-  cpu_.banked_sp[old_mode] = cpu_.regs[13];
-  cpu_.banked_lr[old_mode] = cpu_.regs[14];
+  cpu_.banked_sp[old_bank_mode] = cpu_.regs[13];
+  cpu_.banked_lr[old_bank_mode] = cpu_.regs[14];
   if (new_mode == 0x11u) {  // Entering FIQ: bank in R8-R12.
     for (size_t i = 0; i < cpu_.banked_fiq_r8_r12.size(); ++i) {
       cpu_.regs[8 + i] = cpu_.banked_fiq_r8_r12[i];
     }
   }
-  cpu_.regs[13] = cpu_.banked_sp[new_mode];
-  cpu_.regs[14] = cpu_.banked_lr[new_mode];
+  cpu_.regs[13] = cpu_.banked_sp[new_bank_mode];
+  cpu_.regs[14] = cpu_.banked_lr[new_bank_mode];
   cpu_.active_mode = new_mode;
   cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | new_mode;
 }

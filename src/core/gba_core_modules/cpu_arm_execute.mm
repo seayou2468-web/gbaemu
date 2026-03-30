@@ -317,6 +317,10 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       addr = up ? (addr + offset) : (addr - offset);
     }
     if (write_back || !pre) cpu_.regs[rn] = addr;
+    if (load && rd == 15u) {
+      cpu_.regs[15] &= ~3u;
+      return;
+    }
     cpu_.regs[15] += 4;
     return;
   }

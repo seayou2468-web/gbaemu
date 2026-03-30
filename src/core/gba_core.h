@@ -149,6 +149,7 @@ class GBACore {
   void RaiseInterrupt(uint16_t mask);
   void EnterException(uint32_t vector_addr, uint32_t new_mode, bool disable_irq, bool thumb_state);
   void ServiceInterruptIfNeeded();
+  static uint32_t NormalizeSpLrBankMode(uint32_t mode);
 
   uint32_t ReadBus32(uint32_t a) const;
   void UpdateOpenBus(uint32_t addr, uint32_t val, int size) const;
@@ -182,7 +183,7 @@ class GBACore {
   void HandleUndefinedInstruction(bool thumb_state);
   void HandleRegisterRamReset(uint8_t flags);
   void HandleCpuSet(bool fast_mode);
-  void RunCpuSlice(uint32_t cycles);
+  uint32_t RunCpuSlice(uint32_t cycles);
 
   struct CpuState {
     std::array<uint32_t, 16> regs{};

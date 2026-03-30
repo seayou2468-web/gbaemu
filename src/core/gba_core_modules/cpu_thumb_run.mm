@@ -468,7 +468,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   HandleUndefinedInstruction(true);
 }
 
-void GBACore::RunCpuSlice(uint32_t cycles) {
+uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
   // 1. Wake up from HALT if any enabled interrupt is pending
   const uint16_t ie = ReadIO16(0x04000200u);
   const uint16_t iflags = ReadIO16(0x04000202u);
@@ -476,7 +476,7 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
     cpu_.halted = false;
   }
 
-  if (cpu_.halted) return;
+  if (cpu_.halted) return cycles;
 
   auto is_exec_addr_valid = [&](uint32_t addr) -> bool {
     if (bios_loaded_ && addr < 0x00004000u) return true;
@@ -510,6 +510,7 @@ void GBACore::RunCpuSlice(uint32_t cycles) {
       ExecuteArmInstruction(opcode);
     }
   }
+  return consumed;
 }
 
 void GBACore::DebugStepCpuInstructions(uint32_t count) {

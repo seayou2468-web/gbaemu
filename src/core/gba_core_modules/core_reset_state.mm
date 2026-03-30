@@ -82,8 +82,11 @@ void GBACore::Reset() {
     cpu_.banked_sp[0x13u] = 0x03007FE0u;  // SVC
     cpu_.banked_sp[0x12u] = 0x03007FA0u;  // IRQ
     cpu_.banked_sp[0x1Fu] = 0x03007F00u;  // SYS
+    cpu_.banked_sp[0x10u] = cpu_.banked_sp[0x1Fu];  // USR shares SYS bank
     cpu_.banked_lr[0x13u] = 0;
     cpu_.banked_lr[0x12u] = 0;
+    cpu_.banked_lr[0x10u] = 0;
+    cpu_.banked_lr[0x1Fu] = 0;
     cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
     cpu_.regs[14] = 0;
   }

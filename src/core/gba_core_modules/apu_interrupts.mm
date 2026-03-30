@@ -336,7 +336,7 @@ void GBACore::ServiceInterruptIfNeeded() {
   const uint32_t old_irq_flags = Read32(irq_flags_addr);
   Write32(irq_flags_addr, old_irq_flags | pending);
 
-  const bool use_bios_irq = bios_loaded_ && bios_boot_via_vector_;
+  const bool use_bios_irq = bios_loaded_;
   if (use_bios_irq) {
     EnterException(0x00000018u, 0x12u, true, false);
     return;
