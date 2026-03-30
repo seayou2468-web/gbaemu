@@ -3,6 +3,7 @@
 
 namespace gba {
 namespace {
+constexpr uint32_t kBgVramSize = 0x10000u;
 
 uint32_t GetPaletteColor(const std::array<uint8_t, 1024>& palette_ram, uint16_t idx) {
   const size_t off = (static_cast<size_t>(idx) & 0x1FFu) * 2;
@@ -36,7 +37,8 @@ void SampleTextBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt, uint
   }
   tx &= 31; ty &= 31;
   map_addr += (static_cast<uint32_t>(ty) * 32 + static_cast<uint32_t>(tx)) * 2;
-  if (map_addr + 1 >= vram.size()) return;
+  map_addr %= kBgVramSize;
+  if (map_addr + 1 >= kBgVramSize) return;
   const uint16_t info = static_cast<uint16_t>(vram[map_addr]) | (static_cast<uint16_t>(vram[map_addr+1]) << 8);
   const uint16_t tile = info & 0x3FF;
   int px = sx % 8, py = sy % 8;
@@ -44,11 +46,11 @@ void SampleTextBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt, uint
   if (info & 0x800) py = 7 - py;
 
   if (bgcnt & 0x80) { // 8bpp
-    const uint32_t off = (char_base + static_cast<uint32_t>(tile) * 64 + static_cast<uint32_t>(py) * 8 + static_cast<uint32_t>(px)) % vram.size();
+    const uint32_t off = (char_base + static_cast<uint32_t>(tile) * 64 + static_cast<uint32_t>(py) * 8 + static_cast<uint32_t>(px)) % kBgVramSize;
     const uint8_t color = vram[off];
     if (color) { *out_idx = color; *out_opaque = true; }
   } else { // 4bpp
-    const uint32_t off = (char_base + static_cast<uint32_t>(tile) * 32 + static_cast<uint32_t>(py) * 4 + static_cast<uint32_t>(px) / 2) % vram.size();
+    const uint32_t off = (char_base + static_cast<uint32_t>(tile) * 32 + static_cast<uint32_t>(py) * 4 + static_cast<uint32_t>(px) / 2) % kBgVramSize;
     const uint8_t val = vram[off];
     const uint8_t color = (px & 1) ? (val >> 4) : (val & 0xF);
     if (color) { *out_idx = ((info >> 12) & 0xF) * 16 + color; *out_opaque = true; }
@@ -86,9 +88,9 @@ void SampleAffineBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
   const uint32_t char_base = ((bgcnt >> 2) & 0x3) * 0x4000;
   const uint32_t screen_base = ((bgcnt >> 8) & 0x1F) * 0x800;
   const int tiles_per_row = size / 8;
-  const uint32_t map_off = (screen_base + static_cast<uint32_t>(ty / 8) * tiles_per_row + static_cast<uint32_t>(tx / 8)) % vram.size();
+  const uint32_t map_off = (screen_base + static_cast<uint32_t>(ty / 8) * tiles_per_row + static_cast<uint32_t>(tx / 8)) % kBgVramSize;
   const uint8_t tile = vram[map_off];
-  const uint32_t chr_off = (char_base + static_cast<uint32_t>(tile) * 64 + static_cast<uint32_t>(ty % 8) * 8 + static_cast<uint32_t>(tx % 8)) % vram.size();
+  const uint32_t chr_off = (char_base + static_cast<uint32_t>(tile) * 64 + static_cast<uint32_t>(ty % 8) * 8 + static_cast<uint32_t>(tx % 8)) % kBgVramSize;
   const uint8_t color = vram[chr_off];
   if (color) { *out_idx = color; *out_opaque = true; }
 }
@@ -106,6 +108,7 @@ void GBACore::RenderMode0Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
   auto& bg_layer = BgLayerBuffer(); auto& bg_priority = BgPriorityBuffer();
   auto& sec_color = BgSecondColorBuffer(); auto& sec_layer = BgSecondLayerBuffer();
+  auto& sec_prio = BgSecondPriorityBuffer();
 
   for (int y=0; y<kScreenHeight; ++y) {
     for (int x=0; x<kScreenWidth; ++x) {
@@ -122,15 +125,19 @@ void GBACore::RenderMode0Frame() {
       for (int bg=0; bg<4; ++bg) {
         if (!(dispcnt & (1 << (8+bg)))) continue;
         if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) continue;
+        const uint16_t bgcnt = bg_scroll_line_valid_ ? bg_cnt_line_[y][bg] : ReadIO16(0x04000008+bg*2);
         uint16_t idx=0; bool opaque=false;
-        SampleTextBg(vram_, ReadIO16(0x04000008+bg*2), ReadIO16(0x04000010+bg*4), ReadIO16(0x04000012+bg*4), mosaic_reg, x, y, &idx, &opaque);
-        if (opaque) consider(idx, ReadIO16(0x04000008+bg*2) & 3, static_cast<uint8_t>(bg));
+        const uint16_t hofs = bg_scroll_line_valid_ ? bg_hofs_line_[y][bg] : ReadIO16(0x04000010+bg*4);
+        const uint16_t vofs = bg_scroll_line_valid_ ? bg_vofs_line_[y][bg] : ReadIO16(0x04000012+bg*4);
+        SampleTextBg(vram_, bgcnt, hofs, vofs, mosaic_reg, x, y, &idx, &opaque);
+        if (opaque) consider(idx, bgcnt & 3, static_cast<uint8_t>(bg));
       }
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
       frame_buffer_[off] = h_bg ? GetPaletteColor(palette_ram_, b_idx) : backdrop;
       bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
       sec_color[off] = h_sec ? GetPaletteColor(palette_ram_, s_idx) : backdrop;
       sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
+      sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
     }
   }
 }
@@ -146,6 +153,7 @@ void GBACore::RenderMode1Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
   auto& bg_layer = BgLayerBuffer(); auto& bg_priority = BgPriorityBuffer();
   auto& sec_color = BgSecondColorBuffer(); auto& sec_layer = BgSecondLayerBuffer();
+  auto& sec_prio = BgSecondPriorityBuffer();
 
   for (int y=0; y<kScreenHeight; ++y) {
     for (int x=0; x<kScreenWidth; ++x) {
@@ -162,17 +170,23 @@ void GBACore::RenderMode1Frame() {
       for (int bg=0; bg<2; ++bg) {
         if (!(dispcnt & (1 << (8+bg)))) continue;
         if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) continue;
+        const uint16_t bgcnt = bg_scroll_line_valid_ ? bg_cnt_line_[y][bg] : ReadIO16(0x04000008+bg*2);
         uint16_t idx=0; bool opaque=false;
-        SampleTextBg(vram_, ReadIO16(0x04000008+bg*2), ReadIO16(0x04000010+bg*4), ReadIO16(0x04000012+bg*4), mosaic_reg, x, y, &idx, &opaque);
-        if (opaque) consider(idx, ReadIO16(0x04000008+bg*2) & 3, static_cast<uint8_t>(bg));
+        const uint16_t hofs = bg_scroll_line_valid_ ? bg_hofs_line_[y][bg] : ReadIO16(0x04000010+bg*4);
+        const uint16_t vofs = bg_scroll_line_valid_ ? bg_vofs_line_[y][bg] : ReadIO16(0x04000012+bg*4);
+        SampleTextBg(vram_, bgcnt, hofs, vofs, mosaic_reg, x, y, &idx, &opaque);
+        if (opaque) consider(idx, bgcnt & 3, static_cast<uint8_t>(bg));
       }
       if ((dispcnt & (1 << 10)) && IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         uint16_t idx=0; bool opaque=false;
-        const uint16_t bg2cnt = ReadIO16(0x0400000C);
+        const uint16_t bg2cnt = bg_affine_params_line_valid_ ? bg_cnt_line_[y][2] : ReadIO16(0x0400000C);
         const int mosaic_v = ((mosaic_reg >> 4) & 0xF) + 1;
         const int sy = (bg2cnt & 0x40) ? (y / mosaic_v) * mosaic_v : y;
-        SampleAffineBg(vram_, bg2cnt, (int16_t)ReadIO16(0x04000020), (int16_t)ReadIO16(0x04000022),
-                       (int16_t)ReadIO16(0x04000024), (int16_t)ReadIO16(0x04000026),
+        const int16_t pa = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pa : static_cast<int16_t>(ReadIO16(0x04000020));
+        const int16_t pb = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pb : static_cast<int16_t>(ReadIO16(0x04000022));
+        const int16_t pc = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pc : static_cast<int16_t>(ReadIO16(0x04000024));
+        const int16_t pd = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pd : static_cast<int16_t>(ReadIO16(0x04000026));
+        SampleAffineBg(vram_, bg2cnt, pa, pb, pc, pd,
                        affine_line_refs_valid_ ? bg2_refx_line_[sy] : static_cast<int32_t>(Read32(0x04000028) << 4) >> 4,
                        affine_line_refs_valid_ ? bg2_refy_line_[sy] : static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4,
                        mosaic_reg, x, y, &idx, &opaque);
@@ -183,6 +197,7 @@ void GBACore::RenderMode1Frame() {
       bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
       sec_color[off] = h_sec ? GetPaletteColor(palette_ram_, s_idx) : backdrop;
       sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
+      sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
     }
   }
 }
@@ -198,6 +213,7 @@ void GBACore::RenderMode2Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
   auto& bg_layer = BgLayerBuffer(); auto& bg_priority = BgPriorityBuffer();
   auto& sec_color = BgSecondColorBuffer(); auto& sec_layer = BgSecondLayerBuffer();
+  auto& sec_prio = BgSecondPriorityBuffer();
 
   for (int y=0; y<kScreenHeight; ++y) {
     for (int x=0; x<kScreenWidth; ++x) {
@@ -217,11 +233,22 @@ void GBACore::RenderMode2Frame() {
         uint16_t idx=0; bool opaque=false;
         const uint32_t a_base = (bg==2)?0x04000020:0x04000030;
         const uint32_t r_base = (bg==2)?0x04000028:0x04000038;
-        const uint16_t bgcnt = ReadIO16(0x04000008+bg*2);
+        const uint16_t bgcnt = bg_affine_params_line_valid_ ? bg_cnt_line_[y][bg] : ReadIO16(0x04000008+bg*2);
         const int mosaic_v = ((mosaic_reg >> 4) & 0xF) + 1;
         const int sy = (bgcnt & 0x40) ? (y / mosaic_v) * mosaic_v : y;
-        SampleAffineBg(vram_, bgcnt, (int16_t)ReadIO16(a_base), (int16_t)ReadIO16(a_base+2),
-                       (int16_t)ReadIO16(a_base+4), (int16_t)ReadIO16(a_base+6),
+        const int16_t pa = bg_affine_params_line_valid_
+                               ? (bg==2 ? bg2_affine_line_[sy].pa : bg3_affine_line_[sy].pa)
+                               : static_cast<int16_t>(ReadIO16(a_base));
+        const int16_t pb = bg_affine_params_line_valid_
+                               ? (bg==2 ? bg2_affine_line_[sy].pb : bg3_affine_line_[sy].pb)
+                               : static_cast<int16_t>(ReadIO16(a_base+2));
+        const int16_t pc = bg_affine_params_line_valid_
+                               ? (bg==2 ? bg2_affine_line_[sy].pc : bg3_affine_line_[sy].pc)
+                               : static_cast<int16_t>(ReadIO16(a_base+4));
+        const int16_t pd = bg_affine_params_line_valid_
+                               ? (bg==2 ? bg2_affine_line_[sy].pd : bg3_affine_line_[sy].pd)
+                               : static_cast<int16_t>(ReadIO16(a_base+6));
+        SampleAffineBg(vram_, bgcnt, pa, pb, pc, pd,
                        affine_line_refs_valid_ ? (bg==2?bg2_refx_line_[sy]:bg3_refx_line_[sy]) : static_cast<int32_t>(Read32(r_base) << 4) >> 4,
                        affine_line_refs_valid_ ? (bg==2?bg2_refy_line_[sy]:bg3_refy_line_[sy]) : static_cast<int32_t>(Read32(r_base+4) << 4) >> 4,
                        mosaic_reg, x, y, &idx, &opaque);
@@ -232,6 +259,7 @@ void GBACore::RenderMode2Frame() {
       bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
       sec_color[off] = h_sec ? GetPaletteColor(palette_ram_, s_idx) : backdrop;
       sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
+      sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
     }
   }
 }

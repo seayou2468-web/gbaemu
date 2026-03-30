@@ -34,8 +34,13 @@ inline std::vector<uint8_t> g_bg_layer_buffer;
 inline std::vector<uint32_t> g_bg_base_color_buffer;
 inline std::vector<uint32_t> g_bg_second_color_buffer;
 inline std::vector<uint8_t> g_bg_second_layer_buffer;
+inline std::vector<uint8_t> g_bg_second_priority_buffer;
 inline std::vector<uint8_t> g_obj_priority_buffer;
 inline std::vector<uint8_t> g_obj_index_buffer;
+inline std::vector<uint8_t> g_obj_under_drawn_mask_buffer;
+inline std::vector<uint8_t> g_obj_under_priority_buffer;
+inline std::vector<uint8_t> g_obj_under_index_buffer;
+inline std::vector<uint32_t> g_obj_under_color_buffer;
 
 std::vector<uint8_t>& BgPriorityBuffer() {
   return g_bg_priority_buffer;
@@ -77,6 +82,10 @@ std::vector<uint32_t>& BgSecondColorBuffer() {
 
 std::vector<uint8_t>& ObjPriorityBuffer() { return g_obj_priority_buffer; }
 std::vector<uint8_t>& ObjIndexBuffer() { return g_obj_index_buffer; }
+std::vector<uint8_t>& ObjUnderDrawnMaskBuffer() { return g_obj_under_drawn_mask_buffer; }
+std::vector<uint8_t>& ObjUnderPriorityBuffer() { return g_obj_under_priority_buffer; }
+std::vector<uint8_t>& ObjUnderIndexBuffer() { return g_obj_under_index_buffer; }
+std::vector<uint32_t>& ObjUnderColorBuffer() { return g_obj_under_color_buffer; }
 
 void EnsureObjPriorityBuffersSize() {
   const size_t req = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
@@ -84,11 +93,20 @@ void EnsureObjPriorityBuffersSize() {
   else std::fill(g_obj_priority_buffer.begin(), g_obj_priority_buffer.end(), 4u);
   if (g_obj_index_buffer.size() != req) g_obj_index_buffer.assign(req, 255u);
   else std::fill(g_obj_index_buffer.begin(), g_obj_index_buffer.end(), 255u);
+  if (g_obj_under_drawn_mask_buffer.size() != req) g_obj_under_drawn_mask_buffer.assign(req, 0u);
+  else std::fill(g_obj_under_drawn_mask_buffer.begin(), g_obj_under_drawn_mask_buffer.end(), 0u);
+  if (g_obj_under_priority_buffer.size() != req) g_obj_under_priority_buffer.assign(req, 4u);
+  else std::fill(g_obj_under_priority_buffer.begin(), g_obj_under_priority_buffer.end(), 4u);
+  if (g_obj_under_index_buffer.size() != req) g_obj_under_index_buffer.assign(req, 255u);
+  else std::fill(g_obj_under_index_buffer.begin(), g_obj_under_index_buffer.end(), 255u);
+  if (g_obj_under_color_buffer.size() != req) g_obj_under_color_buffer.assign(req, 0xFF000000u);
+  else std::fill(g_obj_under_color_buffer.begin(), g_obj_under_color_buffer.end(), 0xFF000000u);
 }
 
 std::vector<uint8_t>& BgSecondLayerBuffer() {
   return g_bg_second_layer_buffer;
 }
+std::vector<uint8_t>& BgSecondPriorityBuffer() { return g_bg_second_priority_buffer; }
 
 void EnsureBgLayerBufferSize() {
   auto& buffer = BgLayerBuffer();
@@ -113,6 +131,7 @@ void EnsureBgBaseColorBufferSize() {
 void EnsureBgSecondBuffersSize() {
   auto& color = BgSecondColorBuffer();
   auto& layer = BgSecondLayerBuffer();
+  auto& prio = BgSecondPriorityBuffer();
   const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
   if (color.size() != required) {
     color.assign(required, 0xFF000000u);
@@ -123,6 +142,11 @@ void EnsureBgSecondBuffersSize() {
     layer.assign(required, kLayerBackdrop);
   } else {
     std::fill(layer.begin(), layer.end(), kLayerBackdrop);
+  }
+  if (prio.size() != required) {
+    prio.assign(required, static_cast<uint8_t>(kBackdropPriority));
+  } else {
+    std::fill(prio.begin(), prio.end(), static_cast<uint8_t>(kBackdropPriority));
   }
 }
 
@@ -174,12 +198,15 @@ uint16_t ReadBackdropBgr(const std::array<uint8_t, 1024>& palette_ram) {
 
 bool IsWithinWindowAxis(int p, int start, int end, int axis_max) {
   const int s = std::clamp(start, 0, axis_max);
-  int e = std::clamp(end, 0, axis_max);
-  // GBATEK: X1>X2/Y1>Y2 are treated as X2/Y2=max; and X1=X2=0 (Y1=Y2=0)
-  // disables that window axis.
+  const int e = std::clamp(end, 0, axis_max);
+  // GBATEK: X1=X2=0 (or Y1=Y2=0) disables that axis.
+  // If X1>X2 (or Y1>Y2), window range wraps around:
+  // [X1..max) U [0..X2).
   if (s == 0 && e == 0) return false;
-  if (s > e) e = axis_max;
-  return p >= s && p < e;
+  if (s < e) return p >= s && p < e;
+  if (s > e) return p >= s || p < e;
+  // s==e!=0: full axis coverage.
+  return true;
 }
 
 uint8_t ResolveWindowControl(uint16_t dispcnt, uint16_t winin, uint16_t winout,

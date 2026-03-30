@@ -294,8 +294,22 @@ class GBACore {
   std::array<int32_t, mgba_compat::kVideoTotalLines> bg2_refy_line_{};
   std::array<int32_t, mgba_compat::kVideoTotalLines> bg3_refx_line_{};
   std::array<int32_t, mgba_compat::kVideoTotalLines> bg3_refy_line_{};
+  std::array<std::array<uint16_t, 4>, mgba_compat::kVideoTotalLines> bg_hofs_line_{};
+  std::array<std::array<uint16_t, 4>, mgba_compat::kVideoTotalLines> bg_vofs_line_{};
+  std::array<std::array<uint16_t, 4>, mgba_compat::kVideoTotalLines> bg_cnt_line_{};
+  struct AffineLineParams {
+    int16_t pa = 0;
+    int16_t pb = 0;
+    int16_t pc = 0;
+    int16_t pd = 0;
+  };
+  std::array<AffineLineParams, mgba_compat::kVideoTotalLines> bg2_affine_line_{};
+  std::array<AffineLineParams, mgba_compat::kVideoTotalLines> bg3_affine_line_{};
   std::array<uint8_t, mgba_compat::kVideoTotalLines> affine_line_captured_{};
   bool affine_line_refs_valid_ = false;
+  bool bg_scroll_line_valid_ = false;
+  bool bg_affine_params_line_valid_ = false;
+  bool frame_rendered_in_vblank_ = false;
   uint64_t executed_cycles_ = 0;
   uint16_t keys_pressed_mask_ = 0;
   uint16_t previous_keys_mask_ = 0;

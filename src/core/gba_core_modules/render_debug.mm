@@ -21,13 +21,22 @@ void GBACore::ApplyColorEffects() {
 
   auto& bg_layer = BgLayerBuffer();
   auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semi = ObjSemiTransMaskBuffer();
+  auto& obj_under_drawn = ObjUnderDrawnMaskBuffer();
+  auto& obj_under_prio = ObjUnderPriorityBuffer();
+  auto& obj_under_color = ObjUnderColorBuffer();
   auto& bg_base = BgBaseColorBuffer(); auto& bg_sec = BgSecondColorBuffer();
   auto& bg_sec_layer = BgSecondLayerBuffer();
+  auto& bg_sec_prio = BgSecondPriorityBuffer();
+  const uint32_t backdrop_color = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
   if (bg_layer.size() != required) EnsureBgLayerBufferSize();
   if (obj_drawn.size() != required) EnsureObjDrawnMaskBufferSize();
   if (obj_semi.size() != required) EnsureObjSemiTransMaskBufferSize();
   if (bg_base.size() != required) EnsureBgBaseColorBufferSize();
   if (bg_sec.size() != required || bg_sec_layer.size() != required) EnsureBgSecondBuffersSize();
+  const bool has_obj_under = obj_under_drawn.size() == required &&
+                             obj_under_color.size() == required &&
+                             obj_under_prio.size() == required;
+  const bool has_bg_sec_prio = bg_sec_prio.size() == required;
 
   for (int i = 0; i < kScreenWidth * kScreenHeight; ++i) {
     const int x = i % kScreenWidth, y = i / kScreenWidth;
@@ -47,11 +56,49 @@ void GBACore::ApplyColorEffects() {
     int r = (top_color >> 16) & 0xFF, g = (top_color >> 8) & 0xFF, b = top_color & 0xFF;
 
     if (effect == 1) { // Alpha Blending
-      const uint8_t bot_l = top_is_obj ? bg_layer[i] : bg_sec_layer[i];
-      const uint16_t bot_m = static_cast<uint16_t>(LayerToBlendMask(bot_l, false) << 8);
-      if (!(bldcnt & bot_m)) continue;
+      bool found_bot = false;
+      uint32_t bot_color = backdrop_color;
 
-      uint32_t bot_color = (top_is_obj) ? bg_base[i] : bg_sec[i];
+      auto try_target2 = [&](uint8_t layer, uint32_t color) {
+        if (found_bot) return;
+        const uint16_t mask = static_cast<uint16_t>(LayerToBlendMask(layer, false) << 8);
+        if ((bldcnt & mask) != 0) {
+          found_bot = true;
+          bot_color = color;
+        }
+      };
+      auto try_target2_obj = [&](uint32_t color) {
+        if (found_bot) return;
+        const uint16_t mask = static_cast<uint16_t>((1u << 4) << 8);
+        if ((bldcnt & mask) != 0) {
+          found_bot = true;
+          bot_color = color;
+        }
+      };
+
+      if (top_is_obj) {
+        if (has_obj_under && obj_under_drawn[i]) try_target2_obj(obj_under_color[i]);
+        try_target2(bg_layer[i], bg_base[i]);
+        try_target2(bg_sec_layer[i], bg_sec[i]);
+      } else {
+        const bool obj2_ok = has_obj_under && obj_under_drawn[i];
+        const bool bg2_ok = has_bg_sec_prio;
+        if (obj2_ok && bg2_ok) {
+          // Pick the higher-priority lower pixel (smaller priority number).
+          if (obj_under_prio[i] < bg_sec_prio[i]) {
+            try_target2_obj(obj_under_color[i]);
+            try_target2(bg_sec_layer[i], bg_sec[i]);
+          } else {
+            try_target2(bg_sec_layer[i], bg_sec[i]);
+            try_target2_obj(obj_under_color[i]);
+          }
+        } else {
+          if (obj2_ok) try_target2_obj(obj_under_color[i]);
+          if (bg2_ok) try_target2(bg_sec_layer[i], bg_sec[i]);
+        }
+      }
+      try_target2(kLayerBackdrop, backdrop_color);
+      if (!found_bot) continue;
       frame_buffer_[i] = AlphaBlendLocal(top_color, bot_color, bldalpha);
     } else {
       if (effect == 2) { // Brighten

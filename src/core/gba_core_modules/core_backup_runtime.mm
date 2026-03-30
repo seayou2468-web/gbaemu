@@ -253,6 +253,9 @@ void GBACore::SetKeys(uint16_t keys_pressed_mask) {
 // =========================================================================
 void GBACore::StepFrame() {
   if (!loaded_) return;
+  frame_rendered_in_vblank_ = false;
+  bg_scroll_line_valid_ = false;
+  bg_affine_params_line_valid_ = false;
   RunCycles(kCyclesPerFrame);
   ++frame_count_;
 
@@ -294,7 +297,11 @@ void GBACore::StepFrame() {
   }
 
   UpdateGameplayFromInput();
-  RenderDebugFrame();
+  if (!frame_rendered_in_vblank_) {
+    // Fallback path: if this frame didn't cross VBlank boundary in StepPpu,
+    // render from current state.
+    RenderDebugFrame();
+  }
 }
 
 // =========================================================================

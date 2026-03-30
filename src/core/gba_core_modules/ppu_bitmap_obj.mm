@@ -12,28 +12,40 @@ bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_
   const int in_x = tx & 7, in_y = ty & 7;
 
   uint32_t t_id = tile_id;
-  if (color_256) t_id &= ~1u;
+  // For 256-color OBJ, GBATEK notes tile number bit0 is ignored in 2D mapping.
+  // (In 1D mapping software typically uses even tile numbers, but bit0 isn't
+  // forcibly masked by this address calculation path.)
+  if (color_256 && !obj_1d) t_id &= ~1u;
 
   uint32_t tile_units;
   if (obj_1d) {
     const int tiles_per_row = src_w / 8;
     tile_units = t_id + static_cast<uint32_t>(tile_y * (color_256 ? tiles_per_row * 2 : tiles_per_row) + (color_256 ? tile_x * 2 : tile_x));
   } else {
-    // 2D Mapping: Hardware uses 32-tile stride (1024 bytes per row of tiles)
+    // 2D Mapping: Tile-number row stride is +32 tiles (both 4bpp/8bpp).
+    // In 8bpp, X uses 2 tiles per 8x8 cell; bit0 of tile number is ignored.
     tile_units = t_id + static_cast<uint32_t>(tile_y * 32 + (color_256 ? tile_x * 2 : tile_x));
   }
 
-  const size_t chr_base_off = obj_chr_base + static_cast<size_t>(tile_units) * 32u;
+  const size_t obj_chr_size = (obj_chr_base >= 0x14000u) ? 0x4000u : 0x8000u;
+  const size_t chr_tile_off = (static_cast<size_t>(tile_units) * 32u) % obj_chr_size;
+  const size_t chr_base_off = obj_chr_base + chr_tile_off;
   if (chr_base_off >= vram.size()) return false;
 
   if (color_256) {
-    const uint8_t color = vram[(chr_base_off + static_cast<size_t>(in_y * 8 + in_x)) % vram.size()];
+    const size_t pix_off = (chr_tile_off + static_cast<size_t>(in_y * 8 + in_x)) % obj_chr_size;
+    const size_t addr = obj_chr_base + pix_off;
+    if (addr >= vram.size()) return false;
+    const uint8_t color = vram[addr];
     if (color == 0u) return false;
     *out_color_index = color;
     return true;
   }
 
-  const uint8_t packed = vram[(chr_base_off + static_cast<size_t>(in_y * 4 + in_x / 2)) % vram.size()];
+  const size_t pix_off = (chr_tile_off + static_cast<size_t>(in_y * 4 + in_x / 2)) % obj_chr_size;
+  const size_t addr = obj_chr_base + pix_off;
+  if (addr >= vram.size()) return false;
+  const uint8_t packed = vram[addr];
   const uint8_t nib = (in_x & 1) ? (packed >> 4) : (packed & 0x0F);
   if (nib == 0u) return false;
   *out_color_index = static_cast<uint16_t>(palbank * 16u + nib);
@@ -50,20 +62,23 @@ void GBACore::RenderMode3Frame() {
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+  std::fill(BgSecondColorBuffer().begin(), BgSecondColorBuffer().end(), backdrop);
+  std::fill(BgSecondLayerBuffer().begin(), BgSecondLayerBuffer().end(), 4u);
 
   const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
-  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
-  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
-  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
-  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
 
   for (int y = 0; y < kScreenHeight; ++y) {
     const int sy = mosaic ? (y / mos_v) * mos_v : y;
+    const int16_t pa = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pa : static_cast<int16_t>(ReadIO16(0x04000020u));
+    const int16_t pb = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pb : static_cast<int16_t>(ReadIO16(0x04000022u));
+    const int16_t pc = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pc : static_cast<int16_t>(ReadIO16(0x04000024u));
+    const int16_t pd = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pd : static_cast<int16_t>(ReadIO16(0x04000026u));
     const int32_t line_refx = affine_line_refs_valid_ ? bg2_refx_line_[sy] : (static_cast<int32_t>(Read32(0x04000028u) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
     const int32_t line_refy = affine_line_refs_valid_ ? bg2_refy_line_[sy] : (static_cast<int32_t>(Read32(0x0400002Cu) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
     for (int x = 0; x < kScreenWidth; ++x) {
@@ -104,21 +119,24 @@ void GBACore::RenderMode4Frame() {
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+  std::fill(BgSecondColorBuffer().begin(), BgSecondColorBuffer().end(), backdrop);
+  std::fill(BgSecondLayerBuffer().begin(), BgSecondLayerBuffer().end(), 4u);
   const uint32_t page_base = (dispcnt & 0x10) ? 0xA000 : 0;
 
   const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
-  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
-  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
-  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
-  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
 
   for (int y = 0; y < kScreenHeight; ++y) {
     const int sy = mosaic ? (y / mos_v) * mos_v : y;
+    const int16_t pa = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pa : static_cast<int16_t>(ReadIO16(0x04000020u));
+    const int16_t pb = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pb : static_cast<int16_t>(ReadIO16(0x04000022u));
+    const int16_t pc = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pc : static_cast<int16_t>(ReadIO16(0x04000024u));
+    const int16_t pd = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pd : static_cast<int16_t>(ReadIO16(0x04000026u));
     const int32_t line_refx = affine_line_refs_valid_ ? bg2_refx_line_[sy] : (static_cast<int32_t>(Read32(0x04000028u) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
     const int32_t line_refy = affine_line_refs_valid_ ? bg2_refy_line_[sy] : (static_cast<int32_t>(Read32(0x0400002Cu) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
     for (int x = 0; x < kScreenWidth; ++x) {
@@ -127,6 +145,7 @@ void GBACore::RenderMode4Frame() {
       if (!bg2_enable || !IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
+        BgLayerBuffer()[off] = 4;
         continue;
       }
       int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
@@ -159,22 +178,25 @@ void GBACore::RenderMode5Frame() {
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
+  std::fill(BgSecondColorBuffer().begin(), BgSecondColorBuffer().end(), backdrop);
+  std::fill(BgSecondLayerBuffer().begin(), BgSecondLayerBuffer().end(), 4u);
   std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
   const uint32_t page_base = (dispcnt & 0x10) ? 0xA000 : 0;
 
   const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
-  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
-  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
-  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
-  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
-  const bool wrap = (bg2cnt & 0x2000) != 0;
+  // In bitmap modes (3-5), BG2CNT overflow/wrap bit is not used on GBA.
+  const bool wrap = false;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
 
   for (int y = 0; y < kScreenHeight; ++y) {
     const int sy = mosaic ? (y / mos_v) * mos_v : y;
+    const int16_t pa = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pa : static_cast<int16_t>(ReadIO16(0x04000020u));
+    const int16_t pb = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pb : static_cast<int16_t>(ReadIO16(0x04000022u));
+    const int16_t pc = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pc : static_cast<int16_t>(ReadIO16(0x04000024u));
+    const int16_t pd = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pd : static_cast<int16_t>(ReadIO16(0x04000026u));
     const int32_t line_refx = affine_line_refs_valid_ ? bg2_refx_line_[sy] : (static_cast<int32_t>(Read32(0x04000028u) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
     const int32_t line_refy = affine_line_refs_valid_ ? bg2_refy_line_[sy] : (static_cast<int32_t>(Read32(0x0400002Cu) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
     for (int x = 0; x < kScreenWidth; ++x) {
@@ -222,9 +244,10 @@ void GBACore::BuildObjWindowMask() {
                            static_cast<uint16_t>(oam_[off + 3] << 8);
     const uint16_t attr2 = static_cast<uint16_t>(oam_[off + 4]) |
                            static_cast<uint16_t>(oam_[off + 5] << 8);
-    if (((attr0 >> 8) & 0x3u) != 2u) continue;  // OBJ window
-
     const bool affine = (attr0 & (1u << 8)) != 0;
+    const uint8_t obj_mode = static_cast<uint8_t>((attr0 >> 10) & 0x3u);
+    if (obj_mode != 2u) continue;  // OBJ window mode
+    if (!affine && (attr0 & (1u << 9)) != 0) continue;  // Disabled OBJ
     const bool double_size = affine && ((attr0 & (1u << 9)) != 0);
     const int shape = (attr0 >> 14) & 0x3;
     const int size = (attr1 >> 14) & 0x3;
@@ -278,8 +301,11 @@ void GBACore::BuildObjWindowMask() {
           const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
           const int mos_h = static_cast<int>(((mosaic_reg >> 8) & 0xFu) + 1);
           const int mos_v = static_cast<int>(((mosaic_reg >> 12) & 0xFu) + 1);
-          sample_px = (px / mos_h) * mos_h;
-          sample_py = (py / mos_v) * mos_v;
+          const int sample_sx = (sx / mos_h) * mos_h;
+          const int sample_sy = (sy / mos_v) * mos_v;
+          sample_px = sample_sx - x;
+          sample_py = sample_sy - y;
+          if (sample_px < 0 || sample_py < 0 || sample_px >= draw_w || sample_py >= draw_h) continue;
         }
         if (affine) {
           const int cx = draw_w / 2;
@@ -314,20 +340,23 @@ void GBACore::BuildObjWindowMask() {
 
 void GBACore::RenderSprites() {
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  EnsureBgPriorityBufferSize();
+  EnsureObjDrawnMaskBufferSize(); EnsureObjSemiTransMaskBufferSize();
+  EnsureObjPriorityBuffersSize();
   if ((dispcnt & (1u << 12)) == 0) return;
   const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
-
-  EnsureBgPriorityBufferSize();
-  EnsureObjDrawnMaskBufferSize(); EnsureObjSemiTransMaskBufferSize();
-  EnsureObjPriorityBuffersSize();
 
   auto& bg_priority = BgPriorityBuffer();
   auto& obj_drawn = ObjDrawnMaskBuffer();
   auto& obj_semitrans = ObjSemiTransMaskBuffer();
   auto& obj_priority_buf = ObjPriorityBuffer();
   auto& obj_index_buf = ObjIndexBuffer();
+  auto& obj_under_drawn = ObjUnderDrawnMaskBuffer();
+  auto& obj_under_prio = ObjUnderPriorityBuffer();
+  auto& obj_under_idx = ObjUnderIndexBuffer();
+  auto& obj_under_color = ObjUnderColorBuffer();
 
   static constexpr int kObjDim[3][4][2] = {
       {{8, 8}, {16, 16}, {32, 32}, {64, 64}},     // square
@@ -349,9 +378,16 @@ void GBACore::RenderSprites() {
     const uint16_t a1 = static_cast<uint16_t>(oam_[off+2]) | (static_cast<uint16_t>(oam_[off+3]) << 8);
     const uint16_t a2 = static_cast<uint16_t>(oam_[off+4]) | (static_cast<uint16_t>(oam_[off+5]) << 8);
 
-    if ((a0 & 0x0300) == 0x0200) continue;
     const bool affine = a0 & 0x0100;
-    const bool double_size = a0 & 0x0200;
+    const uint8_t obj_mode = static_cast<uint8_t>((a0 >> 10) & 0x3u);
+    // OBJ-window sprites are not rendered as normal OBJ pixels.
+    // For mode=3 (prohibited/reserved), treat as normal OBJ to avoid dropping
+    // content on titles/BIOS code that may write transient values.
+    if (obj_mode == 2u) continue;
+    if (!affine && (a0 & 0x0200)) continue;  // Disabled OBJ
+    // OBJ "double-size" (bit9) is valid only for affine sprites.
+    // For non-affine sprites bit9 is OBJ-disable/regular mode control.
+    const bool double_size = affine && ((a0 & 0x0200) != 0);
     const int shape = (a0 >> 14) & 3;
     const int size = (a1 >> 14) & 3;
     if (shape >= 3) continue;
@@ -383,15 +419,17 @@ void GBACore::RenderSprites() {
         if (!IsObjVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, sx, sy)) continue;
 
         const size_t fb_off = static_cast<size_t>(sy * kScreenWidth + sx);
-        if (obj_drawn[fb_off] && prio >= obj_priority_buf[fb_off]) continue;
-        if (prio > bg_priority[fb_off]) continue;
 
         int tsx = px, tsy = py;
         if (mosaic_on) {
           const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
           const int mh = ((mosaic_reg >> 8) & 0xF) + 1;
           const int mv = ((mosaic_reg >> 12) & 0xF) + 1;
-          tsx = (px / mh) * mh; tsy = (py / mv) * mv;
+          const int sample_sx = (sx / mh) * mh;
+          const int sample_sy = (sy / mv) * mv;
+          tsx = sample_sx - x_base;
+          tsy = sample_sy - y_base;
+          if (tsx < 0 || tsy < 0 || tsx >= dw || tsy >= dh) continue;
         }
 
         int tx, ty;
@@ -408,7 +446,25 @@ void GBACore::RenderSprites() {
 
         uint16_t color_idx = 0;
         if (SampleObjColorIndex(vram_, chr_base_val, obj_1d, color_256, sw, tx, ty, tile_base, palbank, &color_idx)) {
-           frame_buffer_[fb_off] = get_pal_color(color_idx);
+           const uint32_t color = get_pal_color(color_idx);
+           auto consider_under = [&]() {
+             if (!obj_under_drawn[fb_off] || prio < obj_under_prio[fb_off] ||
+                 (prio == obj_under_prio[fb_off] && static_cast<uint8_t>(i) < obj_under_idx[fb_off])) {
+               obj_under_drawn[fb_off] = 1u;
+               obj_under_prio[fb_off] = prio;
+               obj_under_idx[fb_off] = static_cast<uint8_t>(i);
+               obj_under_color[fb_off] = color;
+             }
+           };
+           if (obj_drawn[fb_off] && prio >= obj_priority_buf[fb_off]) {
+             consider_under();
+             continue;
+           }
+           if (prio > bg_priority[fb_off]) {
+             consider_under();
+             continue;
+           }
+           frame_buffer_[fb_off] = color;
            obj_drawn[fb_off] = 1;
            obj_priority_buf[fb_off] = prio;
            obj_index_buf[fb_off] = static_cast<uint8_t>(i);

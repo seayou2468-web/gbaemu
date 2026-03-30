@@ -24,7 +24,18 @@ void GBACore::StepPpu(uint32_t cycles) {
       poke(0x04000006u,nvc);
       uint16_t ds=peek(0x04000004u)&~2u;
       bool was_vb=(ds&1)!=0, now_vb=(nvc>=kVIS&&nvc<kTOT-1);
-      if(now_vb){ds|=1;if(!was_vb){if(ds&(1u<<3))RaiseInterrupt(1u<<0);poke(0x04000004u,ds);StepDmaVBlank();}}
+      if(now_vb){
+        ds|=1;
+        if(!was_vb){
+          // Render at VBlank start so VBlank handler register writes
+          // (BG scroll/affine/etc.) affect the next frame, not the one that just ended.
+          RenderDebugFrame();
+          frame_rendered_in_vblank_ = true;
+          if(ds&(1u<<3))RaiseInterrupt(1u<<0);
+          poke(0x04000004u,ds);
+          StepDmaVBlank();
+        }
+      }
       else ds&=~1u;
       uint16_t lyc=(ds>>8)&0xFF;
       if(nvc==lyc){if(!(ds&4)&&(ds&(1u<<5)))RaiseInterrupt(1u<<2);ds|=4;}else ds&=~4u;
@@ -44,7 +55,28 @@ void GBACore::StepPpu(uint32_t cycles) {
       if(nvc<kTOT){
         bg2_refx_line_[nvc]=bg2_refx_internal_;bg2_refy_line_[nvc]=bg2_refy_internal_;
         bg3_refx_line_[nvc]=bg3_refx_internal_;bg3_refy_line_[nvc]=bg3_refy_internal_;
-        if(nvc<kVIS){affine_line_captured_[nvc]=1;affine_line_refs_valid_=true;}
+        for (int bg = 0; bg < 4; ++bg) {
+          const uint32_t cnt_reg = 0x04000008u + static_cast<uint32_t>(bg) * 2u;
+          const uint32_t hofs_reg = 0x04000010u + static_cast<uint32_t>(bg) * 4u;
+          const uint32_t vofs_reg = 0x04000012u + static_cast<uint32_t>(bg) * 4u;
+          bg_cnt_line_[nvc][bg] = peek(cnt_reg);
+          bg_hofs_line_[nvc][bg] = peek(hofs_reg);
+          bg_vofs_line_[nvc][bg] = peek(vofs_reg);
+        }
+        bg2_affine_line_[nvc].pa = static_cast<int16_t>(peek(0x04000020u));
+        bg2_affine_line_[nvc].pb = static_cast<int16_t>(peek(0x04000022u));
+        bg2_affine_line_[nvc].pc = static_cast<int16_t>(peek(0x04000024u));
+        bg2_affine_line_[nvc].pd = static_cast<int16_t>(peek(0x04000026u));
+        bg3_affine_line_[nvc].pa = static_cast<int16_t>(peek(0x04000030u));
+        bg3_affine_line_[nvc].pb = static_cast<int16_t>(peek(0x04000032u));
+        bg3_affine_line_[nvc].pc = static_cast<int16_t>(peek(0x04000034u));
+        bg3_affine_line_[nvc].pd = static_cast<int16_t>(peek(0x04000036u));
+        if(nvc<kVIS){
+          affine_line_captured_[nvc]=1;
+          affine_line_refs_valid_=true;
+          bg_scroll_line_valid_ = true;
+          bg_affine_params_line_valid_ = true;
+        }
       }
     }
   }
@@ -85,21 +117,25 @@ void GBACore::StepTimers(uint32_t cycles){
 
 void GBACore::ExecuteDmaTransfer(int ch, uint16_t cnt_h){
   const uint32_t st=(cnt_h>>12)&3u;
-  const bool w32=(cnt_h&0x400u)!=0,rep=(cnt_h&0x200u)!=0;
+  const bool fifo_dma = (st==3u && (ch==1 || ch==2));
+  const bool w32=fifo_dma ? true : ((cnt_h&0x400u)!=0),rep=(cnt_h&0x200u)!=0;
   const int dc=(cnt_h>>5)&3,sc=(cnt_h>>7)&3;
   const int unit=w32?4:2;
   const uint32_t src_mask=(ch==0)?0x07FFFFFEu:0x0FFFFFFEu;
   const uint32_t dst_mask=(ch==3)?0x0FFFFFFEu:0x07FFFFFEu;
   uint32_t cnt=dma_shadows_[ch].count;
-  if(st==3&&(ch==1||ch==2))cnt=4;
+  if(fifo_dma)cnt=4;
   uint32_t src=dma_shadows_[ch].sad&src_mask,dst=dma_shadows_[ch].dad&dst_mask;
   src&=w32?~3u:~1u;
   dst&=w32?~3u:~1u;
+  if (fifo_dma) {
+    dst = (ch == 1) ? 0x040000A0u : 0x040000A4u;
+  }
   for(uint32_t n=0;n<cnt;++n){
     if(w32)Write32(dst,Read32(src));else Write16(dst,Read16(src));
-    const bool src_in_rom=src>=0x08000000u&&src<0x0E000000u;
-    if(src_in_rom||sc==0)src=(src+unit)&src_mask;else if(sc==1)src=(src-unit)&src_mask;
-    if(!(st==3&&(ch==1||ch==2))){
+    if(sc==0||sc==3)src=(src+unit)&src_mask;
+    else if(sc==1)src=(src-unit)&src_mask;
+    if(!fifo_dma){
       if(dc==0||dc==3)dst=(dst+unit)&dst_mask;else if(dc==1)dst=(dst-unit)&dst_mask;
     }
   }

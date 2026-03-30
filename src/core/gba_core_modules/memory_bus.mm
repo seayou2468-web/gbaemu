@@ -51,6 +51,27 @@ inline void Write32Vram(std::array<uint8_t, 96 * 1024>& vram, uint32_t addr, uin
   vram[VramOffset(addr + 3u)] = static_cast<uint8_t>((v >> 24) & 0xFFu);
 }
 
+inline bool IsWriteOnlyIo16(uint32_t addr) {
+  addr &= ~1u;
+  // BG scroll/affine parameters and refs (write-only)
+  if (addr >= 0x04000010u && addr <= 0x0400001Eu) return true;
+  if (addr >= 0x04000020u && addr <= 0x0400003Eu) return true;
+  // MOSAIC
+  if (addr == 0x0400004Cu) return true;
+  // Sound FIFO write ports
+  if (addr == 0x040000A0u || addr == 0x040000A2u ||
+      addr == 0x040000A4u || addr == 0x040000A6u) return true;
+  // DMA SAD/DAD/CNT_L are write-only. CNT_H is readable.
+  if (addr >= 0x040000B0u && addr <= 0x040000DEu) {
+    if (addr == 0x040000BAu || addr == 0x040000C6u ||
+        addr == 0x040000D2u || addr == 0x040000DEu) {
+      return false;  // DMAxCNT_H
+    }
+    return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 // =========================================================================
@@ -130,7 +151,16 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
   if (a >= 0x03000000u && a <= 0x03FFFFFFu)
     return Read32Wrap(iwram_.data(), a & 0x7FFFu, iwram_.size());
   if (a >= 0x04000000u && a <= 0x040003FCu)
-    return static_cast<uint32_t>(ReadIO16(a)) | (static_cast<uint32_t>(ReadIO16(a+2u))<<16);
+    {
+      auto read_io_cpu = [&](uint32_t ra) -> uint16_t {
+        const uint16_t v = ReadIO16(ra);
+        if (!IsWriteOnlyIo16(ra)) return v;
+        const uint32_t sh = (ra & 2u) ? 16u : 0u;
+        return static_cast<uint16_t>((open_bus_latch_ >> sh) & 0xFFFFu);
+      };
+      return static_cast<uint32_t>(read_io_cpu(a)) |
+             (static_cast<uint32_t>(read_io_cpu(a+2u))<<16);
+    }
   if (a >= 0x04000400u && a < 0x05000000u) return open_bus_latch_;
 
   // Palette / VRAM / OAM : 常時アクセス可能 (GBATek仕様)
@@ -263,7 +293,9 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
   UpdateOpenBus(addr, static_cast<uint32_t>(value)*0x01010101u, 1);
   if (addr >= 0x04000000u && addr <= 0x040003FFu) {
     const uint32_t a16 = addr & ~1u;
-    const uint16_t old = ReadIO16(a16);
+    const size_t off = static_cast<size_t>(a16 - 0x04000000u);
+    const uint16_t old = static_cast<uint16_t>(io_regs_[off]) |
+                         (static_cast<uint16_t>(io_regs_[off + 1u]) << 8);
     if (addr & 1u) WriteIO16(a16, (old & 0x00FFu)|(static_cast<uint16_t>(value)<<8));
     else            WriteIO16(a16, (old & 0xFF00u)|value);
     return;
@@ -276,11 +308,19 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
   }
   // VRAM 8bit: BGエリア(~0xFFFF)のみ有効
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
-    const uint32_t voff = VramOffset(addr);
-    if (voff < 0x10000u) {
-      vram_[voff] = value;
+    const uint32_t a16 = addr & ~1u;
+    const uint32_t voff = VramOffset(a16);
+    const uint16_t dispcnt = ReadIO16(0x04000000u);
+    const uint8_t bg_mode = static_cast<uint8_t>(dispcnt & 0x7u);
+    // In bitmap modes 3-5, BG bitmap area extends to 0x13FFF.
+    const uint32_t bg_byte_limit = (bg_mode >= 3u) ? 0x14000u : 0x10000u;
+    if (voff < bg_byte_limit) {
+      // VRAM byte writes behave as mirrored halfword writes.
+      const uint16_t v16 = static_cast<uint16_t>(value) |
+                           (static_cast<uint16_t>(value) << 8);
+      Write16Vram(vram_, a16, v16);
     }
-    // OBJエリア(0x10000+)への8bit書き込みは無視
+    // OBJエリアへの8bit書き込みは無視
     return;
   }
   // OAM 8bit: 無視 (GBATek: OAMは16/32bitのみ)
