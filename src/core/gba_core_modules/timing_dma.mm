@@ -37,8 +37,6 @@ void GBACore::StepPpu(uint32_t cycles) {
         };
         bg2_refx_internal_=rb28(0x04000028u);bg2_refy_internal_=rb28(0x0400002Cu);
         bg3_refx_internal_=rb28(0x04000038u);bg3_refy_internal_=rb28(0x0400003Cu);
-        affine_line_refs_valid_=false;
-        std::fill(affine_line_captured_.begin(),affine_line_captured_.end(),0);
       } else {
         bg2_refx_internal_+=(int16_t)peek(0x04000022u); bg2_refy_internal_+=(int16_t)peek(0x04000026u);
         bg3_refx_internal_+=(int16_t)peek(0x04000032u); bg3_refy_internal_+=(int16_t)peek(0x04000036u);
