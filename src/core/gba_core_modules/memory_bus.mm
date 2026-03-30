@@ -24,6 +24,14 @@ inline void Write16Wrap(uint8_t* buf, uint32_t off, size_t size, uint16_t v) {
   buf[(o+1)%size] = static_cast<uint8_t>((v >> 8) & 0xFFu);
 }
 
+inline void Write32Wrap(uint8_t* buf, uint32_t off, size_t size, uint32_t v) {
+  const size_t o = static_cast<size_t>(off) % size;
+  buf[o]         = static_cast<uint8_t>(v & 0xFFu);
+  buf[(o+1)%size] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+  buf[(o+2)%size] = static_cast<uint8_t>((v >> 16) & 0xFFu);
+  buf[(o+3)%size] = static_cast<uint8_t>((v >> 24) & 0xFFu);
+}
+
 }  // namespace
 
 // =========================================================================
@@ -177,6 +185,28 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
   if (addr == 0x040000A4u) { PushAudioFifo(false, value); return; }
   UpdateOpenBus(addr, value, 4);
   const uint32_t a = addr & ~3u;
+  if (a >= 0x02000000u && a <= 0x02FFFFFFu) {
+    Write32Wrap(ewram_.data(), a & 0x3FFFFu, ewram_.size(), value); return;
+  }
+  if (a >= 0x03000000u && a <= 0x03FFFFFFu) {
+    Write32Wrap(iwram_.data(), a & 0x7FFFu, iwram_.size(), value); return;
+  }
+  if (a >= 0x05000000u && a <= 0x05FFFFFFu) {
+    Write32Wrap(palette_ram_.data(), a & 0x3FFu, palette_ram_.size(), value); return;
+  }
+  if (a >= 0x06000000u && a <= 0x06FFFFFFu) {
+    Write32Wrap(vram_.data(), VramOffset(a), vram_.size(), value); return;
+  }
+  if (a >= 0x07000000u && a <= 0x07FFFFFFu) {
+    Write32Wrap(oam_.data(), a & 0x3FFu, oam_.size(), value); return;
+  }
+  if (a >= 0x0E000000u) {
+    WriteBackup8(a, static_cast<uint8_t>(value & 0xFFu));
+    WriteBackup8(a + 1u, static_cast<uint8_t>((value >> 8) & 0xFFu));
+    WriteBackup8(a + 2u, static_cast<uint8_t>((value >> 16) & 0xFFu));
+    WriteBackup8(a + 3u, static_cast<uint8_t>((value >> 24) & 0xFFu));
+    return;
+  }
   Write16(a,      static_cast<uint16_t>(value & 0xFFFFu));
   Write16(a + 2u, static_cast<uint16_t>(value >> 16));
 }
@@ -197,12 +227,10 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
     Write16Wrap(oam_.data(), a & 0x3FFu, oam_.size(), value); return;
   }
   if (a >= 0x02000000u && a <= 0x02FFFFFFu) {
-    const size_t o = static_cast<size_t>(a & 0x3FFFFu);
-    ewram_[o] = value & 0xFF; ewram_[o+1] = (value>>8) & 0xFF; return;
+    Write16Wrap(ewram_.data(), a & 0x3FFFFu, ewram_.size(), value); return;
   }
   if (a >= 0x03000000u && a <= 0x03FFFFFFu) {
-    const size_t o = static_cast<size_t>(a & 0x7FFFu);
-    iwram_[o] = value & 0xFF; iwram_[o+1] = (value>>8) & 0xFF; return;
+    Write16Wrap(iwram_.data(), a & 0x7FFFu, iwram_.size(), value); return;
   }
   if (a >= 0x0E000000u) {
     WriteBackup8(a, static_cast<uint8_t>(value & 0xFFu));
