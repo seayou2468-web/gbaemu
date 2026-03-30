@@ -139,6 +139,9 @@ class GBACore {
   void StepPpu(uint32_t cycles);
   void StepTimers(uint32_t cycles);
   void StepDma();
+  void StepDmaVBlank();
+  void StepDmaHBlank();
+  void ExecuteDmaTransfer(int ch, uint16_t cnt_h);
   void StepApu(uint32_t cycles);
   void PushAudioFifo(bool fifo_a, uint32_t value);
   void ConsumeAudioFifoOnTimer(size_t timer_index);
