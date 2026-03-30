@@ -45,6 +45,7 @@ bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_
 void GBACore::RenderMode3Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const bool bg2_enable = (dispcnt & (1u << 10)) != 0;
   const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
@@ -67,7 +68,7 @@ void GBACore::RenderMode3Frame() {
     for (int x = 0; x < kScreenWidth; ++x) {
       const int sx = mosaic ? (x / mos_h) * mos_h : x;
       const size_t off = static_cast<size_t>(y * kScreenWidth + x);
-      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
+      if (!bg2_enable || !IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
         BgLayerBuffer()[off] = 4;
@@ -93,6 +94,7 @@ void GBACore::RenderMode3Frame() {
 void GBACore::RenderMode4Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const bool bg2_enable = (dispcnt & (1u << 10)) != 0;
   const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
@@ -116,7 +118,7 @@ void GBACore::RenderMode4Frame() {
     for (int x = 0; x < kScreenWidth; ++x) {
       const int sx = mosaic ? (x / mos_h) * mos_h : x;
       const size_t off = static_cast<size_t>(y * kScreenWidth + x);
-      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
+      if (!bg2_enable || !IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
         continue;
@@ -142,6 +144,7 @@ void GBACore::RenderMode4Frame() {
 void GBACore::RenderMode5Frame() {
   EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
   const uint16_t dispcnt = ReadIO16(0x04000000u);
+  const bool bg2_enable = (dispcnt & (1u << 10)) != 0;
   const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
@@ -166,7 +169,7 @@ void GBACore::RenderMode5Frame() {
     for (int x = 0; x < kScreenWidth; ++x) {
       const int sx = mosaic ? (x / mos_h) * mos_h : x;
       const size_t fb_off = static_cast<size_t>(y * kScreenWidth + x);
-      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) continue;
+      if (!bg2_enable || !IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) continue;
       const int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
       const int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
       if (tex_x < 0 || tex_y < 0 || tex_x >= 160 || tex_y >= 128) continue;
