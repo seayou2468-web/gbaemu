@@ -168,12 +168,15 @@ void GBACore::RenderMode1Frame() {
       }
       if ((dispcnt & (1 << 10)) && IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         uint16_t idx=0; bool opaque=false;
-        SampleAffineBg(vram_, ReadIO16(0x0400000C), (int16_t)ReadIO16(0x04000020), (int16_t)ReadIO16(0x04000022),
+        const uint16_t bg2cnt = ReadIO16(0x0400000C);
+        const int mosaic_v = ((mosaic_reg >> 4) & 0xF) + 1;
+        const int sy = (bg2cnt & 0x40) ? (y / mosaic_v) * mosaic_v : y;
+        SampleAffineBg(vram_, bg2cnt, (int16_t)ReadIO16(0x04000020), (int16_t)ReadIO16(0x04000022),
                        (int16_t)ReadIO16(0x04000024), (int16_t)ReadIO16(0x04000026),
-                       affine_line_refs_valid_ ? bg2_refx_line_[y] : static_cast<int32_t>(Read32(0x04000028) << 4) >> 4,
-                       affine_line_refs_valid_ ? bg2_refy_line_[y] : static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4,
+                       affine_line_refs_valid_ ? bg2_refx_line_[sy] : static_cast<int32_t>(Read32(0x04000028) << 4) >> 4,
+                       affine_line_refs_valid_ ? bg2_refy_line_[sy] : static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4,
                        mosaic_reg, x, y, &idx, &opaque);
-        if (opaque) consider(idx, ReadIO16(0x0400000C) & 3, 2);
+        if (opaque) consider(idx, bg2cnt & 3, 2);
       }
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
       frame_buffer_[off] = h_bg ? GetPaletteColor(palette_ram_, b_idx) : backdrop;
@@ -214,12 +217,15 @@ void GBACore::RenderMode2Frame() {
         uint16_t idx=0; bool opaque=false;
         const uint32_t a_base = (bg==2)?0x04000020:0x04000030;
         const uint32_t r_base = (bg==2)?0x04000028:0x04000038;
-        SampleAffineBg(vram_, ReadIO16(0x04000008+bg*2), (int16_t)ReadIO16(a_base), (int16_t)ReadIO16(a_base+2),
+        const uint16_t bgcnt = ReadIO16(0x04000008+bg*2);
+        const int mosaic_v = ((mosaic_reg >> 4) & 0xF) + 1;
+        const int sy = (bgcnt & 0x40) ? (y / mosaic_v) * mosaic_v : y;
+        SampleAffineBg(vram_, bgcnt, (int16_t)ReadIO16(a_base), (int16_t)ReadIO16(a_base+2),
                        (int16_t)ReadIO16(a_base+4), (int16_t)ReadIO16(a_base+6),
-                       affine_line_refs_valid_ ? (bg==2?bg2_refx_line_[y]:bg3_refx_line_[y]) : static_cast<int32_t>(Read32(r_base) << 4) >> 4,
-                       affine_line_refs_valid_ ? (bg==2?bg2_refy_line_[y]:bg3_refy_line_[y]) : static_cast<int32_t>(Read32(r_base+4) << 4) >> 4,
+                       affine_line_refs_valid_ ? (bg==2?bg2_refx_line_[sy]:bg3_refx_line_[sy]) : static_cast<int32_t>(Read32(r_base) << 4) >> 4,
+                       affine_line_refs_valid_ ? (bg==2?bg2_refy_line_[sy]:bg3_refy_line_[sy]) : static_cast<int32_t>(Read32(r_base+4) << 4) >> 4,
                        mosaic_reg, x, y, &idx, &opaque);
-        if (opaque) consider(idx, ReadIO16(0x04000008+bg*2) & 3, static_cast<uint8_t>(bg));
+        if (opaque) consider(idx, bgcnt & 3, static_cast<uint8_t>(bg));
       }
       const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
       frame_buffer_[off] = h_bg ? GetPaletteColor(palette_ram_, b_idx) : backdrop;

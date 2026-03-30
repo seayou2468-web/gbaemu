@@ -57,6 +57,7 @@ void GBACore::RenderMode3Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
+  const bool wrap = (bg2cnt & 0x2000) != 0;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
@@ -74,8 +75,12 @@ void GBACore::RenderMode3Frame() {
         BgLayerBuffer()[off] = 4;
         continue;
       }
-      const int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
-      const int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
+      int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      if (wrap) {
+        tex_x %= 240; if (tex_x < 0) tex_x += 240;
+        tex_y %= 160; if (tex_y < 0) tex_y += 160;
+      }
       if (tex_x < 0 || tex_y < 0 || tex_x >= 240 || tex_y >= 160) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
@@ -107,6 +112,7 @@ void GBACore::RenderMode4Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
+  const bool wrap = (bg2cnt & 0x2000) != 0;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
@@ -123,8 +129,12 @@ void GBACore::RenderMode4Frame() {
         BgPriorityBuffer()[off] = 4;
         continue;
       }
-      const int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
-      const int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
+      int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      if (wrap) {
+        tex_x %= 240; if (tex_x < 0) tex_x += 240;
+        tex_y %= 160; if (tex_y < 0) tex_y += 160;
+      }
       if (tex_x < 0 || tex_y < 0 || tex_x >= 240 || tex_y >= 160) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
@@ -158,6 +168,7 @@ void GBACore::RenderMode5Frame() {
   const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
   const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
+  const bool wrap = (bg2cnt & 0x2000) != 0;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
@@ -170,8 +181,12 @@ void GBACore::RenderMode5Frame() {
       const int sx = mosaic ? (x / mos_h) * mos_h : x;
       const size_t fb_off = static_cast<size_t>(y * kScreenWidth + x);
       if (!bg2_enable || !IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) continue;
-      const int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
-      const int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
+      int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      if (wrap) {
+        tex_x %= 160; if (tex_x < 0) tex_x += 160;
+        tex_y %= 128; if (tex_y < 0) tex_y += 128;
+      }
       if (tex_x < 0 || tex_y < 0 || tex_x >= 160 || tex_y >= 128) continue;
       const uint32_t vram_off = page_base + static_cast<uint32_t>((tex_y * 160 + tex_x) * 2);
       const uint16_t bgr = static_cast<uint16_t>(vram_[vram_off]) | (static_cast<uint16_t>(vram_[vram_off+1]) << 8);
