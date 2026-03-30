@@ -229,6 +229,7 @@ void GBACore::RunCycles(uint32_t cycles) {
 
     // APU譖ｴ譁ｰ
     StepApu(elapsed);
+    StepSio(elapsed);
 
     // PPU譖ｴ譁ｰ (HBlank/VBlank 繧､繝吶Φ繝育匱轣ｫ繧貞性繧)
     StepPpu(elapsed);

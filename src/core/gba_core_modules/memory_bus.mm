@@ -79,8 +79,13 @@ inline bool IsWriteOnlyIo16(uint32_t addr) {
 // =========================================================================
 void GBACore::AddWaitstates(uint32_t addr, int size) const {
   const uint32_t region = addr >> 24;
-  const bool seq = ((addr & ~3u) == (last_access_addr_ & ~3u)) && (addr >= last_access_addr_);
-  last_access_addr_ = addr;
+  const uint32_t aligned_addr = (size == 4) ? (addr & ~3u) : (addr & ~1u);
+  const bool seq = last_access_valid_ &&
+                   ((last_access_addr_ >> 24) == region) &&
+                   (aligned_addr == (last_access_addr_ + static_cast<uint32_t>(last_access_size_)));
+  last_access_addr_ = aligned_addr;
+  last_access_size_ = static_cast<uint8_t>(size);
+  last_access_valid_ = true;
   int cycles = 1;
   switch (region) {
     case 0x00: cycles = 1; break;
@@ -91,23 +96,46 @@ void GBACore::AddWaitstates(uint32_t addr, int size) const {
     case 0x06: cycles = (size == 4) ? 2 : 1; break;
     case 0x07: cycles = 1; break;
     case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
-      const uint16_t wc = ReadIO16(0x04000204u);
-      int ni, si;
-      const uint32_t ws_sel = (addr >> 25) & 3u; // 0=WS0,1=WS1,2=WS2
-      static constexpr int kN[4] = {4,3,2,8};
-      static constexpr int kS[3][2] = {{2,1},{4,1},{8,1}};
-      if (ws_sel == 0) { ni=(wc>>2)&3; si=(wc>>4)&1; }
-      else if (ws_sel == 1) { ni=(wc>>5)&3; si=(wc>>7)&1; }
-      else { ni=(wc>>8)&3; si=(wc>>10)&1; }
-      si = std::min(si, 1);
-      cycles = seq ? kS[std::min((int)ws_sel,2)][si] : kN[ni];
-      if (size == 4) cycles += kS[std::min((int)ws_sel,2)][si];
+      const uint32_t ws_sel = std::min(((addr >> 25) & 3u), 2u); // 0=WS0,1=WS1,2=WS2
+      if (size == 4) {
+        cycles = seq ? ws_seq_32_[ws_sel] : ws_nonseq_32_[ws_sel];
+      } else {
+        cycles = seq ? ws_seq_16_[ws_sel] : ws_nonseq_16_[ws_sel];
+      }
       break;
     }
     case 0x0E: case 0x0F: cycles = 5; break;
     default: cycles = 1; break;
   }
   waitstates_accum_ += static_cast<uint64_t>(cycles);
+}
+
+void GBACore::RebuildGamePakWaitstateTables(uint16_t waitcnt) {
+  static constexpr uint8_t kNonSeq[4] = {4, 3, 2, 8};
+  static constexpr uint8_t kSeq0[2] = {2, 1};
+  static constexpr uint8_t kSeq1[2] = {4, 1};
+  static constexpr uint8_t kSeq2[2] = {8, 1};
+
+  const uint8_t n0 = kNonSeq[(waitcnt >> 2) & 0x3u];
+  const uint8_t n1 = kNonSeq[(waitcnt >> 5) & 0x3u];
+  const uint8_t n2 = kNonSeq[(waitcnt >> 8) & 0x3u];
+  const uint8_t s0 = kSeq0[(waitcnt >> 4) & 0x1u];
+  const uint8_t s1 = kSeq1[(waitcnt >> 7) & 0x1u];
+  const uint8_t s2 = kSeq2[(waitcnt >> 10) & 0x1u];
+
+  ws_nonseq_16_[0] = n0;
+  ws_nonseq_16_[1] = n1;
+  ws_nonseq_16_[2] = n2;
+  ws_seq_16_[0] = s0;
+  ws_seq_16_[1] = s1;
+  ws_seq_16_[2] = s2;
+
+  ws_nonseq_32_[0] = static_cast<uint8_t>(n0 + s0);
+  ws_nonseq_32_[1] = static_cast<uint8_t>(n1 + s1);
+  ws_nonseq_32_[2] = static_cast<uint8_t>(n2 + s2);
+  ws_seq_32_[0] = static_cast<uint8_t>(s0 * 2u);
+  ws_seq_32_[1] = static_cast<uint8_t>(s1 * 2u);
+  ws_seq_32_[2] = static_cast<uint8_t>(s2 * 2u);
 }
 
 void GBACore::UpdateOpenBus(uint32_t addr, uint32_t val, int size) const {
@@ -291,6 +319,15 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
 void GBACore::Write8(uint32_t addr, uint8_t value) {
   AddWaitstates(addr, 1);
   UpdateOpenBus(addr, static_cast<uint32_t>(value)*0x01010101u, 1);
+  if (addr == 0x04000301u) {
+    const size_t postflg_off = static_cast<size_t>(0x04000300u - 0x04000000u);
+    if (postflg_off < io_regs_.size() && io_regs_[postflg_off] != 0u) {
+      if ((value & 0x80u) == 0u) {
+        cpu_.halted = true;
+      }
+    }
+    return;
+  }
   if (addr >= 0x04000000u && addr <= 0x040003FFu) {
     const uint32_t a16 = addr & ~1u;
     const size_t off = static_cast<size_t>(a16 - 0x04000000u);
@@ -343,6 +380,8 @@ uint16_t GBACore::ReadIO16(uint32_t addr) const {
   switch (addr) {
     case 0x04000006u: val &= 0x00FFu; break;
     case 0x04000130u: val |= 0xFC00u; break;
+    case 0x04000136u: val &= 0xC1FFu; break;  // RCNT
+    case 0x04000208u: val &= 0x0001u; break;  // IME
     case 0x04000084u: val &= 0x008Fu; break;
     // 書き込み専用
     case 0x040000A0u: case 0x040000A2u:
@@ -373,6 +412,30 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       break;
     }
     case 0x04000006u: return; // VCOUNT R/O
+    case 0x04000128u: { // SIOCNT
+      value &= 0x7FFFu;
+      const uint16_t old = ReadIO16(0x04000128u);
+      UpdateSioMode();
+      io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
+      io_regs_[off+1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+      UpdateSioMode();
+      const bool start_edge = ((old & 0x0080u) == 0u) && ((value & 0x0080u) != 0u);
+      if (start_edge) StartSioTransfer(value);
+      return;
+    }
+    case 0x04000134u: // RCNT
+      value &= 0xC1FFu;
+      sio_.transfer_active = false;
+      sio_.transfer_cycles_remaining = 0;
+      break;
+    case 0x04000140u: // JOYCNT
+      value &= 0x004Fu;
+      break;
+    case 0x04000158u: { // JOYSTAT (partial writable bits)
+      const uint16_t old = ReadIO16(0x04000158u);
+      value = static_cast<uint16_t>((old & ~0x0030u) | (value & 0x0030u));
+      break;
+    }
 
     case 0x04000202u: { // IF: ビット書き込みでクリア
       const uint16_t old = static_cast<uint16_t>(io_regs_[off]) |
@@ -380,7 +443,14 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       value = old & ~value;
       break;
     }
+    case 0x04000200u: // IE
+      value &= 0x3FFFu;
+      break;
+    case 0x04000208u: // IME
+      value &= 0x0001u;
+      break;
     case 0x04000130u: return; // KEYINPUT R/O
+    case 0x04000132u: value &= 0xC3FFu; break; // KEYCNT
 
     // ----------------------------------------------------------------
     // DMA CNT_H レジスタ (正しいアドレス: BA/C6/D2/DE)
@@ -441,7 +511,10 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
     case 0x0400010Au: { const uint16_t old=timers_[2].control; timers_[2].control=value&0x00C7u; if(!(old&0x80u)&&(value&0x80u)){timers_[2].counter=timers_[2].reload;timers_[2].prescaler_accum=0;io_regs_[0x108]=timers_[2].reload&0xFF;io_regs_[0x109]=(timers_[2].reload>>8)&0xFF;} io_regs_[off]=timers_[2].control&0xFF;io_regs_[off+1]=(timers_[2].control>>8)&0xFF;return; }
     case 0x0400010Eu: { const uint16_t old=timers_[3].control; timers_[3].control=value&0x00C7u; if(!(old&0x80u)&&(value&0x80u)){timers_[3].counter=timers_[3].reload;timers_[3].prescaler_accum=0;io_regs_[0x10C]=timers_[3].reload&0xFF;io_regs_[0x10D]=(timers_[3].reload>>8)&0xFF;} io_regs_[off]=timers_[3].control&0xFF;io_regs_[off+1]=(timers_[3].control>>8)&0xFF;return; }
 
-    case 0x04000204u: value &= 0x5FFFu; break; // WAITCNT
+    case 0x04000204u:
+      value &= 0x5FFFu;
+      RebuildGamePakWaitstateTables(value);
+      break; // WAITCNT
     case 0x04000088u: value &= 0xC3FEu; break; // SOUNDBIAS
     // FIFO書き込みはWrite32で処理
     case 0x040000A0u: case 0x040000A2u: return;
@@ -451,6 +524,10 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
 
   io_regs_[off]   = static_cast<uint8_t>(value & 0xFFu);
   io_regs_[off+1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+
+  if (addr == 0x04000134u) {
+    UpdateSioMode();
+  }
 
   // Tonc/GBATek: BG2/3X,Y reference registers written outside VBlank are
   // immediately reflected to the internal affine origin of the current line.

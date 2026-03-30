@@ -143,6 +143,11 @@ class GBACore {
   void StepDmaHBlank();
   void ExecuteDmaTransfer(int ch, uint16_t cnt_h);
   void StepApu(uint32_t cycles);
+  void StepSio(uint32_t cycles);
+  void UpdateSioMode();
+  void StartSioTransfer(uint16_t siocnt);
+  uint32_t EstimateSioTransferCycles(uint16_t siocnt) const;
+  void CompleteSioTransfer();
   void PushAudioFifo(bool fifo_a, uint32_t value);
   void ConsumeAudioFifoOnTimer(size_t timer_index);
   void SyncKeyInputRegister();
@@ -154,6 +159,7 @@ class GBACore {
   uint32_t ReadBus32(uint32_t a) const;
   void UpdateOpenBus(uint32_t addr, uint32_t val, int size) const;
   void AddWaitstates(uint32_t addr, int size) const;
+  void RebuildGamePakWaitstateTables(uint16_t waitcnt);
   uint32_t Read32(uint32_t addr) const;
   uint16_t Read16(uint32_t addr) const;
   uint8_t Read8(uint32_t addr) const;
@@ -215,7 +221,13 @@ class GBACore {
   mutable uint32_t bios_data_latch_ = 0;
   mutable uint32_t open_bus_latch_ = 0;
   mutable uint32_t last_access_addr_ = 0;
+  mutable uint8_t last_access_size_ = 0;
+  mutable bool last_access_valid_ = false;
   mutable uint64_t waitstates_accum_ = 0;
+  std::array<uint8_t, 3> ws_nonseq_16_{4, 4, 4};
+  std::array<uint8_t, 3> ws_seq_16_{2, 4, 8};
+  std::array<uint8_t, 3> ws_nonseq_32_{6, 6, 10};
+  std::array<uint8_t, 3> ws_seq_32_{4, 8, 16};
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;
   bool bios_boot_via_vector_ = false;
@@ -280,6 +292,21 @@ class GBACore {
   bool dma_was_in_hblank_ = false;
   bool dma_fifo_a_request_ = false;
   bool dma_fifo_b_request_ = false;
+  enum class SioMode : uint8_t {
+    kNormal8 = 0,
+    kNormal32 = 1,
+    kMulti = 2,
+    kUart = 3,
+    kGpio = 4,
+    kJoybus = 5,
+  };
+  struct SioState {
+    SioMode mode = SioMode::kNormal8;
+    bool transfer_active = false;
+    uint32_t transfer_cycles_remaining = 0;
+    uint16_t rcnt = 0x8000u;
+  };
+  SioState sio_{};
   struct DmaState {
     uint32_t sad = 0, dad = 0, count = 0;
     bool active = false;
