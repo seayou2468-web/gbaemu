@@ -1,5 +1,4 @@
 #include "../gba_core.h"
-
 #include <algorithm>
 
 namespace gba {
@@ -19,27 +18,32 @@ constexpr uint8_t kNintendoLogoLocal[156] = {
 };
 }  // namespace
 
-
+// =========================================================================
+// バックアップ制御リセット
+// =========================================================================
 void GBACore::ResetBackupControllerState() {
-  flash_mode_unlocked_ = false;
-  flash_command_ = 0;
-  flash_id_mode_ = false;
-  flash_program_mode_ = false;
+  flash_mode_unlocked_    = false;
+  flash_command_          = 0;
+  flash_id_mode_          = false;
+  flash_program_mode_     = false;
   flash_bank_switch_mode_ = false;
   debug_last_exception_vector_ = 0;
-  debug_last_exception_pc_ = 0;
-  debug_last_exception_cpsr_ = 0;
-  flash_bank_ = 0;
+  debug_last_exception_pc_     = 0;
+  debug_last_exception_cpsr_   = 0;
+  flash_bank_             = 0;
   eeprom_cmd_bits_.clear();
   eeprom_read_bits_.clear();
-  eeprom_read_pos_ = 0;
-  eeprom_addr_bits_ = 0;
+  eeprom_read_pos_        = 0;
+  eeprom_addr_bits_       = 0;
 }
 
+// =========================================================================
+// バックアップ 読み取り
+// =========================================================================
 uint8_t GBACore::ReadBackup8(uint32_t addr) const {
   if (backup_type_ == BackupType::kEEPROM) {
     if (eeprom_read_pos_ < eeprom_read_bits_.size()) {
-      const uint8_t bit = static_cast<uint8_t>(eeprom_read_bits_[eeprom_read_pos_++] & 1u);
+      const uint8_t bit = eeprom_read_bits_[eeprom_read_pos_++] & 1u;
       if (eeprom_read_pos_ >= eeprom_read_bits_.size()) {
         eeprom_read_bits_.clear();
         eeprom_read_pos_ = 0;
@@ -50,270 +54,235 @@ uint8_t GBACore::ReadBackup8(uint32_t addr) const {
   }
 
   const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
-  if ((backup_type_ == BackupType::kFlash64K || backup_type_ == BackupType::kFlash128K) && flash_id_mode_) {
-    if (off32 == 0) return 0xBF;  // Sanyo/Panasonic style manufacturer id (common)
+
+  // Flash IDモード
+  if ((backup_type_ == BackupType::kFlash64K || backup_type_ == BackupType::kFlash128K)
+      && flash_id_mode_) {
+    if (off32 == 0) return 0xBFu;  // Sanyo製造者ID
     if (off32 == 1) return (backup_type_ == BackupType::kFlash128K) ? 0x09u : 0xD4u;
   }
+
   const size_t idx = static_cast<size_t>(off32 % sram_.size());
-  if (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u) {
+  if (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u)
     return flash_bank1_[idx];
-  }
   return sram_[idx];
 }
 
+// =========================================================================
+// バックアップ 書き込み
+// =========================================================================
 void GBACore::WriteBackup8(uint32_t addr, uint8_t value) {
   if (backup_type_ == BackupType::kEEPROM) {
-    const uint8_t bit = static_cast<uint8_t>(value & 1u);
-    eeprom_cmd_bits_.push_back(bit);
-    auto reset_cmd = [&]() {
-      eeprom_cmd_bits_.clear();
-    };
-    auto load_read_bits = [&](uint32_t block_addr, uint32_t addr_bits) {
-      eeprom_read_bits_.clear();
-      eeprom_read_pos_ = 0;
-      for (int i = 0; i < 4; ++i) eeprom_read_bits_.push_back(0);  // dummy bits
-      const size_t block_bytes = 8;
-      const size_t max_blocks = eeprom_.size() / block_bytes;
-      const size_t block = static_cast<size_t>(block_addr % std::max<uint32_t>(1, static_cast<uint32_t>(max_blocks)));
-      const size_t base = block * block_bytes;
-      (void)addr_bits;
-      for (size_t i = 0; i < block_bytes; ++i) {
-        const uint8_t byte = eeprom_[base + i];
-        for (int b = 7; b >= 0; --b) {
-          eeprom_read_bits_.push_back(static_cast<uint8_t>((byte >> b) & 1u));
-        }
-      }
-    };
+    eeprom_cmd_bits_.push_back(value & 1u);
+    if (eeprom_cmd_bits_.size() > 90u) { eeprom_cmd_bits_.clear(); return; }
+
     auto try_decode = [&](uint32_t addr_bits) -> bool {
       const size_t write_len = 2u + addr_bits + 64u + 1u;
-      const size_t read_len = 2u + addr_bits + 1u;
+      const size_t read_len  = 2u + addr_bits + 1u;
+      const size_t block_bytes = 8u;
+      const size_t max_blocks = eeprom_.size() / block_bytes;
+
       if (eeprom_cmd_bits_.size() == write_len) {
-        const uint8_t op0 = eeprom_cmd_bits_[0];
-        const uint8_t op1 = eeprom_cmd_bits_[1];
-        if (op0 == 1u && op1 == 0u) {  // write
+        if (eeprom_cmd_bits_[0] == 1u && eeprom_cmd_bits_[1] == 0u) {
           uint32_t block_addr = 0;
-          for (uint32_t i = 0; i < addr_bits; ++i) {
-            block_addr = (block_addr << 1u) | static_cast<uint32_t>(eeprom_cmd_bits_[2u + i] & 1u);
-          }
-          const size_t block_bytes = 8;
-          const size_t max_blocks = eeprom_.size() / block_bytes;
-          const size_t block = static_cast<size_t>(block_addr % std::max<uint32_t>(1, static_cast<uint32_t>(max_blocks)));
-          const size_t base = block * block_bytes;
+          for (uint32_t i = 0; i < addr_bits; ++i)
+            block_addr = (block_addr << 1u) | (eeprom_cmd_bits_[2u+i] & 1u);
+          const size_t block = block_addr % std::max<size_t>(1u, max_blocks);
+          const size_t base  = block * block_bytes;
           for (size_t i = 0; i < block_bytes; ++i) {
             uint8_t out = 0;
-            for (int b = 0; b < 8; ++b) {
-              const size_t bit_idx = 2u + addr_bits + (i * 8u) + static_cast<size_t>(b);
-              out = static_cast<uint8_t>((out << 1u) | (eeprom_cmd_bits_[bit_idx] & 1u));
-            }
-            eeprom_[base + i] = out;
+            for (int b = 0; b < 8; ++b)
+              out = static_cast<uint8_t>((out << 1u) | (eeprom_cmd_bits_[2u+addr_bits+i*8u+b] & 1u));
+            eeprom_[base+i] = out;
           }
           eeprom_addr_bits_ = static_cast<uint8_t>(addr_bits);
-          // EEPROM write busy phase: poll returns 0 until complete, then 1.
-          eeprom_read_bits_.clear();
-          eeprom_read_pos_ = 0;
-          for (int i = 0; i < 8; ++i) eeprom_read_bits_.push_back(0);
-          eeprom_read_bits_.push_back(1);
-          reset_cmd();
+          eeprom_read_bits_.assign(9, 0); eeprom_read_bits_[8] = 1;
+          eeprom_cmd_bits_.clear();
           return true;
         }
       }
       if (eeprom_cmd_bits_.size() == read_len) {
-        const uint8_t op0 = eeprom_cmd_bits_[0];
-        const uint8_t op1 = eeprom_cmd_bits_[1];
-        if (op0 == 1u && op1 == 1u) {  // read
+        if (eeprom_cmd_bits_[0] == 1u && eeprom_cmd_bits_[1] == 1u) {
           uint32_t block_addr = 0;
-          for (uint32_t i = 0; i < addr_bits; ++i) {
-            block_addr = (block_addr << 1u) | static_cast<uint32_t>(eeprom_cmd_bits_[2u + i] & 1u);
-          }
+          for (uint32_t i = 0; i < addr_bits; ++i)
+            block_addr = (block_addr << 1u) | (eeprom_cmd_bits_[2u+i] & 1u);
           eeprom_addr_bits_ = static_cast<uint8_t>(addr_bits);
-          load_read_bits(block_addr, addr_bits);
-          reset_cmd();
+          const size_t block = block_addr % std::max<size_t>(1u, max_blocks);
+          const size_t base  = block * block_bytes;
+          eeprom_read_bits_.clear();
+          for (int i = 0; i < 4; ++i) eeprom_read_bits_.push_back(0);  // dummy
+          for (size_t i = 0; i < block_bytes; ++i) {
+            const uint8_t byte = eeprom_[base+i];
+            for (int b = 7; b >= 0; --b)
+              eeprom_read_bits_.push_back(static_cast<uint8_t>((byte >> b) & 1u));
+          }
+          eeprom_read_pos_ = 0;
+          eeprom_cmd_bits_.clear();
           return true;
         }
       }
       return false;
     };
 
-    if (eeprom_cmd_bits_.size() > 90u) {
-      reset_cmd();
-      return;
-    }
-    if (eeprom_addr_bits_ == 6u) {
-      if (try_decode(6u)) return;
-    } else if (eeprom_addr_bits_ == 14u) {
-      if (try_decode(14u)) return;
-    } else if (try_decode(14u) || try_decode(6u)) {
-      return;
-    }
+    if      (eeprom_addr_bits_ == 6u)  { try_decode(6u); }
+    else if (eeprom_addr_bits_ == 14u) { try_decode(14u); }
+    else { try_decode(14u) || try_decode(6u); }
     return;
   }
 
   const uint32_t off32 = (addr - 0x0E000000u) & 0xFFFFu;
   const size_t off = static_cast<size_t>(off32 % sram_.size());
 
-  // SRAM/unknown/eeprom fallback: raw byte write model.
+  // SRAM / unknown
   if (backup_type_ != BackupType::kFlash64K && backup_type_ != BackupType::kFlash128K) {
     sram_[off] = value;
     return;
   }
 
+  // Flash プログラムモード
   if (flash_program_mode_) {
-    // NOR flash programming behavior: only 1->0 transitions.
-    auto& target = (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u) ? flash_bank1_ : sram_;
-    target[off] = static_cast<uint8_t>(target[off] & value);
+    auto& target = (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u)
+                   ? flash_bank1_ : sram_;
+    target[off] = static_cast<uint8_t>(target[off] & value);  // NOR: 1→0のみ
     flash_program_mode_ = false;
     return;
   }
-
+  // バンク切り替えモード
   if (flash_bank_switch_mode_) {
-    flash_bank_ = static_cast<uint8_t>(value & 0x1u);
+    flash_bank_ = static_cast<uint8_t>(value & 1u);
     flash_bank_switch_mode_ = false;
     return;
   }
 
-  // Flash command prefix: AA to 0x5555 then 55 to 0x2AAA.
+  // Flash コマンドシーケンス
   if (!flash_mode_unlocked_) {
-    if (off32 == 0x5555u && value == 0xAAu) {
-      flash_mode_unlocked_ = true;
-      flash_command_ = 1;
-      return;
-    }
-    // Non-command byte writes are ignored while not in program mode.
+    if (off32 == 0x5555u && value == 0xAAu) { flash_mode_unlocked_ = true; flash_command_ = 1; }
     return;
   }
-
   if (flash_command_ == 1) {
-    if (off32 == 0x2AAAu && value == 0x55u) {
-      flash_command_ = 2;
-      return;
-    }
-    ResetBackupControllerState();
+    if (off32 == 0x2AAAu && value == 0x55u) { flash_command_ = 2; }
+    else ResetBackupControllerState();
     return;
   }
-
-  // third step command byte at 0x5555.
   if (flash_command_ == 2 && off32 == 0x5555u) {
-    if (value == 0x90u) {
-      flash_id_mode_ = true;
-      flash_mode_unlocked_ = false;
-      flash_command_ = 0;
-      return;
-    }
-    if (value == 0xF0u) {
-      flash_id_mode_ = false;
-      flash_mode_unlocked_ = false;
-      flash_command_ = 0;
-      return;
-    }
-    if (value == 0xA0u) {
-      flash_program_mode_ = true;
-      flash_mode_unlocked_ = false;
-      flash_command_ = 0;
-      return;
-    }
-    if (value == 0xB0u && backup_type_ == BackupType::kFlash128K) {
-      flash_bank_switch_mode_ = true;
-      flash_mode_unlocked_ = false;
-      flash_command_ = 0;
-      return;
-    }
-    if (value == 0x80u) {
-      // Erase setup done; wait for 2nd unlock + erase command.
-      flash_command_ = 3;
-      return;
-    }
-    ResetBackupControllerState();
+    flash_mode_unlocked_ = false; flash_command_ = 0;
+    if      (value == 0x90u) { flash_id_mode_ = true; }
+    else if (value == 0xF0u) { flash_id_mode_ = false; }
+    else if (value == 0xA0u) { flash_program_mode_ = true; }
+    else if (value == 0xB0u && backup_type_ == BackupType::kFlash128K) { flash_bank_switch_mode_ = true; }
+    else if (value == 0x80u) { flash_command_ = 3; flash_mode_unlocked_ = true; }
+    else ResetBackupControllerState();
     return;
   }
-
-  // Erase flow: AA 55 80 AA 55 (30 sector / 10 chip)
+  // イレースシーケンス
   if (flash_command_ == 3) {
-    if (off32 == 0x5555u && value == 0xAAu) {
-      flash_command_ = 4;
-      return;
-    }
-    ResetBackupControllerState();
+    if (off32 == 0x5555u && value == 0xAAu) { flash_command_ = 4; }
+    else ResetBackupControllerState();
     return;
   }
   if (flash_command_ == 4) {
-    if (off32 == 0x2AAAu && value == 0x55u) {
-      flash_command_ = 5;
-      return;
-    }
-    ResetBackupControllerState();
+    if (off32 == 0x2AAAu && value == 0x55u) { flash_command_ = 5; }
+    else ResetBackupControllerState();
     return;
   }
   if (flash_command_ == 5) {
     if (value == 0x10u && off32 == 0x5555u) {
-      std::fill(sram_.begin(), sram_.end(), 0xFF);
-      if (backup_type_ == BackupType::kFlash128K) {
-        std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
-      }
+      std::fill(sram_.begin(), sram_.end(), 0xFFu);
+      if (backup_type_ == BackupType::kFlash128K)
+        std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFFu);
     } else if (value == 0x30u) {
       const size_t sector_base = off & ~static_cast<size_t>(0x0FFFu);
-      const size_t sector_end = std::min(sector_base + 0x1000u, sram_.size());
-      auto& target = (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u) ? flash_bank1_ : sram_;
+      const size_t sector_end  = std::min(sector_base + 0x1000u, sram_.size());
+      auto& target = (backup_type_ == BackupType::kFlash128K && flash_bank_ == 1u)
+                     ? flash_bank1_ : sram_;
       std::fill(target.begin() + static_cast<std::ptrdiff_t>(sector_base),
-                target.begin() + static_cast<std::ptrdiff_t>(sector_end), 0xFF);
+                target.begin() + static_cast<std::ptrdiff_t>(sector_end), 0xFFu);
     }
     ResetBackupControllerState();
     return;
   }
-
   ResetBackupControllerState();
 }
 
+// =========================================================================
+// RunCycles - スケジューラメインループ
+// 順序: CPU → Timers → APU → PPU (各スライス)
+// =========================================================================
 void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   executed_cycles_ += cycles;
+
+  // BIOS起動中は細かいスライスで処理 (タイミング精度優先)
+  // それ以外は16サイクルスライス (パフォーマンス優先)
+  const uint32_t kSlice = bios_boot_via_vector_ ? 4u : 16u;
+
   uint32_t remaining = cycles;
-  // Keep finer granularity during real BIOS boot animation to preserve timing
-  // sensitive display/IRQ sequencing, but use a larger slice after handoff to
-  // reduce runtime overhead.
-  const uint32_t kSchedulerSliceCycles = bios_boot_via_vector_ ? 4u : 16u;
-  while (remaining > 0) {
-    const uint32_t slice = std::min<uint32_t>(remaining, kSchedulerSliceCycles);
+  while (remaining > 0u) {
+    const uint32_t slice = std::min(remaining, kSlice);
+
+    // CPU実行 (HALTなら即時即時リターン)
     RunCpuSlice(slice);
+
+    // タイマー更新
     StepTimers(slice);
+
+    // APU更新
     StepApu(slice);
+
+    // PPU更新 (HBlank/VBlank イベント発火を含む)
     StepPpu(slice);
+
+    // 即時DMA (start_timing=0)
     StepDma();
+
     remaining -= slice;
   }
 }
 
+// =========================================================================
+// SetKeys
+// =========================================================================
 void GBACore::SetKeys(uint16_t keys_pressed_mask) {
   keys_pressed_mask_ = keys_pressed_mask;
   SyncKeyInputRegister();
 }
 
+// =========================================================================
+// StepFrame - 1フレーム分実行してレンダリング
+// =========================================================================
 void GBACore::StepFrame() {
   if (!loaded_) return;
   RunCycles(kCyclesPerFrame);
   ++frame_count_;
 
+  // BIOS起動完了検出
   if (bios_boot_via_vector_) {
     if (cpu_.regs[15] >= 0x08000000u) {
-      bios_boot_via_vector_ = false;
+      bios_boot_via_vector_   = false;
       bios_boot_watchdog_frames_ = 0;
-      Write8(0x04000300u, 0x01u);
+      Write8(0x04000300u, 0x01u);  // POSTFLG=1
     } else {
       ++bios_boot_watchdog_frames_;
+      // ウォッチドッグ: 300フレーム以上BIOSから出ない場合は強制終了
+      if (bios_boot_watchdog_frames_ > 300u) {
+        bios_boot_via_vector_ = false;
+        cpu_.regs[15] = 0x08000000u;
+        Write8(0x04000300u, 0x01u);
+      }
     }
   }
 
-  // Halt watchdog for HLE/direct mode: avoid permanent hangs when software
-  // enters SWI Halt/IntrWait without a valid interrupt source configured.
+  // HALT ウォッチドッグ: 割り込みなし無限HALTを防ぐ
   if (!bios_boot_via_vector_ && cpu_.halted) {
-    const uint16_t ie = ReadIO16(0x04000200u);
+    const uint16_t ie     = ReadIO16(0x04000200u);
     const uint16_t iflags = ReadIO16(0x04000202u);
-    const uint16_t ime = static_cast<uint16_t>(ReadIO16(0x04000208u) & 0x1u);
+    const uint16_t ime    = static_cast<uint16_t>(ReadIO16(0x04000208u) & 1u);
     if (ime == 0u || (ie & iflags) == 0u) {
       ++halt_watchdog_frames_;
       if (halt_watchdog_frames_ > 120u) {
-        cpu_.halted = false;
+        cpu_.halted          = false;
         swi_intrwait_active_ = false;
-        swi_intrwait_mask_ = 0;
+        swi_intrwait_mask_   = 0;
         halt_watchdog_frames_ = 0;
       }
     } else {
@@ -327,56 +296,49 @@ void GBACore::StepFrame() {
   RenderDebugFrame();
 }
 
+// =========================================================================
+// ROMヘッダ補完チェック計算
+// =========================================================================
 uint8_t GBACore::ComputeComplementCheck() const {
   int sum = 0;
-  for (size_t i = 0xA0; i <= 0xBC && i < rom_.size(); ++i) {
+  for (size_t i = 0xA0; i <= 0xBC && i < rom_.size(); ++i)
     sum += rom_[i];
-  }
   return static_cast<uint8_t>((-sum - 0x19) & 0xFF);
 }
 
+// =========================================================================
+// Nintendoロゴ検証
+// =========================================================================
 bool GBACore::ValidateNintendoLogo() const {
-  if (rom_.size() < 0xA0) return false;
+  if (rom_.size() < 0xA0u) return false;
   for (size_t i = 0; i < sizeof(kNintendoLogoLocal); ++i) {
-    if (rom_[0x04 + i] != kNintendoLogoLocal[i]) {
-      return false;
-    }
+    if (rom_[0x04 + i] != kNintendoLogoLocal[i]) return false;
   }
   return true;
 }
 
+// =========================================================================
+// ゲームプレイ状態更新 (デモ用)
+// =========================================================================
 void GBACore::UpdateGameplayFromInput() {
   constexpr int kStep = 2;
   const uint16_t pressed_edge = static_cast<uint16_t>(keys_pressed_mask_ & ~previous_keys_mask_);
 
   if (keys_pressed_mask_ & kKeyRight) gameplay_state_.player_x += kStep;
-  if (keys_pressed_mask_ & kKeyLeft) gameplay_state_.player_x -= kStep;
-  if (keys_pressed_mask_ & kKeyDown) gameplay_state_.player_y += kStep;
-  if (keys_pressed_mask_ & kKeyUp) gameplay_state_.player_y -= kStep;
-  if (keys_pressed_mask_ & kKeyR) gameplay_state_.player_x += 1;
-  if (keys_pressed_mask_ & kKeyL) gameplay_state_.player_x -= 1;
+  if (keys_pressed_mask_ & kKeyLeft)  gameplay_state_.player_x -= kStep;
+  if (keys_pressed_mask_ & kKeyDown)  gameplay_state_.player_y += kStep;
+  if (keys_pressed_mask_ & kKeyUp)    gameplay_state_.player_y -= kStep;
 
   gameplay_state_.player_x = std::clamp(gameplay_state_.player_x, 0, kScreenWidth - 1);
   gameplay_state_.player_y = std::clamp(gameplay_state_.player_y, 0, kScreenHeight - 1);
 
-  if (keys_pressed_mask_ & kKeyA) {
-    gameplay_state_.score += 3;
-  }
-  if (keys_pressed_mask_ & kKeyB) {
-    gameplay_state_.score += 1;
-  }
-  if (keys_pressed_mask_ & kKeyR) {
-    gameplay_state_.score += 2;
-  }
-  if (keys_pressed_mask_ & kKeyL) {
-    gameplay_state_.score += 2;
-  }
-  if (pressed_edge & kKeyStart) {
-    gameplay_state_.score += 5;
-  }
-  if ((pressed_edge & kKeySelect) && gameplay_state_.score > 0) {
-    --gameplay_state_.score;
-  }
+  if (keys_pressed_mask_ & kKeyA)  gameplay_state_.score += 3;
+  if (keys_pressed_mask_ & kKeyB)  gameplay_state_.score += 1;
+  if (keys_pressed_mask_ & kKeyR)  gameplay_state_.score += 2;
+  if (keys_pressed_mask_ & kKeyL)  gameplay_state_.score += 2;
+  if (pressed_edge & kKeyStart)    gameplay_state_.score += 5;
+  if ((pressed_edge & kKeySelect) && gameplay_state_.score > 0) --gameplay_state_.score;
+
   if ((keys_pressed_mask_ & kKeyA) && (keys_pressed_mask_ & kKeyB)) {
     ++gameplay_state_.combo;
     gameplay_state_.score += 2;
@@ -384,24 +346,17 @@ void GBACore::UpdateGameplayFromInput() {
     gameplay_state_.combo = 0;
   }
 
-  constexpr int kRightCheckpointX = kScreenWidth - 20;
-  constexpr int kBottomCheckpointY = kScreenHeight - 15;
-  constexpr int kLeftCheckpointX = 20;
-  constexpr int kTopCheckpointY = 15;
+  if (gameplay_state_.player_x >= kScreenWidth  - 20) gameplay_state_.checkpoints |= 0x1u;
+  if (gameplay_state_.player_y >= kScreenHeight - 15) gameplay_state_.checkpoints |= 0x2u;
+  if (gameplay_state_.player_x <= 20)                 gameplay_state_.checkpoints |= 0x4u;
+  if (gameplay_state_.player_y <= 15)                 gameplay_state_.checkpoints |= 0x8u;
 
-  if (gameplay_state_.player_x >= kRightCheckpointX) gameplay_state_.checkpoints |= 0x1;
-  if (gameplay_state_.player_y >= kBottomCheckpointY) gameplay_state_.checkpoints |= 0x2;
-  if (gameplay_state_.player_x <= kLeftCheckpointX) gameplay_state_.checkpoints |= 0x4;
-  if (gameplay_state_.player_y <= kTopCheckpointY) gameplay_state_.checkpoints |= 0x8;
-
-  constexpr uint8_t kAllCheckpoints = 0x0F;
-  if (gameplay_state_.checkpoints == kAllCheckpoints &&
-      gameplay_state_.score >= 300 &&
-      frame_count_ >= 180) {
+  if (gameplay_state_.checkpoints == 0x0Fu &&
+      gameplay_state_.score >= 300u &&
+      frame_count_ >= 180u) {
     gameplay_state_.cleared = true;
   }
   previous_keys_mask_ = keys_pressed_mask_;
 }
-
 
 }  // namespace gba
