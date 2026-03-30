@@ -174,12 +174,13 @@ uint16_t ReadBackdropBgr(const std::array<uint8_t, 1024>& palette_ram) {
 
 bool IsWithinWindowAxis(int p, int start, int end, int axis_max) {
   const int s = std::clamp(start, 0, axis_max);
-  int e = std::clamp(end, 0, axis_max);
-  // GBATEK: X1>X2/Y1>Y2 are treated as X2/Y2=max; and X1=X2=0 (Y1=Y2=0)
-  // disables that window axis.
+  const int e = std::clamp(end, 0, axis_max);
+  // GBATEK: X1=X2=0 (or Y1=Y2=0) disables that axis.
+  // If X1>X2 (or Y1>Y2), window range wraps around:
+  // [X1..max) U [0..X2).
   if (s == 0 && e == 0) return false;
-  if (s > e) e = axis_max;
-  return p >= s && p < e;
+  if (s <= e) return p >= s && p < e;
+  return p >= s || p < e;
 }
 
 uint8_t ResolveWindowControl(uint16_t dispcnt, uint16_t winin, uint16_t winout,
