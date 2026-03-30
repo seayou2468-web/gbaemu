@@ -69,6 +69,8 @@
     self.screenView.layer.cornerRadius = 12.0;
     self.screenView.layer.masksToBounds = YES;
     self.screenView.contentMode = UIViewContentModeScaleAspectFit;
+    self.screenView.layer.magnificationFilter = kCAFilterNearest;
+    self.screenView.layer.minificationFilter = kCAFilterNearest;
 
     self.loadBIOSButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.loadBIOSButton.translatesAutoresizingMaskIntoConstraints = NO;

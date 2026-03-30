@@ -51,6 +51,10 @@ void GBACore::RenderMode3Frame() {
   const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
 
   const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
+  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
+  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
+  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
+  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
@@ -58,17 +62,26 @@ void GBACore::RenderMode3Frame() {
 
   for (int y = 0; y < kScreenHeight; ++y) {
     const int sy = mosaic ? (y / mos_v) * mos_v : y;
+    const int32_t line_refx = affine_line_refs_valid_ ? bg2_refx_line_[sy] : (static_cast<int32_t>(Read32(0x04000028u) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
+    const int32_t line_refy = affine_line_refs_valid_ ? bg2_refy_line_[sy] : (static_cast<int32_t>(Read32(0x0400002Cu) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
     for (int x = 0; x < kScreenWidth; ++x) {
       const int sx = mosaic ? (x / mos_h) * mos_h : x;
       const size_t off = static_cast<size_t>(y * kScreenWidth + x);
-      const size_t s_off = static_cast<size_t>(sy * kScreenWidth + sx);
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
         BgLayerBuffer()[off] = 4;
         continue;
       }
-      const uint32_t vram_off = s_off * 2;
+      const int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
+      const int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      if (tex_x < 0 || tex_y < 0 || tex_x >= 240 || tex_y >= 160) {
+        frame_buffer_[off] = backdrop;
+        BgPriorityBuffer()[off] = 4;
+        BgLayerBuffer()[off] = 4;
+        continue;
+      }
+      const uint32_t vram_off = static_cast<uint32_t>((tex_y * 240 + tex_x) * 2);
       const uint16_t bgr = static_cast<uint16_t>(vram_[vram_off]) | (static_cast<uint16_t>(vram_[vram_off+1]) << 8);
       frame_buffer_[off] = Bgr555ToRgba8888(bgr);
       BgPriorityBuffer()[off] = bg2cnt & 3;
@@ -87,6 +100,10 @@ void GBACore::RenderMode4Frame() {
   const uint32_t page_base = (dispcnt & 0x10) ? 0xA000 : 0;
 
   const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
+  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
+  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
+  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
+  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
@@ -94,16 +111,25 @@ void GBACore::RenderMode4Frame() {
 
   for (int y = 0; y < kScreenHeight; ++y) {
     const int sy = mosaic ? (y / mos_v) * mos_v : y;
+    const int32_t line_refx = affine_line_refs_valid_ ? bg2_refx_line_[sy] : (static_cast<int32_t>(Read32(0x04000028u) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
+    const int32_t line_refy = affine_line_refs_valid_ ? bg2_refy_line_[sy] : (static_cast<int32_t>(Read32(0x0400002Cu) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
     for (int x = 0; x < kScreenWidth; ++x) {
       const int sx = mosaic ? (x / mos_h) * mos_h : x;
       const size_t off = static_cast<size_t>(y * kScreenWidth + x);
-      const size_t s_off = static_cast<size_t>(sy * kScreenWidth + sx);
       if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
         continue;
       }
-      const uint8_t idx = vram_[page_base + s_off];
+      const int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
+      const int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      if (tex_x < 0 || tex_y < 0 || tex_x >= 240 || tex_y >= 160) {
+        frame_buffer_[off] = backdrop;
+        BgPriorityBuffer()[off] = 4;
+        BgLayerBuffer()[off] = 4;
+        continue;
+      }
+      const uint8_t idx = vram_[page_base + static_cast<uint32_t>(tex_y * 240 + tex_x)];
       const size_t pal_off = static_cast<size_t>(idx) * 2;
       const uint16_t bgr = static_cast<uint16_t>(palette_ram_[pal_off]) | (static_cast<uint16_t>(palette_ram_[pal_off+1]) << 8);
       frame_buffer_[off] = Bgr555ToRgba8888(bgr);
@@ -124,19 +150,27 @@ void GBACore::RenderMode5Frame() {
   const uint32_t page_base = (dispcnt & 0x10) ? 0xA000 : 0;
 
   const uint16_t bg2cnt = ReadIO16(0x0400000Cu);
+  const int16_t pa = static_cast<int16_t>(ReadIO16(0x04000020u));
+  const int16_t pb = static_cast<int16_t>(ReadIO16(0x04000022u));
+  const int16_t pc = static_cast<int16_t>(ReadIO16(0x04000024u));
+  const int16_t pd = static_cast<int16_t>(ReadIO16(0x04000026u));
   const bool mosaic = (bg2cnt & 0x40) != 0;
   const uint16_t mosaic_reg = ReadIO16(0x0400004Cu);
   const int mos_h = (mosaic_reg & 0xF) + 1;
   const int mos_v = ((mosaic_reg >> 4) & 0xF) + 1;
 
-  for (int y = 0; y < 128; ++y) {
+  for (int y = 0; y < kScreenHeight; ++y) {
     const int sy = mosaic ? (y / mos_v) * mos_v : y;
-    for (int x = 0; x < 160; ++x) {
+    const int32_t line_refx = affine_line_refs_valid_ ? bg2_refx_line_[sy] : (static_cast<int32_t>(Read32(0x04000028u) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
+    const int32_t line_refy = affine_line_refs_valid_ ? bg2_refy_line_[sy] : (static_cast<int32_t>(Read32(0x0400002Cu) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
+    for (int x = 0; x < kScreenWidth; ++x) {
       const int sx = mosaic ? (x / mos_h) * mos_h : x;
-      const int tx = x + (240-160)/2, ty = y + (160-128)/2;
-      const size_t fb_off = static_cast<size_t>(ty * kScreenWidth + tx);
-      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, tx, ty)) continue;
-      const uint32_t vram_off = page_base + static_cast<size_t>(sy * 160 + sx) * 2;
+      const size_t fb_off = static_cast<size_t>(y * kScreenWidth + x);
+      if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) continue;
+      const int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
+      const int tex_y = static_cast<int>((static_cast<int64_t>(line_refy) + static_cast<int64_t>(pc) * sx) >> 8);
+      if (tex_x < 0 || tex_y < 0 || tex_x >= 160 || tex_y >= 128) continue;
+      const uint32_t vram_off = page_base + static_cast<uint32_t>((tex_y * 160 + tex_x) * 2);
       const uint16_t bgr = static_cast<uint16_t>(vram_[vram_off]) | (static_cast<uint16_t>(vram_[vram_off+1]) << 8);
       frame_buffer_[fb_off] = Bgr555ToRgba8888(bgr);
       BgPriorityBuffer()[fb_off] = bg2cnt & 3;
