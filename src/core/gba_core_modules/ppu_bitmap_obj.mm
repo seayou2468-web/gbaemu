@@ -19,8 +19,9 @@ bool SampleObjColorIndex(const std::array<uint8_t, 96 * 1024>& vram, size_t obj_
     const int tiles_per_row = src_w / 8;
     tile_units = t_id + static_cast<uint32_t>(tile_y * (color_256 ? tiles_per_row * 2 : tiles_per_row) + (color_256 ? tile_x * 2 : tile_x));
   } else {
-    // 2D Mapping: Hardware uses 32-tile stride (1024 bytes per row of tiles)
-    tile_units = t_id + static_cast<uint32_t>(tile_y * 32 + (color_256 ? tile_x * 2 : tile_x));
+    // 2D Mapping: Tile-number Y step is +32 (4bpp) or +64 (8bpp, bit0 ignored).
+    // See GBATEK OBJ Tile Number notes.
+    tile_units = t_id + static_cast<uint32_t>(tile_y * (color_256 ? 64 : 32) + (color_256 ? tile_x * 2 : tile_x));
   }
 
   const size_t chr_base_off = obj_chr_base + static_cast<size_t>(tile_units) * 32u;
@@ -127,6 +128,7 @@ void GBACore::RenderMode4Frame() {
       if (!bg2_enable || !IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
         frame_buffer_[off] = backdrop;
         BgPriorityBuffer()[off] = 4;
+        BgLayerBuffer()[off] = 4;
         continue;
       }
       int tex_x = static_cast<int>((static_cast<int64_t>(line_refx) + static_cast<int64_t>(pa) * sx) >> 8);
@@ -351,7 +353,9 @@ void GBACore::RenderSprites() {
 
     if ((a0 & 0x0300) == 0x0200) continue;
     const bool affine = a0 & 0x0100;
-    const bool double_size = a0 & 0x0200;
+    // OBJ "double-size" (bit9) is valid only for affine sprites.
+    // For non-affine sprites bit9 is OBJ-disable/regular mode control.
+    const bool double_size = affine && ((a0 & 0x0200) != 0);
     const int shape = (a0 >> 14) & 3;
     const int size = (a1 >> 14) & 3;
     if (shape >= 3) continue;
