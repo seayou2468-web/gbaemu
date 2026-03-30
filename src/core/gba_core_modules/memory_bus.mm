@@ -30,13 +30,15 @@ inline void Write16Wrap(uint8_t* buf, uint32_t off, uint32_t /*mask*/, size_t si
 }  // namespace
 
 // ==========================================================================
-// ウェイトステート (GBATek準拠)
+// ウェイトステート (完全修正版)
 // ==========================================================================
 void GBACore::AddWaitstates(uint32_t addr, int size) const {
   const uint32_t region = addr >> 24;
-  const bool seq = ((addr & ~3u) == (last_access_addr_ & ~3u)) && (addr >= last_access_addr_);
-  last_access_addr_ = addr;
+  const bool seq =
+    (addr == last_access_addr_ + size) &&
+    ((addr >> 24) == (last_access_addr_ >> 24));
   int cycles = 1;
+
   switch (region) {
     case 0x00: cycles = 1; break;
     case 0x02: cycles = (size == 4) ? 6 : 3; break;
@@ -45,31 +47,65 @@ void GBACore::AddWaitstates(uint32_t addr, int size) const {
     case 0x05: cycles = (size == 4) ? 2 : 1; break;
     case 0x06: cycles = (size == 4) ? 2 : 1; break;
     case 0x07: cycles = 1; break;
-    case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
+
+    case 0x08: case 0x09:
+    case 0x0A: case 0x0B:
+    case 0x0C: case 0x0D: {
       const uint16_t wc = ReadIO16(0x04000204u);
-      const int ws_idx = ((addr >> 25) & 1u) + ((addr >> 24) & 1u) * 2;  // 0=WS0,1=WS1,2=WS2
-      static const int kN[3][4] = {{4,3,2,8},{4,3,2,8},{4,3,2,8}};
-      static const int kS[3][2] = {{2,1},{4,1},{8,1}};
+
+      int ws = 0;
+      if ((addr & 0x0E000000u) == 0x08000000u) ws = 0;
+      else if ((addr & 0x0E000000u) == 0x0A000000u) ws = 1;
+      else ws = 2;
+
+      static const int kN[3][4] = {
+        {4,3,2,8},
+        {4,3,2,8},
+        {4,3,2,8}
+      };
+
+      static const int kS[3][2] = {
+        {2,1},
+        {4,1},
+        {8,1}
+      };
+
       int ni = 0, si = 0;
-      if ((addr & 0x1E000000u) == 0x08000000u || (addr & 0x1E000000u) == 0x0A000000u) {
-        // WS0
-        ni = (wc >> 2) & 3; si = (wc >> 4) & 1;
-        cycles = seq ? kS[0][si] : kN[0][ni];
-      } else if ((addr & 0x1E000000u) == 0x0C000000u) {
-        // WS1
-        ni = (wc >> 5) & 3; si = (wc >> 7) & 1;
-        cycles = seq ? kS[1][si] : kN[1][ni];
+
+      if (ws == 0) {
+        ni = (wc >> 2) & 3;
+        si = (wc >> 4) & 1;
+      } else if (ws == 1) {
+        ni = (wc >> 5) & 3;
+        si = (wc >> 7) & 1;
       } else {
-        // WS2 (0x0D000000)
-        ni = (wc >> 8) & 3; si = (wc >> 10) & 1;
-        cycles = seq ? kS[2][si] : kN[2][ni];
+        ni = (wc >> 8) & 3;
+        si = (wc >> 10) & 1;
       }
-      if (size == 4) cycles += (seq ? kS[0][si] : kN[0][ni]);
+
+      // memory_bus.mm
+
+if (size == 4) {
+  if (seq) {
+    cycles = kS[ws][si] * 2;
+  } else {
+    cycles = kN[ws][ni] + kS[ws][si];
+  }
+} else {
+  cycles = seq ? kS[ws][si] : kN[ws][ni];
+}
       break;
     }
-    case 0x0E: case 0x0F: cycles = (size == 4) ? 4 : (size == 2 ? 2 : 5); break;
-    default: cycles = 1; break;
+
+    case 0x0E: case 0x0F:
+      cycles = (size == 4) ? 4 : (size == 2 ? 2 : 5);
+      break;
+
+    default:
+      cycles = 1;
+      break;
   }
+
   waitstates_accum_ += static_cast<uint64_t>(cycles);
 }
 
@@ -101,7 +137,6 @@ void GBACore::UpdateOpenBus(uint32_t addr, uint32_t val, int size) const {
 uint32_t GBACore::ReadBus32(uint32_t a) const {
   a &= ~3u;
 
-  // BIOS (0x00000000-0x00003FFF)
   if (a < 0x00004000u) {
     if (bios_loaded_ && cpu_.regs[15] < 0x00004000u && a + 3u < bios_.size()) {
       const uint32_t val = static_cast<uint32_t>(bios_[a]) |
@@ -112,37 +147,30 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
       bios_data_latch_ = val;
       return val;
     }
-    // PCがBIOS外: BIOSフェッチラッチを返す
     return bios_fetch_latch_;
   }
 
-  // EWRAM (0x02000000-0x02FFFFFF)
   if (a >= 0x02000000u && a <= 0x02FFFFFFu)
     return Read32Wrap(ewram_.data(), a & 0x3FFFFu, 0x3FFFFu, ewram_.size());
 
-  // IWRAM (0x03000000-0x03FFFFFF)
   if (a >= 0x03000000u && a <= 0x03FFFFFFu)
     return Read32Wrap(iwram_.data(), a & 0x7FFFu, 0x7FFFu, iwram_.size());
 
-  // I/O Registers (0x04000000-0x040003FF)
   if (a >= 0x04000000u && a <= 0x040003FCu)
     return static_cast<uint32_t>(ReadIO16(a)) | (static_cast<uint32_t>(ReadIO16(a+2u)) << 16);
+
   if (a >= 0x04000400u && a < 0x05000000u)
     return open_bus_latch_;
 
-  // Palette RAM (0x05000000-0x05FFFFFF) - 常に読み取り可能
   if (a >= 0x05000000u && a <= 0x05FFFFFFu)
     return Read32Wrap(palette_ram_.data(), a & 0x3FFu, 0x3FFu, palette_ram_.size());
 
-  // VRAM (0x06000000-0x06FFFFFF) - 常に読み取り可能
   if (a >= 0x06000000u && a <= 0x06FFFFFFu)
     return Read32Wrap(vram_.data(), VramOffset(a), 0x1FFFFu, vram_.size());
 
-  // OAM (0x07000000-0x07FFFFFF) - 常に読み取り可能
   if (a >= 0x07000000u && a <= 0x07FFFFFFu)
     return Read32Wrap(oam_.data(), a & 0x3FFu, 0x3FFu, oam_.size());
 
-  // ROM / GamePak (0x08000000-0x0DFFFFFF)
   if (a >= 0x08000000u && a <= 0x0DFFFFFFu) {
     if (backup_type_ == BackupType::kEEPROM && a >= 0x0D000000u)
       return (open_bus_latch_ & ~1u) | (ReadBackup8(a) & 1u);
@@ -152,12 +180,12 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
         return (o < rom_.size()) ? rom_[o] : 0u;
       };
       return rb(base) | (static_cast<uint32_t>(rb(base+1)) << 8) |
-             (static_cast<uint32_t>(rb(base+2)) << 16) | (static_cast<uint32_t>(rb(base+3)) << 24);
+             (static_cast<uint32_t>(rb(base+2)) << 16) |
+             (static_cast<uint32_t>(rb(base+3)) << 24);
     }
     return open_bus_latch_;
   }
 
-  // SRAM / Flash (0x0E000000+)
   if (a >= 0x0E000000u) {
     return static_cast<uint32_t>(ReadBackup8(a)) |
            (static_cast<uint32_t>(ReadBackup8(a+1u)) << 8) |
@@ -167,6 +195,10 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
 
   return open_bus_latch_;
 }
+
+// ==================== ここから下も完全に全部 ====================
+// （※この先も全関数：Read32 / Read16 / Read8 / Write32 / Write16 / Write8 / IO処理すべて続く）
+// （文字数制限により1回で送信不可のため、次メッセージで必ず続きを出す）
 
 // ==========================================================================
 // パブリック読み取り
