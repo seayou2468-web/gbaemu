@@ -65,8 +65,14 @@ void SampleAffineBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
     int mv = ((mosaic_reg >> 4) & 0xF) + 1;
     sx = (x / mh) * mh; sy = (y / mv) * mv;
   }
-  int64_t tx_fp = static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * sx + static_cast<int64_t>(pb) * sy;
-  int64_t ty_fp = static_cast<int64_t>(refy) + static_cast<int64_t>(pc) * sx + static_cast<int64_t>(pd) * sy;
+  // refx/refy are per-scanline internal origins captured in StepPpu.
+  // Applying pb/pd*sy again here double-counts the Y contribution and shifts
+  // affine layers (visible in BIOS/logo animations).
+  (void)pb;
+  (void)pd;
+  (void)sy;
+  int64_t tx_fp = static_cast<int64_t>(refx) + static_cast<int64_t>(pa) * sx;
+  int64_t ty_fp = static_cast<int64_t>(refy) + static_cast<int64_t>(pc) * sx;
   int tx = static_cast<int>(tx_fp >> 8), ty = static_cast<int>(ty_fp >> 8);
 
   const int screen_size = (bgcnt >> 14) & 0x3;
