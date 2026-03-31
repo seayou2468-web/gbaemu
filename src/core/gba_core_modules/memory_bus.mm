@@ -80,9 +80,11 @@ inline bool IsWriteOnlyIo16(uint32_t addr) {
 void GBACore::AddWaitstates(uint32_t addr, int size) const {
   const uint32_t region = addr >> 24;
   const uint32_t aligned_addr = (size == 4) ? (addr & ~3u) : (addr & ~1u);
-  const bool seq = last_access_valid_ &&
-                   ((last_access_addr_ >> 24) == region) &&
-                   (aligned_addr == (last_access_addr_ + static_cast<uint32_t>(last_access_size_)));
+  const bool seq =
+  last_access_valid_ &&
+  (region >= 0x08 && region <= 0x0D) &&
+  ((last_access_addr_ >> 24) == region) &&
+  (aligned_addr == (last_access_addr_ + last_access_size_));
   last_access_addr_ = aligned_addr;
   last_access_size_ = static_cast<uint8_t>(size);
   last_access_valid_ = true;
@@ -226,10 +228,12 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     UpdateOpenBus(addr, v, 4);
     return v;
   }
-  const uint32_t v = ReadBus32(addr & ~3u);
-  UpdateOpenBus(addr & ~3u, v, 4);
-  const uint32_t rot = (addr & 3u) * 8u;
-  return rot ? ((v>>rot)|(v<<(32u-rot))) : v;
+  const uint32_t aligned = ReadBus32(addr & ~3u);
+const uint32_t rot = (addr & 3u) * 8u;
+const uint32_t v = rot ? ((aligned >> rot) | (aligned << (32u - rot))) : aligned;
+
+UpdateOpenBus(addr, v, 4);
+return v;
 }
 
 uint16_t GBACore::Read16(uint32_t addr) const {
@@ -239,7 +243,7 @@ uint16_t GBACore::Read16(uint32_t addr) const {
   const uint32_t a2 = addr & ~1u;
   const uint32_t v32 = ReadBus32(a2 & ~2u);
   const uint16_t val = static_cast<uint16_t>(v32 >> ((a2 & 2u)*8u));
-  UpdateOpenBus(a2, v32, 2);
+  UpdateOpenBus(addr, val, 2);
   if (addr & 1u) return static_cast<uint16_t>((val>>8)|(val<<8));
   return val;
 }
@@ -249,8 +253,9 @@ uint8_t GBACore::Read8(uint32_t addr) const {
   if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u)
     return static_cast<uint8_t>(bios_fetch_latch_ >> ((addr & 3u)*8u));
   const uint32_t v32 = ReadBus32(addr & ~3u);
-  UpdateOpenBus(addr, v32, 1);
-  return static_cast<uint8_t>(v32 >> ((addr & 3u)*8u));
+  const uint8_t val = static_cast<uint8_t>(v32 >> ((addr & 3u)*8u));
+UpdateOpenBus(addr, val, 1);
+return val;
 }
 
 // =========================================================================
@@ -350,7 +355,12 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     const uint16_t dispcnt = ReadIO16(0x04000000u);
     const uint8_t bg_mode = static_cast<uint8_t>(dispcnt & 0x7u);
     // In bitmap modes 3-5, BG bitmap area extends to 0x13FFF.
-    const uint32_t bg_byte_limit = (bg_mode >= 3u) ? 0x14000u : 0x10000u;
+    uint32_t bg_byte_limit;
+if (bg_mode >= 3 && bg_mode <= 5) {
+  bg_byte_limit = 0x14000u;
+} else {
+  bg_byte_limit = 0x10000u;
+}
     if (voff < bg_byte_limit) {
       // VRAM byte writes behave as mirrored halfword writes.
       const uint16_t v16 = static_cast<uint16_t>(value) |
@@ -477,7 +487,13 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
         // DMAレジスタベース (SAD/DAD/CNT_L は前に配置)
         // DMA0: B0=SAD, B4=DAD, B8=CNT_L, BA=CNT_H
         // DMA1: BC=SAD, C0=DAD, C4=CNT_L, C6=CNT_H
-        const uint32_t dma_base = addr - 10u; // CNT_H - 10 = SAD
+        uint32_t dma_base;
+switch (ch) {
+  case 0: dma_base = 0x040000B0u; break;
+  case 1: dma_base = 0x040000BCu; break;
+  case 2: dma_base = 0x040000C8u; break;
+  case 3: dma_base = 0x040000D4u; break;
+} // CNT_H - 10 = SAD
         const size_t boff = static_cast<size_t>(dma_base - 0x04000000u);
         auto read_raw32 = [&](size_t o) -> uint32_t {
           if (o + 3u >= io_regs_.size()) return 0;
