@@ -458,12 +458,26 @@ static uint32_t EstimateDmaTransferCycles(uint32_t sad, uint32_t dad, bool seq_a
   const bool dst_rom = (dst_region >= 0x08u && dst_region <= 0x0Du);
   const bool either_rom = src_rom || dst_rom;
   const bool dst_io = (dst_region == 0x04u);
+  const bool ewram_to_vram = (src_region == 0x02u && dst_region == 0x06u);
+  const uint32_t dominant_ws = std::max(src_ws, dst_ws);
+  const uint32_t secondary_ws = std::min(src_ws, dst_ws);
 
   uint32_t base = seq_access ? 1u : 2u;  // bus turn-around/non-seq penalty
-  if (either_rom) base += 1u;            // gamepak path has extra pipeline cost
-  if (dst_io && !fifo_dma) base += 1u;   // register sink write settle
-
-  return base + std::max(src_ws, dst_ws);
+  if (fifo_dma) {
+    return base + src_ws;
+  }
+  if (dst_io) {
+    return base + dominant_ws + 1u;      // register sink write settle
+  }
+  if (either_rom) {
+    // Gamepak-side accesses are mostly dominated by the slower edge, with a
+    // partial contribution from the other side on non-sequential beats.
+    return base + dominant_ws + (seq_access ? 0u : (secondary_ws >> 1));
+  }
+  if (ewram_to_vram && !seq_access) {
+    return base + dominant_ws + 1u;      // conservative first-beat penalty
+  }
+  return base + dominant_ws;
 }
 
 void GBACore::StepDma(){
