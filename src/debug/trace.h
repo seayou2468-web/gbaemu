@@ -1,8 +1,8 @@
 #pragma once
 #include <cstdint>
-
+#include <cstddef>
 #ifndef ENABLE_TRACE
-#define ENABLE_TRACE 0
+#define ENABLE_TRACE 1
 #endif
 
 #if ENABLE_TRACE
