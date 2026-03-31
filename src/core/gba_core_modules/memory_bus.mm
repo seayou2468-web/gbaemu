@@ -179,7 +179,7 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
 
   // BIOS
   if (a < 0x00004000u) {
-    if (bios_loaded_ && cpu_.regs[15] < 0x00004000u && a + 3u < bios_.size()) {
+    if (bios_loaded_ && cpu_.regs[15] < 0x00004000u) {
       const uint32_t val = static_cast<uint32_t>(bios_[a]) |
           (static_cast<uint32_t>(bios_[a+1])<<8) |
           (static_cast<uint32_t>(bios_[a+2])<<16) |
