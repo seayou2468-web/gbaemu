@@ -469,18 +469,33 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   HandleUndefinedInstruction(true);
 }
 
+// =========================================================================
+// RunCpuSlice
+// FIXED: IntrWait 復帰時に IF をクリアしない。
+//
+// 旧コード: matched != 0 の時に WriteIO16(0x04000202, matched) で IF をクリア
+//   → ServiceInterruptIfNeeded が呼ばれた時点で pending=0 → IRQ ハンドラが走らない
+//   → ゲームの IRQ ハンドラが実行されないまま next_pc へ復帰
+//   → ゲームが期待するハンドラ内の状態更新がなく画面停止や描画不具合の原因に
+//
+// 修正: IF はそのまま保持し、ServiceInterruptIfNeeded に IRQ ハンドラの
+//       起動を任せる。EnterException の lr_adjust 修正により正しい戻りアドレスが
+//       LR_irq に設定されるため、ハンドラ復帰後も正常に動作する。
+// =========================================================================
 uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
-  // 1. Wake up from HALT.
-  const uint16_t ie = ReadIO16(0x04000200u);
+  // 1. HALT からの復帰チェック
+  const uint16_t ie     = ReadIO16(0x04000200u);
   const uint16_t iflags = ReadIO16(0x04000202u);
   if (cpu_.halted) {
     if (swi_intrwait_active_) {
-      const uint16_t matched = static_cast<uint16_t>(iflags & ie & swi_intrwait_mask_);
+      const uint16_t matched =
+          static_cast<uint16_t>(iflags & ie & swi_intrwait_mask_);
       if (matched != 0u) {
-        WriteIO16(0x04000202u, matched);
+        // FIXED: IF をクリアせず ServiceInterruptIfNeeded に IRQ ハンドラ起動を委ねる。
+        // 旧コード: WriteIO16(0x04000202u, matched); ← 削除
         swi_intrwait_active_ = false;
-        swi_intrwait_mask_ = 0;
-        cpu_.halted = false;
+        swi_intrwait_mask_   = 0;
+        cpu_.halted          = false;
       }
     } else if ((ie & iflags) != 0u) {
       cpu_.halted = false;
@@ -507,7 +522,7 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
     const uint32_t pc = cpu_.regs[15];
 
     if (!is_exec_addr_valid(pc)) {
-      // If PC is invalid, skip slice to avoid infinite loops
+      // PC が無効アドレスの場合はスライスを消化して無限ループを回避
       break;
     }
 
@@ -522,40 +537,48 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
       core_cycles = EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
     }
-    const uint64_t wait_after = waitstates_accum_;
-    const uint64_t wait_delta64 = (wait_after >= wait_before) ? (wait_after - wait_before) : 0u;
-    const uint32_t wait_cycles = (wait_delta64 > 0xFFFFFFFFu)
+    const uint64_t wait_after  = waitstates_accum_;
+    const uint64_t wait_delta64 = (wait_after >= wait_before)
+        ? (wait_after - wait_before) : 0u;
+    const uint32_t wait_cycles  = (wait_delta64 > 0xFFFFFFFFu)
         ? 0xFFFFFFFFu
         : static_cast<uint32_t>(wait_delta64);
 
-    // Memory waits already include fetch/data bus penalties; core estimate keeps
-    // ALU/branch minimum cost. Use the larger side to avoid double-counting.
-    const uint32_t step_cycles = std::max<uint32_t>(1u, std::max(core_cycles, wait_cycles));
+    // メモリウェイトはフェッチ/データバスペナルティを含む。
+    // コア推定値との大きい方を採用してダブルカウントを防ぐ。
+    const uint32_t step_cycles =
+        std::max<uint32_t>(1u, std::max(core_cycles, wait_cycles));
     consumed += step_cycles;
   }
   return consumed;
 }
 
+// =========================================================================
+// DebugStepCpuInstructions
+// FIXED: IntrWait 復帰時に IF をクリアしない (RunCpuSlice と同様)。
+// =========================================================================
 void GBACore::DebugStepCpuInstructions(uint32_t count) {
   for (uint32_t i = 0; i < count; ++i) {
     if (cpu_.halted) {
       bool woke_from_intrwait = false;
       if (swi_intrwait_active_) {
         const uint16_t iflags = ReadIO16(0x04000202u);
-        const uint16_t ie = ReadIO16(0x04000200u);
-        const uint16_t matched = static_cast<uint16_t>(iflags & ie & swi_intrwait_mask_);
+        const uint16_t ie_reg = ReadIO16(0x04000200u);
+        const uint16_t matched =
+            static_cast<uint16_t>(iflags & ie_reg & swi_intrwait_mask_);
         if (matched != 0u) {
-          WriteIO16(0x04000202u, matched);
+          // FIXED: IF をクリアしない
+          // 旧コード: WriteIO16(0x04000202u, matched); ← 削除
           swi_intrwait_active_ = false;
-          swi_intrwait_mask_ = 0;
-          cpu_.halted = false;
-          woke_from_intrwait = true;
+          swi_intrwait_mask_   = 0;
+          cpu_.halted          = false;
+          woke_from_intrwait   = true;
         }
       }
       if (!woke_from_intrwait) {
-        const uint16_t ie = ReadIO16(0x04000200u);
-        const uint16_t iflags = ReadIO16(0x04000202u);
-        if ((ie & iflags) == 0u) return;
+        const uint16_t ie_reg  = ReadIO16(0x04000200u);
+        const uint16_t iflags  = ReadIO16(0x04000202u);
+        if ((ie_reg & iflags) == 0u) return;
         cpu_.halted = false;
       }
     }
