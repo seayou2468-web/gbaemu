@@ -1,22 +1,18 @@
 #include "trace.h"
 #include <cstdio>
 
+void DumpTrace() {
 #if ENABLE_TRACE
-
-void DumpTrace(const char* path) {
-  FILE* f = fopen(path, "w");
-  if (!f) return;
-
   for (uint32_t i = 0; i < TRACE_BUFFER_SIZE; i++) {
-    const auto& e = g_trace_buffer[i];
-    fprintf(f, "%u %08X %08X %08X\n",
-            (uint32_t)e.type,
-            e.addr,
-            e.value,
-            e.pc);
+    const TraceEntry& e = g_trace_buffer[i];
+    if (e.addr == 0 && e.value == 0 && e.pc == 0) continue;
+
+    printf("[%u] type=%d addr=%08X value=%08X pc=%08X\n",
+           i,
+           static_cast<int>(e.type),
+           e.addr,
+           e.value,
+           e.pc);
   }
-
-  fclose(f);
-}
-
 #endif
+}
