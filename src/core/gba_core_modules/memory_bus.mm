@@ -1,4 +1,5 @@
 #include "../gba_core.h"
+#include "../../debug/trace.h"
 
 namespace gba {
 namespace {
