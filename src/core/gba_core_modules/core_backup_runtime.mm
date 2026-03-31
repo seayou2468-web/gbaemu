@@ -219,9 +219,15 @@ void GBACore::RunCycles(uint32_t cycles) {
   while (remaining > 0u) {
     const uint32_t requested = std::min(remaining, kSlice);
 
+    // DMA scheduler first: DMA uses the bus and can block CPU execution.
+    StepDma();
+
     // CPU螳溯｡・(HALT縺ｪ繧牙叉譎ょ叉譎ゅΜ繧ｿ繝ｼ繝ｳ)
-    uint32_t elapsed = RunCpuSlice(requested);
-    if (elapsed == 0u) elapsed = requested;
+    uint32_t elapsed = requested;
+    if (!dma_bus_taken_) {
+      elapsed = RunCpuSlice(requested);
+      if (elapsed == 0u) elapsed = requested;
+    }
     executed_cycles_ += elapsed;
 
     // 繧ｿ繧､繝槭・譖ｴ譁ｰ
@@ -233,9 +239,6 @@ void GBACore::RunCycles(uint32_t cycles) {
 
     // PPU譖ｴ譁ｰ (HBlank/VBlank 繧､繝吶Φ繝育匱轣ｫ繧貞性繧)
     StepPpu(elapsed);
-
-    // 蜊ｳ譎・MA (start_timing=0)
-    StepDma();
 
     remaining = (elapsed >= remaining) ? 0u : (remaining - elapsed);
   }

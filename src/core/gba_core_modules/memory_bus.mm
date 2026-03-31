@@ -495,6 +495,14 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
         dma_shadows_[ch].initial_count = c;
         dma_shadows_[ch].count         = c;
         dma_shadows_[ch].active        = true;
+        dma_shadows_[ch].pending       = false;
+        dma_shadows_[ch].startup_delay = 0;
+        dma_shadows_[ch].in_progress   = false;
+      } else if ((old_cnt & 0x8000u) && !(value & 0x8000u)) {
+        dma_shadows_[ch].active        = false;
+        dma_shadows_[ch].pending       = false;
+        dma_shadows_[ch].startup_delay = 0;
+        dma_shadows_[ch].in_progress   = false;
       }
       break;
     }
@@ -561,7 +569,8 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   // DMA即時起動 (start_timing=0)
   if ((addr==0x040000BAu||addr==0x040000C6u||addr==0x040000D2u||addr==0x040000DEu)
       && (value & 0x8000u) && ((value >> 12) & 3u) == 0u) {
-    StepDma();
+    int ch = static_cast<int>((addr - 0x040000BAu) / 0x0Cu);
+    ScheduleDmaStart(ch, value);
   }
 }
 

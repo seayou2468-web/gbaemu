@@ -280,9 +280,61 @@ void GBACore::StepSio(uint32_t cycles) {
   dma_shadows_[ch_val].initial_count = _c; \
   dma_shadows_[ch_val].count = _c; \
   dma_shadows_[ch_val].active = true; \
+  dma_shadows_[ch_val].pending = false; \
+  dma_shadows_[ch_val].startup_delay = 0; \
+  dma_shadows_[ch_val].in_progress = false; \
 } while(0)
 
+uint32_t GBACore::EstimateDmaStartupDelay(int ch, uint16_t cnt_h) const {
+  const bool w32 = ((cnt_h & 0x0400u) != 0u) || ((((cnt_h >> 12) & 3u) == 3u) && (ch == 1 || ch == 2));
+  const uint32_t src = dma_shadows_[ch].sad;
+  const uint32_t region = (src >> 24) & 0xFu;
+  uint32_t nonseq = 1u;
+  if (region >= 0x08u && region <= 0x0Du) {
+    const uint32_t ws = std::min(((src >> 25) & 3u), 2u);
+    nonseq = w32 ? ws_nonseq_32_[ws] : ws_nonseq_16_[ws];
+  } else if (region == 0x02u) {
+    nonseq = w32 ? 6u : 3u;
+  } else if (region == 0x06u || region == 0x05u) {
+    nonseq = w32 ? 2u : 1u;
+  }
+  return 2u + nonseq;
+}
+
+void GBACore::ScheduleDmaStart(int ch, uint16_t cnt_h, uint32_t delay_cycles_override) {
+  if (ch < 0 || ch >= 4) return;
+  if (!dma_shadows_[ch].active) {
+    INIT_DMA_SHADOW(ch);
+  }
+  if (!dma_shadows_[ch].active) return;
+  const uint32_t st = (cnt_h >> 12) & 3u;
+  const bool fifo_dma = (st == 3u) && (ch == 1 || ch == 2);
+  if (!IsDmaAddressValid(ch, dma_shadows_[ch].sad, dma_shadows_[ch].dad, fifo_dma)) {
+    dma_shadows_[ch].active = false;
+    dma_shadows_[ch].pending = false;
+    return;
+  }
+  dma_shadows_[ch].pending = true;
+  dma_shadows_[ch].in_progress = false;
+  dma_shadows_[ch].startup_delay =
+      (delay_cycles_override == 0xFFFFFFFFu) ? EstimateDmaStartupDelay(ch, cnt_h) : delay_cycles_override;
+}
+
+bool GBACore::IsDmaAddressValid(int ch, uint32_t src, uint32_t dst, bool fifo_dma) const {
+  const bool src_valid = (src >= 0x02000000u);
+  if (!src_valid) return false;
+  if (fifo_dma) return true;
+  if (ch != 3 && dst >= 0x08000000u) return false;
+  return true;
+}
+
 void GBACore::ExecuteDmaTransfer(int ch, uint16_t cnt_h){
+  while (dma_shadows_[ch].in_progress && dma_shadows_[ch].count > 0u) {
+    if (!ServiceDmaChannelUnit(ch, cnt_h)) break;
+  }
+}
+
+bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
   const uint32_t st=(cnt_h>>12)&3u;
   const bool fifo_dma = (st==3u && (ch==1 || ch==2));
   const bool w32=fifo_dma ? true : ((cnt_h&0x400u)!=0),rep=(cnt_h&0x200u)!=0;
@@ -290,9 +342,13 @@ void GBACore::ExecuteDmaTransfer(int ch, uint16_t cnt_h){
   const int unit=w32?4:2;
   const uint32_t src_mask=(ch==0)?0x07FFFFFEu:0x0FFFFFFEu;
   const uint32_t dst_mask=(ch==3)?0x0FFFFFFEu:0x07FFFFFEu;
-  uint32_t cnt=dma_shadows_[ch].count;
-  if(fifo_dma)cnt=4;
   uint32_t src=dma_shadows_[ch].sad&src_mask,dst=dma_shadows_[ch].dad&dst_mask;
+  if (!IsDmaAddressValid(ch, src, dst, fifo_dma)) {
+    dma_shadows_[ch].active = false;
+    dma_shadows_[ch].pending = false;
+    dma_shadows_[ch].in_progress = false;
+    return false;
+  }
   src&=w32?~3u:~1u;
   dst&=w32?~3u:~1u;
   const uint32_t src_step = static_cast<uint32_t>(unit);
@@ -304,43 +360,72 @@ void GBACore::ExecuteDmaTransfer(int ch, uint16_t cnt_h){
   if (fifo_dma) {
     dst = (ch == 1) ? 0x040000A0u : 0x040000A4u;
   }
-  if (w32) {
-    for (uint32_t n = 0; n < cnt; ++n) {
-      Write32(dst, Read32(src));
-      if (!src_fix) src = src_dec ? ((src - src_step) & src_mask) : ((src + src_step) & src_mask);
-      if (!dst_fix) dst = dst_dec ? ((dst - dst_step) & dst_mask) : ((dst + dst_step) & dst_mask);
-    }
-  } else {
-    for (uint32_t n = 0; n < cnt; ++n) {
-      Write16(dst, Read16(src));
-      if (!src_fix) src = src_dec ? ((src - src_step) & src_mask) : ((src + src_step) & src_mask);
-      if (!dst_fix) dst = dst_dec ? ((dst - dst_step) & dst_mask) : ((dst + dst_step) & dst_mask);
-    }
-  }
+  if (w32) Write32(dst, Read32(src));
+  else Write16(dst, Read16(src));
+  if (!src_fix) src = src_dec ? ((src - src_step) & src_mask) : ((src + src_step) & src_mask);
+  if (!dst_fix) dst = dst_dec ? ((dst - dst_step) & dst_mask) : ((dst + dst_step) & dst_mask);
   dma_shadows_[ch].sad=src;
+  dma_shadows_[ch].dad=dst;
+  if (dma_shadows_[ch].count > 0u) dma_shadows_[ch].count -= 1u;
+  if (dma_shadows_[ch].count > 0u) return true;
+
+  dma_shadows_[ch].pending = false;
+  dma_shadows_[ch].startup_delay = 0;
+  dma_shadows_[ch].in_progress = false;
   const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
   const size_t coff=(size_t)(base+10-0x04000000u);
   if(rep&&st!=0){
     uint32_t c=(uint32_t)io_regs_[(size_t)(base-0x04000000u)+8]|((uint32_t)io_regs_[(size_t)(base-0x04000000u)+9]<<8);
     if(c==0)c=(ch==3)?0x10000u:0x4000u;
     dma_shadows_[ch].count=c;
-    if(dc==3)dma_shadows_[ch].dad=dma_shadows_[ch].initial_dad;else dma_shadows_[ch].dad=dst;
+    if(dc==3)dma_shadows_[ch].dad=dma_shadows_[ch].initial_dad;
     dma_shadows_[ch].active=true;
   } else {
-    dma_shadows_[ch].dad=dst;dma_shadows_[ch].active=false;
+    dma_shadows_[ch].active=false;
     if(!rep){uint16_t nc=(uint16_t)((uint16_t)io_regs_[coff]|((uint16_t)io_regs_[coff+1]<<8))&~0x8000u;io_regs_[coff]=nc&0xFF;io_regs_[coff+1]=(nc>>8)&0xFF;}
   }
   if(cnt_h&0x4000u)RaiseInterrupt(1u<<(8+ch));
+  return true;
 }
 
 void GBACore::StepDma(){
+  dma_bus_taken_ = false;
+  for (int ch = 0; ch < 4; ++ch) {
+    const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
+    const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
+    if(!(cnt_h&0x8000u)){dma_shadows_[ch].active=false; dma_shadows_[ch].pending=false; dma_shadows_[ch].in_progress=false; continue;}
+    if (((cnt_h >> 12) & 3u) == 0u && dma_shadows_[ch].active && !dma_shadows_[ch].pending && !dma_shadows_[ch].in_progress) {
+      ScheduleDmaStart(ch, cnt_h);
+    }
+  }
   for(int ch=0;ch<4;++ch){
     const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
     const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
-    if(!(cnt_h&0x8000u)){dma_shadows_[ch].active=false;continue;}
-    if(((cnt_h>>12)&3u)!=0)continue;
-    if(!dma_shadows_[ch].active){INIT_DMA_SHADOW(ch);}
-    if(dma_shadows_[ch].active)ExecuteDmaTransfer(ch,cnt_h);
+    if(!(cnt_h&0x8000u)) continue;
+    if (dma_shadows_[ch].pending && dma_shadows_[ch].startup_delay > 0u) {
+      --dma_shadows_[ch].startup_delay;
+    }
+    if (dma_shadows_[ch].pending && dma_shadows_[ch].startup_delay == 0u) {
+      dma_shadows_[ch].pending = false;
+      dma_shadows_[ch].in_progress = true;
+    }
+  }
+  for (int ch = 0; ch < 4; ++ch) {
+    const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
+    const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
+    if (!(cnt_h & 0x8000u) || !dma_shadows_[ch].in_progress) continue;
+    ServiceDmaChannelUnit(ch, cnt_h);
+    dma_bus_taken_ = true;
+    break;  // DMA blocks CPU bus: one channel beat per scheduler step.
+  }
+  for (int ch = 0; ch < 4; ++ch) {
+    const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
+    const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
+    if (!(cnt_h & 0x8000u)) continue;
+    if ((((cnt_h >> 12) & 3u) == 0u) && dma_shadows_[ch].active &&
+        !dma_shadows_[ch].pending && !dma_shadows_[ch].in_progress) {
+      ScheduleDmaStart(ch, cnt_h);
+    }
   }
 }
 void GBACore::StepDmaVBlank(){
@@ -349,8 +434,7 @@ void GBACore::StepDmaVBlank(){
     const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
     if(!(cnt_h&0x8000u))continue;
     if(((cnt_h>>12)&3u)!=1)continue;
-    if(!dma_shadows_[ch].active){INIT_DMA_SHADOW(ch);}
-    if(dma_shadows_[ch].active)ExecuteDmaTransfer(ch,cnt_h);
+    if (!dma_shadows_[ch].pending && !dma_shadows_[ch].in_progress) ScheduleDmaStart(ch, cnt_h);
   }
 }
 void GBACore::StepDmaHBlank(){
@@ -359,8 +443,7 @@ void GBACore::StepDmaHBlank(){
     const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
     if(!(cnt_h&0x8000u))continue;
     if(((cnt_h>>12)&3u)!=2)continue;
-    if(!dma_shadows_[ch].active){INIT_DMA_SHADOW(ch);}
-    if(dma_shadows_[ch].active)ExecuteDmaTransfer(ch,cnt_h);
+    if (!dma_shadows_[ch].pending && !dma_shadows_[ch].in_progress) ScheduleDmaStart(ch, cnt_h);
   }
 }
 
@@ -378,11 +461,11 @@ void GBACore::ConsumeAudioFifoOnTimer(size_t ti){
   };
   if((!at1&&ti==0)||(at1&&ti==1)){
     pop(&fifo_a_,&fifo_a_last_sample_,&dma_fifo_a_request_);
-    if(dma_fifo_a_request_){dma_fifo_a_request_=false;const uint16_t c=ReadIO16(0x040000C6u);if((c&0x8000u)&&((c>>12)&3u)==3u)ExecuteDmaTransfer(1,c);}
+    if(dma_fifo_a_request_){dma_fifo_a_request_=false;const uint16_t c=ReadIO16(0x040000C6u);if((c&0x8000u)&&((c>>12)&3u)==3u)ScheduleDmaStart(1,c,0u);}
   }
   if((!bt1&&ti==0)||(bt1&&ti==1)){
     pop(&fifo_b_,&fifo_b_last_sample_,&dma_fifo_b_request_);
-    if(dma_fifo_b_request_){dma_fifo_b_request_=false;const uint16_t c=ReadIO16(0x040000D2u);if((c&0x8000u)&&((c>>12)&3u)==3u)ExecuteDmaTransfer(2,c);}
+    if(dma_fifo_b_request_){dma_fifo_b_request_=false;const uint16_t c=ReadIO16(0x040000D2u);if((c&0x8000u)&&((c>>12)&3u)==3u)ScheduleDmaStart(2,c,0u);}
   }
 }
 #undef INIT_DMA_SHADOW

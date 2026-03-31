@@ -141,6 +141,10 @@ class GBACore {
   void StepDma();
   void StepDmaVBlank();
   void StepDmaHBlank();
+  void ScheduleDmaStart(int ch, uint16_t cnt_h, uint32_t delay_cycles_override = 0xFFFFFFFFu);
+  bool IsDmaAddressValid(int ch, uint32_t src, uint32_t dst, bool fifo_dma) const;
+  uint32_t EstimateDmaStartupDelay(int ch, uint16_t cnt_h) const;
+  bool ServiceDmaChannelUnit(int ch, uint16_t cnt_h);
   void ExecuteDmaTransfer(int ch, uint16_t cnt_h);
   void StepApu(uint32_t cycles);
   void StepSio(uint32_t cycles);
@@ -292,6 +296,7 @@ class GBACore {
   bool dma_was_in_hblank_ = false;
   bool dma_fifo_a_request_ = false;
   bool dma_fifo_b_request_ = false;
+  bool dma_bus_taken_ = false;
   enum class SioMode : uint8_t {
     kNormal8 = 0,
     kNormal32 = 1,
@@ -311,6 +316,9 @@ class GBACore {
     uint32_t sad = 0, dad = 0, count = 0;
     bool active = false;
     uint32_t initial_dad = 0, initial_count = 0;
+    uint32_t startup_delay = 0;
+    bool pending = false;
+    bool in_progress = false;
   };
   std::array<DmaState, 4> dma_shadows_{};
 
