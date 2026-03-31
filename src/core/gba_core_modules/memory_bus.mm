@@ -418,7 +418,10 @@ uint16_t GBACore::ReadIO16(uint32_t addr) const {
   uint16_t val = static_cast<uint16_t>(io_regs_[off]) |
                  (static_cast<uint16_t>(io_regs_[off+1]) << 8);
   switch (addr) {
-    case 0x04000006u: val &= 0x00FFu; break;
+    case 0x04000006u: {
+  val &= 0x00FFu;
+  break;
+}
     case 0x04000130u: val |= 0xFC00u; break;
     case 0x04000136u: val &= 0xC1FFu; break;  // RCNT
     case 0x04000208u: val &= 0x0001u; break;  // IME
@@ -442,7 +445,10 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (off + 1u >= io_regs_.size()) return;
 
   switch (addr) {
-    case 0x04000000u: value &= 0xFFF7u; break; // DISPCNT
+    case 0x04000000u: {
+  value &= 0xFFF7u;
+  break;
+}
 
     case 0x04000004u: { // DISPSTAT
       const uint16_t ro = static_cast<uint16_t>(io_regs_[off] & 0x07u);
