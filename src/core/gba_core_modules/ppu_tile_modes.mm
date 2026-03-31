@@ -76,20 +76,22 @@ void SampleAffineBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
                     int16_t pa, int16_t pb, int16_t pc, int16_t pd, int32_t refx, int32_t refy,
                     uint16_t mosaic_reg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
   *out_opaque = false;
-  int sx = x, sy = y;
+
+  int sx = x;
+  int sy = y;
+
   if (bgcnt & 0x40) {
     int mh = (mosaic_reg & 0xF) + 1;
     int mv = ((mosaic_reg >> 4) & 0xF) + 1;
-    sx = (x / mh) * mh; sy = (y / mv) * mv;
+    sx = (x / mh) * mh;
+    sy = (y / mv) * mv;
   }
-  // refx/refy are per-scanline internal origins captured in StepPpu.
-  // Applying pb/pd*sy again here double-counts the Y contribution and shifts
-  // affine layers (visible in BIOS/logo animations).
-  (void)pb;
-  (void)pd;
-  (void)sy;
+
+  const int32_t u = refx + static_cast<int32_t>(pa) * sx;
+  const int32_t v = refy + static_cast<int32_t>(pc) * sx;
+
   uint16_t idx = 0;
-  if (SampleAffineBgFromCoord(vram, bgcnt, pa, pc, refx, refy, sx, &idx)) {
+  if (SampleAffineBgAt(vram, bgcnt, u >> 8, v >> 8, &idx)) {
     *out_idx = idx;
     *out_opaque = true;
   }
@@ -109,9 +111,12 @@ inline bool SampleAffineBgAt(const std::array<uint8_t, 96*1024>& vram, uint16_t 
   const uint32_t char_base = ((bgcnt >> 2) & 0x3) * 0x4000;
   const uint32_t screen_base = ((bgcnt >> 8) & 0x1F) * 0x800;
   const int tiles_per_row = size / 8;
-  const uint32_t map_off =
-      (screen_base + static_cast<uint32_t>(ty / 8) * static_cast<uint32_t>(tiles_per_row) +
-       static_cast<uint32_t>(tx / 8)) % kBgVramSize;
+  uint32_t map_off =
+    screen_base +
+    static_cast<uint32_t>(ty / 8) * static_cast<uint32_t>(tiles_per_row) +
+    static_cast<uint32_t>(tx / 8);
+
+map_off &= 0xFFFF;
   const uint8_t tile = vram[map_off];
   const uint32_t chr_off = (char_base + static_cast<uint32_t>(tile) * 64 +
                             static_cast<uint32_t>(ty & 7) * 8 +
@@ -226,12 +231,16 @@ void GBACore::RenderMode1Frame() {
         const int16_t pb = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pb : static_cast<int16_t>(ReadIO16(0x04000022));
         const int16_t pc = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pc : static_cast<int16_t>(ReadIO16(0x04000024));
         const int16_t pd = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pd : static_cast<int16_t>(ReadIO16(0x04000026));
-        const int32_t refx = affine_line_refs_valid_
-                                 ? bg2_refx_line_[sy]
-                                 : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
-        const int32_t refy = affine_line_refs_valid_
-                                 ? bg2_refy_line_[sy]
-                                 : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
+        const int32_t base_refx = affine_line_refs_valid_
+                              ? bg2_refx_line_[sy]
+                              : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4);
+
+const int32_t base_refy = affine_line_refs_valid_
+                              ? bg2_refy_line_[sy]
+                              : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4);
+
+const int32_t refx = base_refx + static_cast<int32_t>(pb) * sy;
+const int32_t refy = base_refy + static_cast<int32_t>(pd) * sy;
         SampleAffineBg(vram_, bg2cnt, pa, pb, pc, pd, refx, refy, mosaic_reg, x, y, &idx, &opaque);
         if (opaque) consider(idx, bg2cnt & 3, 2);
       }
@@ -272,13 +281,34 @@ void GBACore::RenderMode2Frame() {
         const uint16_t bg2cnt = bg_affine_params_line_valid_ ? bg_cnt_line_[y][2] : ReadIO16(0x0400000C);
         const uint16_t bg3cnt = bg_affine_params_line_valid_ ? bg_cnt_line_[y][3] : ReadIO16(0x0400000E);
         const int16_t pa2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pa : static_cast<int16_t>(ReadIO16(0x04000020));
-        const int16_t pc2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pc : static_cast<int16_t>(ReadIO16(0x04000024));
+const int16_t pb2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pb : static_cast<int16_t>(ReadIO16(0x04000022));
+const int16_t pc2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pc : static_cast<int16_t>(ReadIO16(0x04000024));
+const int16_t pd2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pd : static_cast<int16_t>(ReadIO16(0x04000026));
         const int16_t pa3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pa : static_cast<int16_t>(ReadIO16(0x04000030));
         const int16_t pc3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pc : static_cast<int16_t>(ReadIO16(0x04000034));
-        int32_t u2 = affine_line_refs_valid_ ? bg2_refx_line_[y] : static_cast<int32_t>(Read32(0x04000028) << 4) >> 4;
-        int32_t v2 = affine_line_refs_valid_ ? bg2_refy_line_[y] : static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4;
-        int32_t u3 = affine_line_refs_valid_ ? bg3_refx_line_[y] : static_cast<int32_t>(Read32(0x04000038) << 4) >> 4;
-        int32_t v3 = affine_line_refs_valid_ ? bg3_refy_line_[y] : static_cast<int32_t>(Read32(0x0400003C) << 4) >> 4;
+        const int32_t base_refx2 = affine_line_refs_valid_
+                               ? bg2_refx_line_[y]
+                               : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4);
+
+const int32_t base_refy2 = affine_line_refs_valid_
+                               ? bg2_refy_line_[y]
+                               : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4);
+
+int32_t u2 = base_refx2 + static_cast<int32_t>(pb2) * y;
+int32_t v2 = base_refy2 + static_cast<int32_t>(pd2) * y;
+        const int16_t pb3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pb : static_cast<int16_t>(ReadIO16(0x04000032));
+const int16_t pd3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pd : static_cast<int16_t>(ReadIO16(0x04000036));
+
+const int32_t base_refx3 = affine_line_refs_valid_
+                               ? bg3_refx_line_[y]
+                               : (static_cast<int32_t>(Read32(0x04000038) << 4) >> 4);
+
+const int32_t base_refy3 = affine_line_refs_valid_
+                               ? bg3_refy_line_[y]
+                               : (static_cast<int32_t>(Read32(0x0400003C) << 4) >> 4);
+
+int32_t u3 = base_refx3 + static_cast<int32_t>(pb3) * y;
+int32_t v3 = base_refy3 + static_cast<int32_t>(pd3) * y;
         for (int x = 0; x < kScreenWidth; ++x) {
           uint16_t b_idx = 0; int b_prio = 4; uint8_t b_layer = kLayerBackdrop; bool h_bg = false;
           uint16_t s_idx = 0; int s_prio = 4; uint8_t s_layer = kLayerBackdrop; bool h_sec = false;
