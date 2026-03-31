@@ -242,13 +242,15 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     const uint32_t v = rot ? ((bios_fetch_latch_ >> rot) | (bios_fetch_latch_ << (32u - rot)))
                            : bios_fetch_latch_;
     UpdateOpenBus(addr, v, 4);
-    return v;
+TraceLog(TraceType::READ32, addr, v, cpu_.regs[15]);
+return v;
   }
   const uint32_t aligned = ReadBus32(addr & ~3u);
 const uint32_t rot = (addr & 3u) * 8u;
 const uint32_t v = rot ? ((aligned >> rot) | (aligned << (32u - rot))) : aligned;
 
 UpdateOpenBus(addr, v, 4);
+TraceLog(TraceType::READ32, addr, v, cpu_.regs[15]);
 return v;
 }
 
@@ -257,7 +259,8 @@ uint16_t GBACore::Read16(uint32_t addr) const {
   if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) {
     const uint16_t val = static_cast<uint16_t>(bios_fetch_latch_ >> ((addr & 2u) * 8u));
     UpdateOpenBus(addr, val, 2);
-    return val;
+TraceLog(TraceType::READ16, addr, val, cpu_.regs[15]);
+return val;
   }
   const uint32_t a2 = addr & ~1u;
   const uint32_t v32 = ReadBus32(a2 & ~2u);
@@ -272,11 +275,13 @@ uint8_t GBACore::Read8(uint32_t addr) const {
   if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) {
     const uint8_t val = static_cast<uint8_t>(bios_fetch_latch_ >> ((addr & 3u) * 8u));
     UpdateOpenBus(addr, val, 1);
-    return val;
+TraceLog(TraceType::READ8, addr, val, cpu_.regs[15]);
+return val;
   }
   const uint32_t v32 = ReadBus32(addr & ~3u);
   const uint8_t val = static_cast<uint8_t>(v32 >> ((addr & 3u)*8u));
 UpdateOpenBus(addr, val, 1);
+TraceLog(TraceType::READ8, addr, val, cpu_.regs[15]);
 return val;
 }
 
@@ -288,6 +293,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
   if (addr == 0x040000A0u) { PushAudioFifo(true,  value); return; }
   if (addr == 0x040000A4u) { PushAudioFifo(false, value); return; }
   UpdateOpenBus(addr, value, 4);
+TraceLog(TraceType::WRITE32, addr, value, cpu_.regs[15]);
   const uint32_t a = addr & ~3u;
   if (a >= 0x02000000u && a <= 0x02FFFFFFu) {
     Write32Wrap(ewram_.data(), a & 0x3FFFFu, ewram_.size(), value); return;
@@ -318,6 +324,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
 void GBACore::Write16(uint32_t addr, uint16_t value) {
   AddWaitstates(addr, 2, true);
   UpdateOpenBus(addr, static_cast<uint32_t>(value)|(static_cast<uint32_t>(value)<<16), 2);
+  TraceLog(TraceType::WRITE16, addr, value, cpu_.regs[15]);
   const uint32_t a = addr & ~1u;
   if (a >= 0x04000000u && a <= 0x040003FEu) { WriteIO16(a, value); return; }
   // Palette / VRAM / OAM 常時書き込み可能
@@ -348,6 +355,7 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
   UpdateOpenBus(addr, static_cast<uint32_t>(value)*0x01010101u, 1);
   if (addr == 0x04000301u) {
     const size_t postflg_off = static_cast<size_t>(0x04000300u - 0x04000000u);
+    TraceLog(TraceType::WRITE8, addr, value, cpu_.regs[15]);
     if (postflg_off < io_regs_.size() && io_regs_[postflg_off] != 0u) {
       if ((value & 0x80u) == 0u) {
         cpu_.halted = true;
@@ -420,7 +428,8 @@ uint16_t GBACore::ReadIO16(uint32_t addr) const {
     case 0x040000A4u: case 0x040000A6u: return 0;
     default: break;
   }
-  return val;
+  TraceLog(TraceType::IO_READ, addr, val, cpu_.regs[15]);
+return val;
 }
 
 // =========================================================================
@@ -448,8 +457,9 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       value &= 0x7FFFu;
       const uint16_t old = ReadIO16(0x04000128u);
       UpdateSioMode();
-      io_regs_[off] = static_cast<uint8_t>(value & 0xFFu);
-      io_regs_[off+1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+      io_regs_[off]   = static_cast<uint8_t>(value & 0xFFu);
+　　　io_regs_[off+1] = static_cast<uint8_t>((value >> 8) & 0xFFu);
+      TraceLog(TraceType::IO_WRITE, addr, value, cpu_.regs[15]);
       UpdateSioMode();
       const bool start_edge = ((old & 0x0080u) == 0u) && ((value & 0x0080u) != 0u);
       if (start_edge) StartSioTransfer(value);
