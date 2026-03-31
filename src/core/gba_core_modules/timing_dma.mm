@@ -91,28 +91,30 @@ void GBACore::StepPpu(uint32_t cycles) {
       bg3_refy_internal_ += static_cast<int16_t>(rd16(0x0036u));
     }
 
-    bg2_refx_line_[nvc] = bg2_refx_internal_;
-    bg2_refy_line_[nvc] = bg2_refy_internal_;
-    bg3_refx_line_[nvc] = bg3_refx_internal_;
-    bg3_refy_line_[nvc] = bg3_refy_internal_;
-    for (int bg = 0; bg < 4; ++bg) {
-      const size_t cnt_off = 0x0008u + static_cast<size_t>(bg) * 2u;
-      const size_t hofs_off = 0x0010u + static_cast<size_t>(bg) * 4u;
-      const size_t vofs_off = 0x0012u + static_cast<size_t>(bg) * 4u;
-      bg_cnt_line_[nvc][bg] = rd16(cnt_off);
-      bg_hofs_line_[nvc][bg] = rd16(hofs_off);
-      bg_vofs_line_[nvc][bg] = rd16(vofs_off);
+    if (nvc < bg2_refx_line_.size()) {
+      bg2_refx_line_[nvc] = bg2_refx_internal_;
+      bg2_refy_line_[nvc] = bg2_refy_internal_;
+      bg3_refx_line_[nvc] = bg3_refx_internal_;
+      bg3_refy_line_[nvc] = bg3_refy_internal_;
+      for (int bg = 0; bg < 4; ++bg) {
+        const size_t cnt_off = 0x0008u + static_cast<size_t>(bg) * 2u;
+        const size_t hofs_off = 0x0010u + static_cast<size_t>(bg) * 4u;
+        const size_t vofs_off = 0x0012u + static_cast<size_t>(bg) * 4u;
+        bg_cnt_line_[nvc][bg] = rd16(cnt_off);
+        bg_hofs_line_[nvc][bg] = rd16(hofs_off);
+        bg_vofs_line_[nvc][bg] = rd16(vofs_off);
+      }
+      bg2_affine_line_[nvc].pa = static_cast<int16_t>(rd16(0x0020u));
+      bg2_affine_line_[nvc].pb = static_cast<int16_t>(rd16(0x0022u));
+      bg2_affine_line_[nvc].pc = static_cast<int16_t>(rd16(0x0024u));
+      bg2_affine_line_[nvc].pd = static_cast<int16_t>(rd16(0x0026u));
+      bg3_affine_line_[nvc].pa = static_cast<int16_t>(rd16(0x0030u));
+      bg3_affine_line_[nvc].pb = static_cast<int16_t>(rd16(0x0032u));
+      bg3_affine_line_[nvc].pc = static_cast<int16_t>(rd16(0x0034u));
+      bg3_affine_line_[nvc].pd = static_cast<int16_t>(rd16(0x0036u));
     }
-    bg2_affine_line_[nvc].pa = static_cast<int16_t>(rd16(0x0020u));
-    bg2_affine_line_[nvc].pb = static_cast<int16_t>(rd16(0x0022u));
-    bg2_affine_line_[nvc].pc = static_cast<int16_t>(rd16(0x0024u));
-    bg2_affine_line_[nvc].pd = static_cast<int16_t>(rd16(0x0026u));
-    bg3_affine_line_[nvc].pa = static_cast<int16_t>(rd16(0x0030u));
-    bg3_affine_line_[nvc].pb = static_cast<int16_t>(rd16(0x0032u));
-    bg3_affine_line_[nvc].pc = static_cast<int16_t>(rd16(0x0034u));
-    bg3_affine_line_[nvc].pd = static_cast<int16_t>(rd16(0x0036u));
 
-    if (nvc < kVIS) {
+    if (nvc < kVIS && nvc < affine_line_captured_.size()) {
       affine_line_captured_[nvc] = 1;
       affine_line_refs_valid_ = true;
       bg_scroll_line_valid_ = true;
@@ -500,6 +502,8 @@ void GBACore::StepDma(){
       ScheduleDmaStart(ch, cnt_h);
     }
   }
+
+  // Advance startup delays and arm channels whose trigger latency expired.
   for(int ch=0;ch<4;++ch){
     const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
     const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
@@ -519,6 +523,8 @@ void GBACore::StepDma(){
       dma_shadows_[ch].prev_dst_addr = dma_shadows_[ch].dad;
     }
   }
+
+  // Execute at most one DMA beat per scheduler step (bus arbitration).
   for (int ch = 0; ch < 4; ++ch) {
     const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
     const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
@@ -544,15 +550,6 @@ void GBACore::StepDma(){
     }
     dma_bus_taken_ = true;
     break;  // DMA blocks CPU bus: one channel beat per scheduler step.
-  }
-  for (int ch = 0; ch < 4; ++ch) {
-    const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
-    const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
-    if (!(cnt_h & 0x8000u)) continue;
-    if ((((cnt_h >> 12) & 3u) == 0u) && dma_shadows_[ch].active &&
-        !dma_shadows_[ch].pending && !dma_shadows_[ch].in_progress) {
-      ScheduleDmaStart(ch, cnt_h);
-    }
   }
 }
 void GBACore::StepDmaVBlank(){

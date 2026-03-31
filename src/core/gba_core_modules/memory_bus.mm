@@ -72,6 +72,13 @@ inline bool IsWriteOnlyIo16(uint32_t addr) {
   return false;
 }
 
+inline uint32_t GamePakWaitstateSlot(uint32_t a) {
+  if (a >= 0x08000000u && a <= 0x09FFFFFFu) return 0u;
+  if (a >= 0x0A000000u && a <= 0x0BFFFFFFu) return 1u;
+  if (a >= 0x0C000000u && a <= 0x0DFFFFFFu) return 2u;
+  return 0xFFFFFFFFu;
+}
+
 }  // namespace
 
 // =========================================================================
@@ -79,12 +86,16 @@ inline bool IsWriteOnlyIo16(uint32_t addr) {
 // =========================================================================
 void GBACore::AddWaitstates(uint32_t addr, int size, bool is_write) const {
   const uint32_t region = addr >> 24;
-  const uint32_t aligned_addr = (size == 4) ? (addr & ~3u) : (addr & ~1u);
+  uint32_t aligned_addr = addr;
+  if (size == 4) aligned_addr &= ~3u;
+  else if (size == 2) aligned_addr &= ~1u;
+  const uint32_t cur_slot = GamePakWaitstateSlot(aligned_addr);
+  const uint32_t prev_slot = GamePakWaitstateSlot(last_access_addr_);
   const bool seq =
-  last_access_valid_ &&
-  (region >= 0x08 && region <= 0x0D) &&
-  ((last_access_addr_ >> 24) == region) &&
-  (aligned_addr == (last_access_addr_ + last_access_size_));
+      last_access_valid_ &&
+      (cur_slot != 0xFFFFFFFFu) &&
+      (prev_slot == cur_slot) &&
+      (aligned_addr == (last_access_addr_ + last_access_size_));
   last_access_addr_ = aligned_addr;
   last_access_size_ = static_cast<uint8_t>(size);
   last_access_valid_ = true;

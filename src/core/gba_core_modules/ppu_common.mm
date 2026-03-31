@@ -205,8 +205,8 @@ bool IsWithinWindowAxis(int p, int start, int end, int axis_max) {
   if (s == 0 && e == 0) return false;
   if (s < e) return p >= s && p < e;
   if (s > e) return p >= s || p < e;
-  // s==e: empty range (boundary-safe fallback).
-  return false;
+  // s==e (non-zero): full-axis window (common HW behavior with wrap semantics).
+  return true;
 }
 
 uint8_t ResolveWindowControl(uint16_t dispcnt, uint16_t winin, uint16_t winout,

@@ -411,7 +411,8 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   // Thumb SWI
   if ((opcode & 0xFF00u) == 0xDF00u) {
     if (HandleSoftwareInterrupt(opcode & 0x00FFu, true)) return;
-    EnterException(0x00000008u, 0x13u, true, false);  // SVC mode
+    cpu_.regs[15] += 2u;  // LR_svc should point to the next Thumb instruction
+    EnterException(0x00000008u, 0x13u, true, true);  // SVC mode
     return;
   }
 
@@ -474,7 +475,7 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
   const uint16_t iflags = ReadIO16(0x04000202u);
   if (cpu_.halted) {
     if (swi_intrwait_active_) {
-      const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
+      const uint16_t matched = static_cast<uint16_t>(iflags & ie & swi_intrwait_mask_);
       if (matched != 0u) {
         WriteIO16(0x04000202u, matched);
         swi_intrwait_active_ = false;
@@ -510,15 +511,27 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
       break;
     }
 
+    const uint64_t wait_before = waitstates_accum_;
+    uint32_t core_cycles = 1u;
     if (thumb) {
       const uint16_t opcode = Read16(pc);
-      consumed += EstimateThumbCycles(opcode);
+      core_cycles = EstimateThumbCycles(opcode);
       ExecuteThumbInstruction(opcode);
     } else {
       const uint32_t opcode = Read32(pc);
-      consumed += EstimateArmCycles(opcode);
+      core_cycles = EstimateArmCycles(opcode);
       ExecuteArmInstruction(opcode);
     }
+    const uint64_t wait_after = waitstates_accum_;
+    const uint64_t wait_delta64 = (wait_after >= wait_before) ? (wait_after - wait_before) : 0u;
+    const uint32_t wait_cycles = (wait_delta64 > 0xFFFFFFFFu)
+        ? 0xFFFFFFFFu
+        : static_cast<uint32_t>(wait_delta64);
+
+    // Memory waits already include fetch/data bus penalties; core estimate keeps
+    // ALU/branch minimum cost. Use the larger side to avoid double-counting.
+    const uint32_t step_cycles = std::max<uint32_t>(1u, std::max(core_cycles, wait_cycles));
+    consumed += step_cycles;
   }
   return consumed;
 }
@@ -529,7 +542,8 @@ void GBACore::DebugStepCpuInstructions(uint32_t count) {
       bool woke_from_intrwait = false;
       if (swi_intrwait_active_) {
         const uint16_t iflags = ReadIO16(0x04000202u);
-        const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
+        const uint16_t ie = ReadIO16(0x04000200u);
+        const uint16_t matched = static_cast<uint16_t>(iflags & ie & swi_intrwait_mask_);
         if (matched != 0u) {
           WriteIO16(0x04000202u, matched);
           swi_intrwait_active_ = false;

@@ -40,79 +40,81 @@ void GBACore::ApplyColorEffects() {
   const bool has_obj_under_idx = obj_under_idx.size() == required;
   const bool has_bg_sec_prio = bg_sec_prio.size() == required;
 
-  for (int i = 0; i < kScreenWidth * kScreenHeight; ++i) {
-    const int x = i % kScreenWidth, y = i / kScreenWidth;
-    const uint8_t win_ctrl = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
-    if (!(win_ctrl & 0x20)) continue;
+  int i = 0;
+  for (int y = 0; y < kScreenHeight; ++y) {
+    for (int x = 0; x < kScreenWidth; ++x, ++i) {
+      const uint8_t win_ctrl = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
+      if (!(win_ctrl & 0x20)) continue;
 
-    const bool top_is_obj = obj_drawn[i] != 0;
-    const bool top_is_semi = top_is_obj && obj_semi[i];
-    const uint8_t top_l = top_is_obj ? 4 : bg_layer[i];
-    const uint16_t top_m = LayerToBlendMask(top_l, top_is_obj);
+      const bool top_is_obj = obj_drawn[i] != 0;
+      const bool top_is_semi = top_is_obj && obj_semi[i];
+      const uint8_t top_l = top_is_obj ? 4 : bg_layer[i];
+      const uint16_t top_m = LayerToBlendMask(top_l, top_is_obj);
 
-    uint32_t effect = top_is_semi ? 1 : mode;
-    if (effect == 0) continue;
-    if (!top_is_semi && !(bldcnt & top_m)) continue;
+      uint32_t effect = top_is_semi ? 1 : mode;
+      if (effect == 0) continue;
+      if (!top_is_semi && !(bldcnt & top_m)) continue;
 
-    uint32_t top_color = frame_buffer_[i];
-    int r = (top_color >> 16) & 0xFF, g = (top_color >> 8) & 0xFF, b = top_color & 0xFF;
+      uint32_t top_color = frame_buffer_[i];
+      int r = (top_color >> 16) & 0xFF, g = (top_color >> 8) & 0xFF, b = top_color & 0xFF;
 
-    if (effect == 1) { // Alpha Blending
-      bool found_bot = false;
-      uint32_t bot_color = backdrop_color;
+      if (effect == 1) { // Alpha Blending
+        bool found_bot = false;
+        uint32_t bot_color = backdrop_color;
 
-      auto try_target2 = [&](uint8_t layer, uint32_t color) {
-        if (found_bot) return;
-        const uint16_t mask = static_cast<uint16_t>(LayerToBlendMask(layer, false) << 8);
-        if ((bldcnt & mask) != 0) {
-          found_bot = true;
-          bot_color = color;
-        }
-      };
-      auto try_target2_obj = [&](uint32_t color) {
-        if (found_bot) return;
-        const uint16_t mask = static_cast<uint16_t>((1u << 4) << 8);
-        if ((bldcnt & mask) != 0) {
-          found_bot = true;
-          bot_color = color;
-        }
-      };
-
-      if (top_is_obj) {
-        if (has_obj_under && obj_under_drawn[i]) try_target2_obj(obj_under_color[i]);
-        try_target2(bg_layer[i], bg_base[i]);
-        try_target2(bg_sec_layer[i], bg_sec[i]);
-      } else {
-        const bool obj2_ok = has_obj_under && obj_under_drawn[i];
-        const bool bg2_ok = has_bg_sec_prio;
-        if (obj2_ok && bg2_ok) {
-          // Pick the higher-priority lower pixel (smaller priority number).
-          // On tie, prefer OBJ as secondary target to match common GBA blend stacking.
-          const bool prefer_obj =
-              (obj_under_prio[i] < bg_sec_prio[i]) ||
-              (obj_under_prio[i] == bg_sec_prio[i] && has_obj_under_idx);
-          if (prefer_obj) {
-            try_target2_obj(obj_under_color[i]);
-            try_target2(bg_sec_layer[i], bg_sec[i]);
-          } else {
-            try_target2(bg_sec_layer[i], bg_sec[i]);
-            try_target2_obj(obj_under_color[i]);
+        auto try_target2 = [&](uint8_t layer, uint32_t color) {
+          if (found_bot) return;
+          const uint16_t mask = static_cast<uint16_t>(LayerToBlendMask(layer, false) << 8);
+          if ((bldcnt & mask) != 0) {
+            found_bot = true;
+            bot_color = color;
           }
+        };
+        auto try_target2_obj = [&](uint32_t color) {
+          if (found_bot) return;
+          const uint16_t mask = static_cast<uint16_t>((1u << 4) << 8);
+          if ((bldcnt & mask) != 0) {
+            found_bot = true;
+            bot_color = color;
+          }
+        };
+
+        if (top_is_obj) {
+          if (has_obj_under && obj_under_drawn[i]) try_target2_obj(obj_under_color[i]);
+          try_target2(bg_layer[i], bg_base[i]);
+          try_target2(bg_sec_layer[i], bg_sec[i]);
         } else {
-          if (obj2_ok) try_target2_obj(obj_under_color[i]);
-          if (bg2_ok) try_target2(bg_sec_layer[i], bg_sec[i]);
+          const bool obj2_ok = has_obj_under && obj_under_drawn[i];
+          const bool bg2_ok = has_bg_sec_prio;
+          if (obj2_ok && bg2_ok) {
+            // Pick the higher-priority lower pixel (smaller priority number).
+            // On tie, prefer OBJ as secondary target to match common GBA blend stacking.
+            const bool prefer_obj =
+                (obj_under_prio[i] < bg_sec_prio[i]) ||
+                (obj_under_prio[i] == bg_sec_prio[i] && has_obj_under_idx);
+            if (prefer_obj) {
+              try_target2_obj(obj_under_color[i]);
+              try_target2(bg_sec_layer[i], bg_sec[i]);
+            } else {
+              try_target2(bg_sec_layer[i], bg_sec[i]);
+              try_target2_obj(obj_under_color[i]);
+            }
+          } else {
+            if (obj2_ok) try_target2_obj(obj_under_color[i]);
+            try_target2(bg_sec_layer[i], bg_sec[i]);
+          }
         }
+        try_target2(kLayerBackdrop, backdrop_color);
+        if (!found_bot) continue;
+        frame_buffer_[i] = AlphaBlendLocal(top_color, bot_color, bldalpha);
+      } else {
+        if (effect == 2) { // Brighten
+          r += ((255 - r) * evy) >> 4; g += ((255 - g) * evy) >> 4; b += ((255 - b) * evy) >> 4;
+        } else if (effect == 3) { // Darken
+          r -= (r * evy) >> 4; g -= (g * evy) >> 4; b -= (b * evy) >> 4;
+        }
+        frame_buffer_[i] = 0xFF000000 | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
       }
-      try_target2(kLayerBackdrop, backdrop_color);
-      if (!found_bot) continue;
-      frame_buffer_[i] = AlphaBlendLocal(top_color, bot_color, bldalpha);
-    } else {
-      if (effect == 2) { // Brighten
-        r += ((255 - r) * evy) >> 4; g += ((255 - g) * evy) >> 4; b += ((255 - b) * evy) >> 4;
-      } else if (effect == 3) { // Darken
-        r -= (r * evy) >> 4; g -= (g * evy) >> 4; b -= (b * evy) >> 4;
-      }
-      frame_buffer_[i] = 0xFF000000 | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
     }
   }
 }

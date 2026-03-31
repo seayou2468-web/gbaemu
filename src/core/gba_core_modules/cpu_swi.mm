@@ -328,9 +328,12 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       uint16_t request = static_cast<uint16_t>(cpu_.regs[1] & 0x3FFFu);
       if (request == 0) request = 0x0001u;
       if (clear_old) WriteIO16(0x04000202u, 0x3FFFu);
+      WriteIO16(0x04000208u, 0x0001u);  // IME=1 like BIOS wait path
+      const uint16_t ie = ReadIO16(0x04000200u);
       const uint16_t iflags = ReadIO16(0x04000202u);
-      if (iflags & request) {
-        WriteIO16(0x04000202u, static_cast<uint16_t>(iflags & request));
+      const uint16_t matched = static_cast<uint16_t>(iflags & ie & request);
+      if (matched != 0u) {
+        WriteIO16(0x04000202u, matched);
         swi_intrwait_active_ = false;
         swi_intrwait_mask_   = 0;
       } else {
@@ -344,16 +347,13 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
 
     // ----- SWI 05h: VBlankIntrWait -----
     case 0x05u: {
-      const uint16_t iflags = ReadIO16(0x04000202u);
-      if (iflags & 0x0001u) {
-        WriteIO16(0x04000202u, 0x0001u);
-        swi_intrwait_active_ = false;
-        swi_intrwait_mask_   = 0;
-      } else {
-        swi_intrwait_active_ = true;
-        swi_intrwait_mask_   = 0x0001u;
-        cpu_.halted = true;
-      }
+      // BIOS behavior is effectively IntrWait(clear_old=1, request=VBlank).
+      // Always clear stale VBlank IF first, then wait for the *next* VBlank.
+      WriteIO16(0x04000202u, 0x0001u);
+      WriteIO16(0x04000208u, 0x0001u);  // IME=1 like BIOS wait path
+      swi_intrwait_active_ = true;
+      swi_intrwait_mask_   = 0x0001u;
+      cpu_.halted = true;
       cpu_.regs[15] = next_pc;
       return true;
     }
