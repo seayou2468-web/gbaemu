@@ -463,6 +463,7 @@ static uint32_t EstimateDmaTransferCycles(uint32_t sad, uint32_t dad, bool seq_a
   const uint32_t secondary_ws = std::min(src_ws, dst_ws);
 
   uint32_t base = seq_access ? 1u : 2u;  // bus turn-around/non-seq penalty
+  if (either_rom) base += seq_access ? 1u : 2u;
   if (fifo_dma) {
     return base + src_ws;
   }
@@ -472,7 +473,7 @@ static uint32_t EstimateDmaTransferCycles(uint32_t sad, uint32_t dad, bool seq_a
   if (either_rom) {
     // Gamepak-side accesses are mostly dominated by the slower edge, with a
     // partial contribution from the other side on non-sequential beats.
-    return base + dominant_ws + (seq_access ? 0u : (secondary_ws >> 1));
+    return base + dominant_ws + (seq_access ? 0u : std::max(1u, secondary_ws / 2u));
   }
   if (ewram_to_vram && !seq_access) {
     return base + dominant_ws + 1u;      // conservative first-beat penalty
@@ -505,6 +506,7 @@ void GBACore::StepDma(){
           ws_nonseq_16_, ws_seq_16_, ws_nonseq_32_, ws_seq_32_, ch, cnt_h);
       dma_shadows_[ch].seq_access = false;
       dma_shadows_[ch].prev_src_addr = dma_shadows_[ch].sad;
+      dma_shadows_[ch].prev_dst_addr = dma_shadows_[ch].dad;
     }
   }
   for (int ch = 0; ch < 4; ++ch) {
@@ -521,8 +523,10 @@ void GBACore::StepDma(){
       const bool w32 = ((cnt_h & 0x0400u) != 0u) || ((((cnt_h >> 12) & 3u) == 3u) && (ch == 1 || ch == 2));
       const uint32_t step = w32 ? 4u : 2u;
       const bool src_seq = (dma_shadows_[ch].sad == (dma_shadows_[ch].prev_src_addr + step));
-      dma_shadows_[ch].seq_access = src_seq;
+      const bool dst_seq = (dma_shadows_[ch].dad == (dma_shadows_[ch].prev_dst_addr + step));
+      dma_shadows_[ch].seq_access = src_seq && dst_seq;
       dma_shadows_[ch].prev_src_addr = dma_shadows_[ch].sad;
+      dma_shadows_[ch].prev_dst_addr = dma_shadows_[ch].dad;
       dma_shadows_[ch].wait_cycles = EstimateDmaTransferCycles(
           dma_shadows_[ch].sad, dma_shadows_[ch].dad, dma_shadows_[ch].seq_access,
           ws_nonseq_16_, ws_seq_16_, ws_nonseq_32_, ws_seq_32_, ch, cnt_h);
