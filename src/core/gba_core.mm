@@ -17,6 +17,7 @@
 #include "gba_core_modules/cpu_thumb_run.mm"
 #include "gba_core_modules/memory_bus.mm"
 #include "gba_core_modules/ppu_common.mm"
+#include "gba_core_modules/ppu_pixel_engine.mm"
 #include "gba_core_modules/ppu_bitmap_obj.mm"
 #include "gba_core_modules/ppu_tile_modes.mm"
 #include "gba_core_modules/timing_dma.mm"

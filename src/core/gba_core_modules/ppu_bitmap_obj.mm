@@ -479,7 +479,7 @@ void GBACore::RenderSprites() {
     return Bgr555ToRgba8888(static_cast<uint16_t>(palette_ram_[off]) | (static_cast<uint16_t>(palette_ram_[off+1]) << 8));
   };
 
-  for (int i = 0; i < 128; ++i) {
+  for (int i = 127; i >= 0; --i) {
     const size_t off = i * 8;
     const uint16_t a0 = static_cast<uint16_t>(oam_[off]) | (static_cast<uint16_t>(oam_[off+1]) << 8);
     const uint16_t a1 = static_cast<uint16_t>(oam_[off+2]) | (static_cast<uint16_t>(oam_[off+3]) << 8);

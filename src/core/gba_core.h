@@ -137,6 +137,7 @@ class GBACore {
   void RenderSprites();
   void ApplyColorEffects();
   void StepPpu(uint32_t cycles);
+  void StepPpuSingleCycle();
   void StepTimers(uint32_t cycles);
   void StepDma();
   void StepDmaVBlank();
@@ -221,18 +222,25 @@ class GBACore {
 
   std::vector<uint8_t> rom_;
   std::array<uint8_t, 16 * 1024> bios_{};
+  mutable uint32_t bios_prefetch_ = 0;
   mutable uint32_t bios_fetch_latch_ = 0;
   mutable uint32_t bios_data_latch_ = 0;
   mutable uint32_t open_bus_latch_ = 0;
   mutable uint32_t last_access_addr_ = 0;
   mutable uint8_t last_access_size_ = 0;
   mutable bool last_access_valid_ = false;
+  mutable bool last_access_seq_ = false;
   mutable uint64_t waitstates_accum_ = 0;
-  std::array<uint8_t, 3> ws_nonseq_16_{4, 4, 4};
-  std::array<uint8_t, 3> ws_seq_16_{2, 4, 8};
-  std::array<uint8_t, 3> ws_nonseq_32_{6, 6, 10};
-  std::array<uint8_t, 3> ws_seq_32_{4, 8, 16};
+
+  // Cycle-accurate waitstate tables
+  std::array<uint8_t, 16> ws_n16_{};
+  std::array<uint8_t, 16> ws_s16_{};
+  std::array<uint8_t, 16> ws_n32_{};
+  std::array<uint8_t, 16> ws_s32_{};
+
   bool gamepak_prefetch_enabled_ = false;
+  mutable uint32_t prefetch_addr_ = 0;
+  mutable int prefetch_wait_ = 0;
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;
   bool bios_boot_via_vector_ = false;

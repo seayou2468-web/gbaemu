@@ -231,16 +231,12 @@ void GBACore::RenderMode1Frame() {
         const int16_t pb = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pb : static_cast<int16_t>(ReadIO16(0x04000022));
         const int16_t pc = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pc : static_cast<int16_t>(ReadIO16(0x04000024));
         const int16_t pd = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pd : static_cast<int16_t>(ReadIO16(0x04000026));
-        const int32_t base_refx = affine_line_refs_valid_
+        const int32_t refx = affine_line_refs_valid_
                               ? bg2_refx_line_[sy]
-                              : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4);
-
-const int32_t base_refy = affine_line_refs_valid_
+                              : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
+        const int32_t refy = affine_line_refs_valid_
                               ? bg2_refy_line_[sy]
-                              : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4);
-
-const int32_t refx = base_refx + static_cast<int32_t>(pb) * sy;
-const int32_t refy = base_refy + static_cast<int32_t>(pd) * sy;
+                              : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
         SampleAffineBg(vram_, bg2cnt, pa, pb, pc, pd, refx, refy, mosaic_reg, x, y, &idx, &opaque);
         if (opaque) consider(idx, bg2cnt & 3, 2);
       }
@@ -286,29 +282,20 @@ const int16_t pc2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pc : stat
 const int16_t pd2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pd : static_cast<int16_t>(ReadIO16(0x04000026));
         const int16_t pa3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pa : static_cast<int16_t>(ReadIO16(0x04000030));
         const int16_t pc3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pc : static_cast<int16_t>(ReadIO16(0x04000034));
-        const int32_t base_refx2 = affine_line_refs_valid_
+        int32_t u2 = affine_line_refs_valid_
                                ? bg2_refx_line_[y]
-                               : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4);
-
-const int32_t base_refy2 = affine_line_refs_valid_
+                               : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4) + static_cast<int32_t>(pb2) * y;
+        int32_t v2 = affine_line_refs_valid_
                                ? bg2_refy_line_[y]
-                               : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4);
-
-int32_t u2 = base_refx2 + static_cast<int32_t>(pb2) * y;
-int32_t v2 = base_refy2 + static_cast<int32_t>(pd2) * y;
+                               : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4) + static_cast<int32_t>(pd2) * y;
         const int16_t pb3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pb : static_cast<int16_t>(ReadIO16(0x04000032));
-const int16_t pd3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pd : static_cast<int16_t>(ReadIO16(0x04000036));
-
-const int32_t base_refx3 = affine_line_refs_valid_
+        const int16_t pd3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pd : static_cast<int16_t>(ReadIO16(0x04000036));
+        int32_t u3 = affine_line_refs_valid_
                                ? bg3_refx_line_[y]
-                               : (static_cast<int32_t>(Read32(0x04000038) << 4) >> 4);
-
-const int32_t base_refy3 = affine_line_refs_valid_
+                               : (static_cast<int32_t>(Read32(0x04000038) << 4) >> 4) + static_cast<int32_t>(pb3) * y;
+        int32_t v3 = affine_line_refs_valid_
                                ? bg3_refy_line_[y]
-                               : (static_cast<int32_t>(Read32(0x0400003C) << 4) >> 4);
-
-int32_t u3 = base_refx3 + static_cast<int32_t>(pb3) * y;
-int32_t v3 = base_refy3 + static_cast<int32_t>(pd3) * y;
+                               : (static_cast<int32_t>(Read32(0x0400003C) << 4) >> 4) + static_cast<int32_t>(pd3) * y;
         for (int x = 0; x < kScreenWidth; ++x) {
           uint16_t b_idx = 0; int b_prio = 4; uint8_t b_layer = kLayerBackdrop; bool h_bg = false;
           uint16_t s_idx = 0; int s_prio = 4; uint8_t s_layer = kLayerBackdrop; bool h_sec = false;
