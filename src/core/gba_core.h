@@ -319,6 +319,11 @@ class GBACore {
     uint32_t startup_delay = 0;
     bool pending = false;
     bool in_progress = false;
+    uint32_t wait_cycles = 0;
+    uint32_t last_value = 0;
+    bool seq_access = false;
+    uint32_t prev_src_addr = 0;
+    uint32_t prev_dst_addr = 0;
   };
   std::array<DmaState, 4> dma_shadows_{};
 

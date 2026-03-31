@@ -472,7 +472,7 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
   // 1. Wake up from HALT if any enabled interrupt is pending
   const uint16_t ie = ReadIO16(0x04000200u);
   const uint16_t iflags = ReadIO16(0x04000202u);
-  if (cpu_.halted && (ie & iflags) != 0) {
+  if (cpu_.halted && ((ie & iflags) != 0 || iflags != 0u)) {
     cpu_.halted = false;
   }
 

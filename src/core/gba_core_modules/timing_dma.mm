@@ -283,22 +283,27 @@ void GBACore::StepSio(uint32_t cycles) {
   dma_shadows_[ch_val].pending = false; \
   dma_shadows_[ch_val].startup_delay = 0; \
   dma_shadows_[ch_val].in_progress = false; \
+  dma_shadows_[ch_val].wait_cycles = 0; \
+  dma_shadows_[ch_val].last_value = open_bus_latch_; \
+  dma_shadows_[ch_val].seq_access = false; \
+  dma_shadows_[ch_val].prev_src_addr = dma_shadows_[ch_val].sad; \
+  dma_shadows_[ch_val].prev_dst_addr = dma_shadows_[ch_val].dad; \
 } while(0)
 
 uint32_t GBACore::EstimateDmaStartupDelay(int ch, uint16_t cnt_h) const {
   const bool w32 = ((cnt_h & 0x0400u) != 0u) || ((((cnt_h >> 12) & 3u) == 3u) && (ch == 1 || ch == 2));
   const uint32_t src = dma_shadows_[ch].sad;
   const uint32_t region = (src >> 24) & 0xFu;
-  uint32_t nonseq = 1u;
+  uint32_t src_nonseq = 1u;
   if (region >= 0x08u && region <= 0x0Du) {
     const uint32_t ws = std::min(((src >> 25) & 3u), 2u);
-    nonseq = w32 ? ws_nonseq_32_[ws] : ws_nonseq_16_[ws];
+    src_nonseq = w32 ? ws_nonseq_32_[ws] : ws_nonseq_16_[ws];
   } else if (region == 0x02u) {
-    nonseq = w32 ? 6u : 3u;
-  } else if (region == 0x06u || region == 0x05u) {
-    nonseq = w32 ? 2u : 1u;
+    src_nonseq = w32 ? 6u : 3u;
+  } else if (region == 0x05u || region == 0x06u) {
+    src_nonseq = w32 ? 2u : 1u;
   }
-  return 2u + nonseq;
+  return 2u + src_nonseq;
 }
 
 void GBACore::ScheduleDmaStart(int ch, uint16_t cnt_h, uint32_t delay_cycles_override) {
@@ -316,6 +321,10 @@ void GBACore::ScheduleDmaStart(int ch, uint16_t cnt_h, uint32_t delay_cycles_ove
   }
   dma_shadows_[ch].pending = true;
   dma_shadows_[ch].in_progress = false;
+  dma_shadows_[ch].wait_cycles = 0;
+  dma_shadows_[ch].seq_access = false;
+  dma_shadows_[ch].prev_src_addr = dma_shadows_[ch].sad;
+  dma_shadows_[ch].prev_dst_addr = dma_shadows_[ch].dad;
   dma_shadows_[ch].startup_delay =
       (delay_cycles_override == 0xFFFFFFFFu) ? EstimateDmaStartupDelay(ch, cnt_h) : delay_cycles_override;
 }
@@ -360,8 +369,23 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
   if (fifo_dma) {
     dst = (ch == 1) ? 0x040000A0u : 0x040000A4u;
   }
-  if (w32) Write32(dst, Read32(src));
-  else Write16(dst, Read16(src));
+  uint32_t value = dma_shadows_[ch].last_value;
+  if (w32) {
+    if (src >= 0x02000000u) {
+      value = Read32(src);
+    }
+    Write32(dst, value);
+  } else {
+    if (src >= 0x02000000u) {
+      const uint16_t v16 = Read16(src);
+      value = static_cast<uint32_t>(v16) | (static_cast<uint32_t>(v16) << 16);
+    }
+    Write16(dst, static_cast<uint16_t>(value & 0xFFFFu));
+  }
+  dma_shadows_[ch].last_value = value;
+  // DMA drives the data bus directly. Open-bus should latch the transferred bus
+  // value itself (not destination-address lane masking).
+  open_bus_latch_ = w32 ? value : ((value & 0xFFFFu) * 0x00010001u);
   if (!src_fix) src = src_dec ? ((src - src_step) & src_mask) : ((src + src_step) & src_mask);
   if (!dst_fix) dst = dst_dec ? ((dst - dst_step) & dst_mask) : ((dst + dst_step) & dst_mask);
   dma_shadows_[ch].sad=src;
@@ -372,6 +396,10 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
   dma_shadows_[ch].pending = false;
   dma_shadows_[ch].startup_delay = 0;
   dma_shadows_[ch].in_progress = false;
+  dma_shadows_[ch].wait_cycles = 0;
+  dma_shadows_[ch].seq_access = false;
+  dma_shadows_[ch].prev_src_addr = dma_shadows_[ch].sad;
+  dma_shadows_[ch].prev_dst_addr = dma_shadows_[ch].dad;
   const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
   const size_t coff=(size_t)(base+10-0x04000000u);
   if(rep&&st!=0){
@@ -388,12 +416,62 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
   return true;
 }
 
+static uint32_t DmaRegionWait(const std::array<uint8_t, 3>& ws_nonseq,
+                              const std::array<uint8_t, 3>& ws_seq,
+                              uint32_t addr, bool seq, bool w32) {
+  const uint32_t region = (addr >> 24) & 0xFu;
+  if (region >= 0x08u && region <= 0x0Du) {
+    const uint32_t ws = std::min(((addr >> 25) & 3u), 2u);
+    return seq ? ws_seq[ws] : ws_nonseq[ws];
+  }
+  if (region == 0x02u) { // EWRAM
+    if (w32) return seq ? 3u : 6u;
+    return seq ? 2u : 3u;
+  }
+  if (region == 0x03u) return 1u;            // IWRAM
+  if (region == 0x05u || region == 0x06u) { // PAL/VRAM
+    return seq ? 1u : (w32 ? 2u : 1u);
+  }
+  if (region == 0x07u) return 1u;            // OAM
+  if (region == 0x04u) return 1u;            // IO
+  return 1u;
+}
+
+static uint32_t EstimateDmaTransferCycles(uint32_t sad, uint32_t dad, bool seq_access,
+                                          const std::array<uint8_t, 3>& ws_nonseq_16,
+                                          const std::array<uint8_t, 3>& ws_seq_16,
+                                          const std::array<uint8_t, 3>& ws_nonseq_32,
+                                          const std::array<uint8_t, 3>& ws_seq_32,
+                                          int ch, uint16_t cnt_h) {
+  const uint32_t st = (cnt_h >> 12) & 3u;
+  const bool fifo_dma = (st == 3u) && (ch == 1 || ch == 2);
+  const bool w32 = fifo_dma || ((cnt_h & 0x0400u) != 0u);
+  const uint32_t src_region = (sad >> 24) & 0xFu;
+  const uint32_t dst_region = (dad >> 24) & 0xFu;
+  const auto& ns = w32 ? ws_nonseq_32 : ws_nonseq_16;
+  const auto& sq = w32 ? ws_seq_32 : ws_seq_16;
+  const uint32_t src_ws = DmaRegionWait(ns, sq, sad, seq_access, w32);
+  uint32_t dst_ws = DmaRegionWait(ns, sq, dad, seq_access, w32);
+  if (fifo_dma) dst_ws = 1u;  // FIFO write port is always an IO sink.
+
+  const bool src_rom = (src_region >= 0x08u && src_region <= 0x0Du);
+  const bool dst_rom = (dst_region >= 0x08u && dst_region <= 0x0Du);
+  const bool either_rom = src_rom || dst_rom;
+  const bool dst_io = (dst_region == 0x04u);
+
+  uint32_t base = seq_access ? 1u : 2u;  // bus turn-around/non-seq penalty
+  if (either_rom) base += 1u;            // gamepak path has extra pipeline cost
+  if (dst_io && !fifo_dma) base += 1u;   // register sink write settle
+
+  return base + std::max(src_ws, dst_ws);
+}
+
 void GBACore::StepDma(){
   dma_bus_taken_ = false;
   for (int ch = 0; ch < 4; ++ch) {
     const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
     const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
-    if(!(cnt_h&0x8000u)){dma_shadows_[ch].active=false; dma_shadows_[ch].pending=false; dma_shadows_[ch].in_progress=false; continue;}
+    if(!(cnt_h&0x8000u)){dma_shadows_[ch].active=false; dma_shadows_[ch].pending=false; dma_shadows_[ch].in_progress=false; dma_shadows_[ch].wait_cycles=0; dma_shadows_[ch].seq_access=false; continue;}
     if (((cnt_h >> 12) & 3u) == 0u && dma_shadows_[ch].active && !dma_shadows_[ch].pending && !dma_shadows_[ch].in_progress) {
       ScheduleDmaStart(ch, cnt_h);
     }
@@ -408,13 +486,33 @@ void GBACore::StepDma(){
     if (dma_shadows_[ch].pending && dma_shadows_[ch].startup_delay == 0u) {
       dma_shadows_[ch].pending = false;
       dma_shadows_[ch].in_progress = true;
+      dma_shadows_[ch].wait_cycles = EstimateDmaTransferCycles(
+          dma_shadows_[ch].sad, dma_shadows_[ch].dad, false,
+          ws_nonseq_16_, ws_seq_16_, ws_nonseq_32_, ws_seq_32_, ch, cnt_h);
+      dma_shadows_[ch].seq_access = false;
+      dma_shadows_[ch].prev_src_addr = dma_shadows_[ch].sad;
     }
   }
   for (int ch = 0; ch < 4; ++ch) {
     const uint32_t base=0x040000B0u+(uint32_t)ch*12u;
     const uint16_t cnt_h=(uint16_t)io_regs_[base-0x04000000u+10]|((uint16_t)io_regs_[base-0x04000000u+11]<<8);
     if (!(cnt_h & 0x8000u) || !dma_shadows_[ch].in_progress) continue;
+    if (dma_shadows_[ch].wait_cycles > 0u) {
+      --dma_shadows_[ch].wait_cycles;
+      dma_bus_taken_ = true;
+      break;
+    }
     ServiceDmaChannelUnit(ch, cnt_h);
+    if (dma_shadows_[ch].in_progress) {
+      const bool w32 = ((cnt_h & 0x0400u) != 0u) || ((((cnt_h >> 12) & 3u) == 3u) && (ch == 1 || ch == 2));
+      const uint32_t step = w32 ? 4u : 2u;
+      const bool src_seq = (dma_shadows_[ch].sad == (dma_shadows_[ch].prev_src_addr + step));
+      dma_shadows_[ch].seq_access = src_seq;
+      dma_shadows_[ch].prev_src_addr = dma_shadows_[ch].sad;
+      dma_shadows_[ch].wait_cycles = EstimateDmaTransferCycles(
+          dma_shadows_[ch].sad, dma_shadows_[ch].dad, dma_shadows_[ch].seq_access,
+          ws_nonseq_16_, ws_seq_16_, ws_nonseq_32_, ws_seq_32_, ch, cnt_h);
+    }
     dma_bus_taken_ = true;
     break;  // DMA blocks CPU bus: one channel beat per scheduler step.
   }
