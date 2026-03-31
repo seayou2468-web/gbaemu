@@ -1,6 +1,5 @@
 #include "../gba_core.h"
 #include "../../debug/trace.h"
-#define ENABLE_TRACE 1
 
 namespace gba {
 namespace {
