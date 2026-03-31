@@ -162,7 +162,6 @@ void GBACore::StepApu(uint32_t cycles) {
   int ch4 = 0;
   if (apu_ch1_active_) {  // CH1
     const uint16_t nr11 = ReadIO16(0x04000062u);
-    const uint16_t nr12 = ReadIO16(0x04000063u);
     const uint16_t nr13 = ReadIO16(0x04000064u);
     const uint16_t nr14 = ReadIO16(0x04000065u);
     const uint16_t freq = static_cast<uint16_t>(nr13 | ((nr14 & 0x7u) << 8));
@@ -171,7 +170,6 @@ void GBACore::StepApu(uint32_t cycles) {
   }
   if (apu_ch2_active_) {  // CH2
     const uint16_t nr21 = ReadIO16(0x04000068u);
-    const uint16_t nr22 = ReadIO16(0x04000069u);
     const uint16_t nr23 = ReadIO16(0x0400006Cu);
     const uint16_t nr24 = ReadIO16(0x0400006Du);
     const uint16_t freq = static_cast<uint16_t>(nr23 | ((nr24 & 0x7u) << 8));
@@ -202,7 +200,6 @@ void GBACore::StepApu(uint32_t cycles) {
     }
   }
   if (apu_ch4_active_) {  // CH4 noise
-    const uint16_t nr42 = ReadIO16(0x04000077u);
     const uint16_t nr43 = ReadIO16(0x04000078u);
     const uint32_t div = (nr43 & 0x7u) == 0 ? 8u : (nr43 & 0x7u) * 16u;
     const uint32_t shift = (nr43 >> 4) & 0xFu;
@@ -281,29 +278,38 @@ void GBACore::SyncKeyInputRegister() {
 void GBACore::RaiseInterrupt(uint16_t mask) {
   const size_t off = static_cast<size_t>(0x04000202u - 0x04000000u);
   const uint16_t if_reg = static_cast<uint16_t>(io_regs_[off]) |
-                          static_cast<uint16_t>(io_regs_[off + 1] << 8);
+                          (static_cast<uint16_t>(io_regs_[off + 1]) << 8);
   const uint16_t next = static_cast<uint16_t>(if_reg | mask);
   io_regs_[off] = static_cast<uint8_t>(next & 0xFF);
   io_regs_[off + 1] = static_cast<uint8_t>((next >> 8) & 0xFF);
 }
 
-void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode, bool disable_irq, bool thumb_state) {
+// =========================================================================
+// EnterException
+// FIXED: lr_adjust はベクタアドレスではなく例外モード (new_mode) で判断する。
+//
+// 旧コード: vector_addr == 0x18 || vector_addr == 0x1C の時のみ lr_adjust=4
+//   → カスタム IRQ ベクタ (0x03007FFC の値) を使う場合は vector_addr が
+//     ゲームのハンドラアドレスになるため lr_adjust=0 のまま。
+//   → LR_irq = PC の代わりに PC+4 になるべきところが PC になり、
+//     SUBS PC, LR, #4 で 1命令手前に戻る → 無限ループでROM停止。
+//
+// 修正: IRQ モード (0x12) / FIQ モード (0x11) なら常に lr_adjust=4。
+// =========================================================================
+void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode,
+                              bool disable_irq, bool thumb_state) {
   const uint32_t old_cpsr = cpu_.cpsr;
   const uint32_t target_mode = new_mode & 0x1Fu;
   debug_last_exception_vector_ = vector_addr;
-  debug_last_exception_pc_ = cpu_.regs[15];
-  debug_last_exception_cpsr_ = old_cpsr;
+  debug_last_exception_pc_     = cpu_.regs[15];
+  debug_last_exception_cpsr_   = old_cpsr;
 
-  // GBA return address logic:
-  // PC is the address of the instruction that would have been executed next.
-  // For IRQ/FIQ: Handler returns with SUBS PC, LR, #4.
-  // To return to PC, LR must be PC + 4.
-  // For SWI/Undef: Handler returns with MOVS PC, LR (ARM) or similar.
-  // To return to PC, LR must be PC.
-  uint32_t lr_adjust = 0;
-  if (vector_addr == 0x18u || vector_addr == 0x1Cu) { // IRQ or FIQ
-    lr_adjust = 4;
-  }
+  // FIXED: モードベースで lr_adjust を決定する。
+  //   IRQ (0x12) / FIQ (0x11): LR = interrupted PC + 4
+  //     実機では SUBS PC, LR, #4 で返るため。
+  //   SVC (0x13) / UND (0x1B): LR = 次命令アドレス (呼び出し元が先に +2/+4 済み)
+  //     MOVS PC, LR で返るため +4 は不要。
+  const uint32_t lr_adjust = (target_mode == 0x12u || target_mode == 0x11u) ? 4u : 0u;
 
   SwitchCpuMode(target_mode);
   if (HasSpsr(target_mode)) cpu_.spsr[target_mode] = old_cpsr;
@@ -313,46 +319,54 @@ void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode, bool disab
   cpu_.active_mode = target_mode;
   if (disable_irq) cpu_.cpsr |= (1u << 7);
 
-  cpu_.cpsr &= ~(1u << 5); // Exceptions always enter ARM mode
+  cpu_.cpsr &= ~(1u << 5);  // 例外は常に ARM モードで入る
   cpu_.regs[15] = vector_addr;
 }
 
+// =========================================================================
+// ServiceInterruptIfNeeded
+// =========================================================================
 void GBACore::ServiceInterruptIfNeeded() {
-  const uint16_t ie = ReadIO16(0x04000200u);
+  const uint16_t ie     = ReadIO16(0x04000200u);
   const uint16_t iflags = ReadIO16(0x04000202u);
   const uint16_t pending = static_cast<uint16_t>(ie & iflags);
 
   if (pending != 0) {
-    cpu_.halted = false; // Always wake up if any enabled interrupt is pending
+    cpu_.halted = false;  // 有効な割り込みが保留中なら常にHALTを解除
   }
 
   const uint16_t ime = ReadIO16(0x04000208u) & 0x1u;
   if (ime == 0) return;
-  if (cpu_.cpsr & (1u << 7)) return;  // I flag set
+  if (cpu_.cpsr & (1u << 7)) return;  // I フラグがセットされている
   if (pending == 0) return;
 
-  // Keep BIOS-style IRQ flags mirror in IWRAM
-  const uint32_t irq_flags_addr = 0x03007FF8u;
-  const uint32_t old_irq_flags = Read32(irq_flags_addr);
+  // BIOS スタイルの IRQ フラグミラーを IWRAM に保持
+  const uint32_t irq_flags_addr  = 0x03007FF8u;
+  const uint32_t old_irq_flags   = Read32(irq_flags_addr);
   Write32(irq_flags_addr, old_irq_flags | pending);
 
+  // BIOS ベクタ起動中は BIOS IRQ ハンドラ (0x18) へ
   const bool use_bios_irq = bios_loaded_ && bios_boot_via_vector_;
   if (use_bios_irq) {
     EnterException(0x00000018u, 0x12u, true, false);
     return;
   }
-  const uint32_t irq_vector = Read32(0x03007FFCu);
-  const bool vector_thumb = (irq_vector & 1u) != 0;
-  const uint32_t vector_addr = irq_vector & ~1u;
-  const bool vector_valid = (vector_addr >= 0x02000000u && vector_addr <= 0x0DFFFFFFu);
+
+  // カスタム IRQ ベクタ (0x03007FFC が指すアドレス) を使用
+  const uint32_t irq_vector   = Read32(0x03007FFCu);
+  const bool     vector_thumb = (irq_vector & 1u) != 0;
+  const uint32_t vector_addr  = irq_vector & ~1u;
+  const bool     vector_valid = (vector_addr >= 0x02000000u && vector_addr <= 0x0DFFFFFFu);
   if (vector_valid) {
     EnterException(vector_addr, 0x12u, true, vector_thumb);
     if (vector_thumb) {
-      cpu_.cpsr |= (1u << 5);
-      cpu_.regs[15] = vector_addr | 1u;
+      // Thumb IRQ ハンドラ: CPSR の Thumb ビットを再セット
+      cpu_.cpsr      |= (1u << 5);
+      cpu_.regs[15]   = vector_addr;  // EnterException が ARM モードにした後に戻す
     }
     return;
   }
+  // vector_addr が無効な場合は IRQ を取れないが IF は保持したまま次回へ
 }
 
 }  // namespace gba
