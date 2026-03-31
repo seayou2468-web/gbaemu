@@ -162,7 +162,7 @@ class GBACore {
 
   uint32_t ReadBus32(uint32_t a) const;
   void UpdateOpenBus(uint32_t addr, uint32_t val, int size) const;
-  void AddWaitstates(uint32_t addr, int size) const;
+  void AddWaitstates(uint32_t addr, int size, bool is_write) const;
   void RebuildGamePakWaitstateTables(uint16_t waitcnt);
   uint32_t Read32(uint32_t addr) const;
   uint16_t Read16(uint32_t addr) const;
@@ -232,6 +232,7 @@ class GBACore {
   std::array<uint8_t, 3> ws_seq_16_{2, 4, 8};
   std::array<uint8_t, 3> ws_nonseq_32_{6, 6, 10};
   std::array<uint8_t, 3> ws_seq_32_{4, 8, 16};
+  bool gamepak_prefetch_enabled_ = false;
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;
   bool bios_boot_via_vector_ = false;

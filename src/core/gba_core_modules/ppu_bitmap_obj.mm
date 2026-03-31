@@ -441,6 +441,10 @@ void GBACore::BuildObjWindowMask() {
 }
 
 void GBACore::RenderSprites() {
+  const size_t required = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
+  if (frame_buffer_.size() != required) {
+    frame_buffer_.assign(required, 0xFF000000u);
+  }
   const uint16_t dispcnt = ReadIO16(0x04000000u);
   EnsureBgPriorityBufferSize();
   EnsureObjDrawnMaskBufferSize(); EnsureObjSemiTransMaskBufferSize();
@@ -471,6 +475,7 @@ void GBACore::RenderSprites() {
 
   auto get_pal_color = [&](uint16_t idx) {
     const size_t off = (static_cast<size_t>(idx & 0xFFu) + 0x100u) * 2u;
+    if (off + 1u >= palette_ram_.size()) return 0xFF000000u;
     return Bgr555ToRgba8888(static_cast<uint16_t>(palette_ram_[off]) | (static_cast<uint16_t>(palette_ram_[off+1]) << 8));
   };
 
@@ -508,10 +513,12 @@ void GBACore::RenderSprites() {
     int16_t pa=256, pb=0, pc=0, pd=256;
     if (affine) {
        const int p_idx = (a1 >> 9) & 0x1F;
-       pa = (int16_t)(oam_[p_idx*32 + 6] | (oam_[p_idx*32 + 7] << 8));
-       pb = (int16_t)(oam_[p_idx*32 + 14] | (oam_[p_idx*32 + 15] << 8));
-       pc = (int16_t)(oam_[p_idx*32 + 22] | (oam_[p_idx*32 + 23] << 8));
-       pd = (int16_t)(oam_[p_idx*32 + 30] | (oam_[p_idx*32 + 31] << 8));
+       const size_t base = static_cast<size_t>(p_idx) * 32u;
+       if (base + 31u >= oam_.size()) continue;
+       pa = (int16_t)(oam_[base + 6u] | (oam_[base + 7u] << 8));
+       pb = (int16_t)(oam_[base + 14u] | (oam_[base + 15u] << 8));
+       pc = (int16_t)(oam_[base + 22u] | (oam_[base + 23u] << 8));
+       pd = (int16_t)(oam_[base + 30u] | (oam_[base + 31u] << 8));
     }
 
     for (int py=0; py<dh; ++py) {

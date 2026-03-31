@@ -336,7 +336,7 @@ void GBACore::ServiceInterruptIfNeeded() {
   const uint32_t old_irq_flags = Read32(irq_flags_addr);
   Write32(irq_flags_addr, old_irq_flags | pending);
 
-  const bool use_bios_irq = bios_loaded_;
+  const bool use_bios_irq = bios_loaded_ && bios_boot_via_vector_;
   if (use_bios_irq) {
     EnterException(0x00000018u, 0x12u, true, false);
     return;
@@ -347,6 +347,10 @@ void GBACore::ServiceInterruptIfNeeded() {
   const bool vector_valid = (vector_addr >= 0x02000000u && vector_addr <= 0x0DFFFFFFu);
   if (vector_valid) {
     EnterException(vector_addr, 0x12u, true, vector_thumb);
+    if (vector_thumb) {
+      cpu_.cpsr |= (1u << 5);
+      cpu_.regs[15] = vector_addr | 1u;
+    }
     return;
   }
 }

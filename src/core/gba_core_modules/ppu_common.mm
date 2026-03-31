@@ -205,14 +205,17 @@ bool IsWithinWindowAxis(int p, int start, int end, int axis_max) {
   if (s == 0 && e == 0) return false;
   if (s < e) return p >= s && p < e;
   if (s > e) return p >= s || p < e;
-  // s==e!=0: full axis coverage.
-  return true;
+  // s==e: empty range (boundary-safe fallback).
+  return false;
 }
 
 uint8_t ResolveWindowControl(uint16_t dispcnt, uint16_t winin, uint16_t winout,
                          uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
                          const std::vector<uint8_t>& obj_window_mask,
                          int x, int y) {
+  if (x < 0 || x >= GBACore::kScreenWidth || y < 0 || y >= GBACore::kScreenHeight) {
+    return static_cast<uint8_t>(winout & 0xFFu);
+  }
   const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
   const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
   const bool objwin_enabled = (dispcnt & (1u << 15)) != 0;

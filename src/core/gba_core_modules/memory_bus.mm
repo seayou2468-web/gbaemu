@@ -77,7 +77,7 @@ inline bool IsWriteOnlyIo16(uint32_t addr) {
 // =========================================================================
 // ウェイトステート (GBATek準拠)
 // =========================================================================
-void GBACore::AddWaitstates(uint32_t addr, int size) const {
+void GBACore::AddWaitstates(uint32_t addr, int size, bool is_write) const {
   const uint32_t region = addr >> 24;
   const uint32_t aligned_addr = (size == 4) ? (addr & ~3u) : (addr & ~1u);
   const bool seq =
@@ -103,6 +103,9 @@ void GBACore::AddWaitstates(uint32_t addr, int size) const {
         cycles = seq ? ws_seq_32_[ws_sel] : ws_nonseq_32_[ws_sel];
       } else {
         cycles = seq ? ws_seq_16_[ws_sel] : ws_nonseq_16_[ws_sel];
+      }
+      if (!is_write && gamepak_prefetch_enabled_ && seq && cycles > 1) {
+        --cycles;
       }
       break;
     }
@@ -138,6 +141,7 @@ void GBACore::RebuildGamePakWaitstateTables(uint16_t waitcnt) {
   ws_seq_32_[0] = static_cast<uint8_t>(s0 * 2u);
   ws_seq_32_[1] = static_cast<uint8_t>(s1 * 2u);
   ws_seq_32_[2] = static_cast<uint8_t>(s2 * 2u);
+  gamepak_prefetch_enabled_ = (waitcnt & (1u << 14)) != 0u;
 }
 
 void GBACore::UpdateOpenBus(uint32_t addr, uint32_t val, int size) const {
@@ -220,7 +224,7 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
 }
 
 uint32_t GBACore::Read32(uint32_t addr) const {
-  AddWaitstates(addr, 4);
+  AddWaitstates(addr, 4, false);
   if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) {
     const uint32_t rot = (addr & 3u) * 8u;
     const uint32_t v = rot ? ((bios_fetch_latch_ >> rot) | (bios_fetch_latch_ << (32u - rot)))
@@ -237,9 +241,12 @@ return v;
 }
 
 uint16_t GBACore::Read16(uint32_t addr) const {
-  AddWaitstates(addr, 2);
-  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u)
-    return static_cast<uint16_t>(bios_fetch_latch_ >> ((addr & 2u)*8u));
+  AddWaitstates(addr, 2, false);
+  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) {
+    const uint16_t val = static_cast<uint16_t>(bios_fetch_latch_ >> ((addr & 2u) * 8u));
+    UpdateOpenBus(addr, val, 2);
+    return val;
+  }
   const uint32_t a2 = addr & ~1u;
   const uint32_t v32 = ReadBus32(a2 & ~2u);
   const uint16_t val = static_cast<uint16_t>(v32 >> ((a2 & 2u)*8u));
@@ -249,9 +256,12 @@ uint16_t GBACore::Read16(uint32_t addr) const {
 }
 
 uint8_t GBACore::Read8(uint32_t addr) const {
-  AddWaitstates(addr, 1);
-  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u)
-    return static_cast<uint8_t>(bios_fetch_latch_ >> ((addr & 3u)*8u));
+  AddWaitstates(addr, 1, false);
+  if (addr < 0x00004000u && cpu_.regs[15] >= 0x00004000u) {
+    const uint8_t val = static_cast<uint8_t>(bios_fetch_latch_ >> ((addr & 3u) * 8u));
+    UpdateOpenBus(addr, val, 1);
+    return val;
+  }
   const uint32_t v32 = ReadBus32(addr & ~3u);
   const uint8_t val = static_cast<uint8_t>(v32 >> ((addr & 3u)*8u));
 UpdateOpenBus(addr, val, 1);
@@ -262,7 +272,7 @@ return val;
 // 書き込み
 // =========================================================================
 void GBACore::Write32(uint32_t addr, uint32_t value) {
-  AddWaitstates(addr, 4);
+  AddWaitstates(addr, 4, true);
   if (addr == 0x040000A0u) { PushAudioFifo(true,  value); return; }
   if (addr == 0x040000A4u) { PushAudioFifo(false, value); return; }
   UpdateOpenBus(addr, value, 4);
@@ -294,7 +304,7 @@ void GBACore::Write32(uint32_t addr, uint32_t value) {
 }
 
 void GBACore::Write16(uint32_t addr, uint16_t value) {
-  AddWaitstates(addr, 2);
+  AddWaitstates(addr, 2, true);
   UpdateOpenBus(addr, static_cast<uint32_t>(value)|(static_cast<uint32_t>(value)<<16), 2);
   const uint32_t a = addr & ~1u;
   if (a >= 0x04000000u && a <= 0x040003FEu) { WriteIO16(a, value); return; }
@@ -322,7 +332,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
 }
 
 void GBACore::Write8(uint32_t addr, uint8_t value) {
-  AddWaitstates(addr, 1);
+  AddWaitstates(addr, 1, true);
   UpdateOpenBus(addr, static_cast<uint32_t>(value)*0x01010101u, 1);
   if (addr == 0x04000301u) {
     const size_t postflg_off = static_cast<size_t>(0x04000300u - 0x04000000u);

@@ -469,11 +469,21 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
 }
 
 uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
-  // 1. Wake up from HALT if any enabled interrupt is pending
+  // 1. Wake up from HALT.
   const uint16_t ie = ReadIO16(0x04000200u);
   const uint16_t iflags = ReadIO16(0x04000202u);
-  if (cpu_.halted && ((ie & iflags) != 0 || iflags != 0u)) {
-    cpu_.halted = false;
+  if (cpu_.halted) {
+    if (swi_intrwait_active_) {
+      const uint16_t matched = static_cast<uint16_t>(iflags & swi_intrwait_mask_);
+      if (matched != 0u) {
+        WriteIO16(0x04000202u, matched);
+        swi_intrwait_active_ = false;
+        swi_intrwait_mask_ = 0;
+        cpu_.halted = false;
+      }
+    } else if ((ie & iflags) != 0u) {
+      cpu_.halted = false;
+    }
   }
 
   if (cpu_.halted) return cycles;
@@ -531,7 +541,7 @@ void GBACore::DebugStepCpuInstructions(uint32_t count) {
       if (!woke_from_intrwait) {
         const uint16_t ie = ReadIO16(0x04000200u);
         const uint16_t iflags = ReadIO16(0x04000202u);
-        if ((ie & iflags) == 0) return;
+        if ((ie & iflags) == 0u) return;
         cpu_.halted = false;
       }
     }

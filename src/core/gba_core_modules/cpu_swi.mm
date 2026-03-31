@@ -4,6 +4,7 @@
 #include <limits>
 #include <algorithm>
 #include <functional>
+#include <array>
 
 namespace gba {
 namespace {
@@ -67,16 +68,55 @@ inline uint32_t BiosSqrtLocal(uint32_t x) {
 }
 
 // Sin/Cos (GBA BIOS互換, 固定小数点 1.14)
+const std::array<int16_t, 65536>& GbaSinLutLocal() {
+  static const std::array<int16_t, 65536> table = [] {
+    std::array<int16_t, 65536> lut{};
+    for (uint32_t i = 0; i < lut.size(); ++i) {
+      const double rad = static_cast<double>(i) * 2.0 * M_PI / 65536.0;
+      const int32_t v = static_cast<int32_t>(std::round(std::sin(rad) * 16384.0));
+      lut[i] = static_cast<int16_t>(std::clamp(v, -16384, 16383));
+    }
+    return lut;
+  }();
+  return table;
+}
+
 inline int16_t GbaSinLocal(uint16_t angle) {
-  const double rad = static_cast<double>(angle & 0xFFFFu) * 2.0 * M_PI / 65536.0;
-  const int32_t v = static_cast<int32_t>(std::round(std::sin(rad) * 16384.0));
-  return static_cast<int16_t>(std::clamp(v, -16384, 16383));
+  return GbaSinLutLocal()[angle];
 }
 
 inline int16_t GbaCosLocal(uint16_t angle) {
-  const double rad = static_cast<double>(angle & 0xFFFFu) * 2.0 * M_PI / 65536.0;
-  const int32_t v = static_cast<int32_t>(std::round(std::cos(rad) * 16384.0));
-  return static_cast<int16_t>(std::clamp(v, -16384, 16384));
+  constexpr uint16_t kQuarterTurn = 0x4000u;
+  return GbaSinLutLocal()[static_cast<uint16_t>(angle + kQuarterTurn)];
+}
+
+inline bool ShouldHandleSwiInHleFastPath(uint32_t swi_num) {
+  switch (swi_num & 0xFFu) {
+    case 0x04u:  // IntrWait
+    case 0x05u:  // VBlankIntrWait
+    case 0x06u:  // Div
+    case 0x07u:  // DivArm
+    case 0x08u:  // Sqrt
+    case 0x09u:  // ArcTan
+    case 0x0Au:  // ArcTan2
+    case 0x0Bu:  // CpuSet
+    case 0x0Cu:  // CpuFastSet
+    case 0x0Du:  // GetBiosChecksum
+    case 0x0Eu:  // BgAffineSet
+    case 0x0Fu:  // ObjAffineSet
+    case 0x10u:  // BitUnPack
+    case 0x11u:  // LZ77UnCompWRAM
+    case 0x12u:  // LZ77UnCompVRAM
+    case 0x13u:  // HuffUnComp
+    case 0x14u:  // RLUnCompWRAM
+    case 0x15u:  // RLUnCompVRAM
+    case 0x16u:  // Diff8UnFilterWRAM
+    case 0x17u:  // Diff8UnFilterVRAM
+    case 0x18u:  // Diff16UnFilter
+      return true;
+    default:
+      return false;
+  }
 }
 
 // LZ77圧縮展開 (SWI 0x11)
@@ -239,15 +279,16 @@ inline void DecompressDiffFilter(uint32_t src, uint32_t dst, int in_width, int o
 // HandleSoftwareInterrupt
 // =========================================================================
 bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
-  // 実BIOSベクタモード: SWIをBIOSに渡す
-  if (bios_loaded_ && bios_boot_via_vector_) {
+  const uint32_t swi_num = swi_imm & 0xFFu;
+  const bool vector_boot = bios_loaded_ && bios_boot_via_vector_;
+  // 実BIOSベクタモードでも、頻出/重い処理はHLEで高速処理するハイブリッド運用。
+  if (vector_boot && !ShouldHandleSwiInHleFastPath(swi_num)) {
     cpu_.regs[15] += thumb_state ? 2u : 4u;
     EnterException(0x00000008u, 0x13u, true, thumb_state);
     return true;
   }
 
   const uint32_t next_pc = cpu_.regs[15] + (thumb_state ? 2u : 4u);
-  const uint32_t swi_num = swi_imm & 0xFFu;
 
   // ラムダ: Read/Write ショートカット
   auto rd8  = [&](uint32_t a) -> uint8_t    { return Read8(a); };
@@ -286,7 +327,7 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
       const bool clear_old = (cpu_.regs[0] != 0u);
       uint16_t request = static_cast<uint16_t>(cpu_.regs[1] & 0x3FFFu);
       if (request == 0) request = 0x0001u;
-      if (clear_old) WriteIO16(0x04000202u, 0x0000u);
+      if (clear_old) WriteIO16(0x04000202u, 0x3FFFu);
       const uint16_t iflags = ReadIO16(0x04000202u);
       if (iflags & request) {
         WriteIO16(0x04000202u, static_cast<uint16_t>(iflags & request));
@@ -305,7 +346,7 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     case 0x05u: {
       const uint16_t iflags = ReadIO16(0x04000202u);
       if (iflags & 0x0001u) {
-        WriteIO16(0x04000202u, static_cast<uint16_t>(iflags & ~0x0001u));
+        WriteIO16(0x04000202u, 0x0001u);
         swi_intrwait_active_ = false;
         swi_intrwait_mask_   = 0;
       } else {
@@ -609,6 +650,11 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     // (mgba_compat::kSwiGetBiosChecksum == 0x0D)
 
     default:
+      if (vector_boot) {
+        cpu_.regs[15] = next_pc;
+        EnterException(0x00000008u, 0x13u, true, thumb_state);
+        return true;
+      }
       return false;
   }
 }

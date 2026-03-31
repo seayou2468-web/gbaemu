@@ -56,7 +56,7 @@ void GBACore::StepPpu(uint32_t cycles) {
     dispstat = rd16(kDispstatOff);
     dispstat &= static_cast<uint16_t>(~0x0002u);  // leave HBlank
     const bool was_vblank = (dispstat & 0x0001u) != 0u;
-    const bool now_vblank = (nvc >= kVIS && nvc < (kTOT - 1u));
+    const bool now_vblank = (nvc >= kVIS);
     if (now_vblank) {
       dispstat |= 0x0001u;
       if (!was_vblank) {
@@ -164,9 +164,9 @@ void GBACore::StepTimers(uint32_t cycles){
       ticks = prev_overflows;
     } else {
       const uint32_t prescale = kPS[t.control & 0x3u];
-      const uint32_t total = t.prescaler_accum + cycles;
-      ticks = total / prescale;
-      t.prescaler_accum = total % prescale;
+      const uint64_t total = static_cast<uint64_t>(t.prescaler_accum) + static_cast<uint64_t>(cycles);
+      ticks = static_cast<uint32_t>(total / prescale);
+      t.prescaler_accum = static_cast<uint32_t>(total % prescale);
     }
 
     const uint32_t overflows = advance_counter(t, ticks);

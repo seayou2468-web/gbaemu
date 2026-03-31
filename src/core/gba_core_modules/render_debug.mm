@@ -23,6 +23,7 @@ void GBACore::ApplyColorEffects() {
   auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semi = ObjSemiTransMaskBuffer();
   auto& obj_under_drawn = ObjUnderDrawnMaskBuffer();
   auto& obj_under_prio = ObjUnderPriorityBuffer();
+  auto& obj_under_idx = ObjUnderIndexBuffer();
   auto& obj_under_color = ObjUnderColorBuffer();
   auto& bg_base = BgBaseColorBuffer(); auto& bg_sec = BgSecondColorBuffer();
   auto& bg_sec_layer = BgSecondLayerBuffer();
@@ -36,6 +37,7 @@ void GBACore::ApplyColorEffects() {
   const bool has_obj_under = obj_under_drawn.size() == required &&
                              obj_under_color.size() == required &&
                              obj_under_prio.size() == required;
+  const bool has_obj_under_idx = obj_under_idx.size() == required;
   const bool has_bg_sec_prio = bg_sec_prio.size() == required;
 
   for (int i = 0; i < kScreenWidth * kScreenHeight; ++i) {
@@ -85,7 +87,11 @@ void GBACore::ApplyColorEffects() {
         const bool bg2_ok = has_bg_sec_prio;
         if (obj2_ok && bg2_ok) {
           // Pick the higher-priority lower pixel (smaller priority number).
-          if (obj_under_prio[i] < bg_sec_prio[i]) {
+          // On tie, prefer OBJ as secondary target to match common GBA blend stacking.
+          const bool prefer_obj =
+              (obj_under_prio[i] < bg_sec_prio[i]) ||
+              (obj_under_prio[i] == bg_sec_prio[i] && has_obj_under_idx);
+          if (prefer_obj) {
             try_target2_obj(obj_under_color[i]);
             try_target2(bg_sec_layer[i], bg_sec[i]);
           } else {
@@ -169,6 +175,16 @@ void GBACore::RenderDebugFrame() {
   }
   if (bg_mode == 5u) {
     RenderMode5Frame();
+    BgBaseColorBuffer() = frame_buffer_;
+    RenderSprites();
+    ApplyColorEffects();
+    return;
+  }
+  if (bg_mode >= 6u) {
+    // GBA has no official mode 6/7, but some homebrew/debug code may leave
+    // transient values. Use affine pipeline as a mode7-like fallback to keep
+    // output stable instead of dropping to backdrop-only.
+    RenderMode2Frame();
     BgBaseColorBuffer() = frame_buffer_;
     RenderSprites();
     ApplyColorEffects();
