@@ -2,6 +2,9 @@
 #if defined(__APPLE__) && defined(__clang__)
 #pragma clang optimize on
 #endif
+
+#include "./module_includes.h"
+
 // Rebuilt Objective-C++ module from reference implementation sources.
 // NOTE: Source bodies are embedded and adapted here (no direct include of reference files).
 #if defined(__cplusplus)
