@@ -199,6 +199,7 @@ class GBACore {
     std::array<uint32_t, 16> regs{};
     uint32_t cpsr = 0x1Fu;  // System mode
     std::array<uint32_t, 5> banked_fiq_r8_r12{};
+    std::array<uint32_t, 5> banked_usr_r8_r12{};
     std::array<uint32_t, 32> banked_sp{};
     std::array<uint32_t, 32> banked_lr{};
     std::array<uint32_t, 32> spsr{};
