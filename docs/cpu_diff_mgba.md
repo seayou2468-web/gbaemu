@@ -27,6 +27,7 @@
 - `LDMIA` で base register が rlist に含まれる場合の writeback 例外を反映。
 
 ### ARM
+- ARM `LDM/STM` empty rlist の store 側PC値を `PC+12` に補正。
 - 危険箇所修正: ARM block transfer `rlist==0` load で `Rn=PC` writeback によるPC破壊を抑止。
 - 速度改善: block transfer内で `GetCpuMode()` 判定をループ外へ退避し、bank参照分岐を軽量化。
 - ARM block transfer で `Rn=PC` のベースアドレス評価を `PC+8` に補正。

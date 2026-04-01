@@ -351,7 +351,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         if (rn != 15 && writeback) cpu_.regs[rn] = up ? (cpu_.regs[rn] + 0x40u) : (cpu_.regs[rn] - 0x40u);
         return;
       } else {
-        Write32(addr, cpu_.regs[15] + 4u);
+        Write32(addr, cpu_.regs[15] + 12u);
       }
       if (rn != 15 && writeback) cpu_.regs[rn] = up ? (cpu_.regs[rn] + 0x40u) : (cpu_.regs[rn] - 0x40u);
       cpu_.regs[15] += 4;
