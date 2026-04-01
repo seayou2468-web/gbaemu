@@ -128,4 +128,9 @@ bool GBACore::CheckCondition(uint32_t cond) const {
   }
 }
 
+void GBACore::FlushPipeline(uint32_t refill_cycles) {
+  last_access_valid_ = false;
+  pipeline_refill_pending_ += refill_cycles;
+}
+
 }  // namespace gba

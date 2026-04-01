@@ -193,6 +193,7 @@ class GBACore {
   void HandleUndefinedInstruction(bool thumb_state);
   void HandleRegisterRamReset(uint8_t flags);
   void HandleCpuSet(bool fast_mode);
+  void FlushPipeline(uint32_t refill_cycles);
   uint32_t RunCpuSlice(uint32_t cycles);
 
   struct CpuState {
@@ -234,6 +235,7 @@ class GBACore {
   std::array<uint8_t, 3> ws_nonseq_32_{6, 6, 10};
   std::array<uint8_t, 3> ws_seq_32_{4, 8, 16};
   bool gamepak_prefetch_enabled_ = false;
+  uint32_t pipeline_refill_pending_ = 0;
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;
   bool bios_boot_via_vector_ = false;
