@@ -117,10 +117,12 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const uint32_t rn = ArmRegIndex(opcode, 12);
     const uint32_t rs = ArmRegIndex(opcode, 8);
     const uint32_t rm = ArmRegIndex(opcode, 0);
-    uint32_t result = cpu_.regs[rm] * cpu_.regs[rs];
-    if (accumulate) result += cpu_.regs[rn];
-    cpu_.regs[rd] = result;
-    if (set_flags) SetNZFlags(result);
+    if (rd != 15u) {
+      uint32_t result = cpu_.regs[rm] * cpu_.regs[rs];
+      if (accumulate) result += cpu_.regs[rn];
+      cpu_.regs[rd] = result;
+      if (set_flags) SetNZFlags(result);
+    }
     cpu_.regs[15] += 4;
     return;
   }
@@ -134,23 +136,25 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const uint32_t rd_lo = ArmRegIndex(opcode, 12);
     const uint32_t rs = ArmRegIndex(opcode, 8);
     const uint32_t rm = ArmRegIndex(opcode, 0);
-    uint64_t product = 0;
-    if (signed_mul) {
-      product = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rm])) *
-                                      static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rs])));
-    } else {
-      product = static_cast<uint64_t>(cpu_.regs[rm]) * static_cast<uint64_t>(cpu_.regs[rs]);
-    }
-    if (accumulate) {
-      const uint64_t old = (static_cast<uint64_t>(cpu_.regs[rd_hi]) << 32) | cpu_.regs[rd_lo];
-      product += old;
-    }
-    cpu_.regs[rd_lo] = static_cast<uint32_t>(product);
-    cpu_.regs[rd_hi] = static_cast<uint32_t>(product >> 32);
-    if (set_flags) {
-      cpu_.cpsr = (cpu_.cpsr & ~((1u << 31) | (1u << 30))) |
-                  (cpu_.regs[rd_hi] & 0x80000000u) |
-                  (((cpu_.regs[rd_hi] | cpu_.regs[rd_lo]) == 0) ? (1u << 30) : 0u);
+    if (rd_hi != 15u && rd_lo != 15u) {
+      uint64_t product = 0;
+      if (signed_mul) {
+        product = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rm])) *
+                                        static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rs])));
+      } else {
+        product = static_cast<uint64_t>(cpu_.regs[rm]) * static_cast<uint64_t>(cpu_.regs[rs]);
+      }
+      if (accumulate) {
+        const uint64_t old = (static_cast<uint64_t>(cpu_.regs[rd_hi]) << 32) | cpu_.regs[rd_lo];
+        product += old;
+      }
+      cpu_.regs[rd_lo] = static_cast<uint32_t>(product);
+      cpu_.regs[rd_hi] = static_cast<uint32_t>(product >> 32);
+      if (set_flags) {
+        cpu_.cpsr = (cpu_.cpsr & ~((1u << 31) | (1u << 30))) |
+                    (cpu_.regs[rd_hi] & 0x80000000u) |
+                    (((cpu_.regs[rd_hi] | cpu_.regs[rd_lo]) == 0) ? (1u << 30) : 0u);
+      }
     }
     cpu_.regs[15] += 4;
     return;
@@ -184,8 +188,12 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   // MRS / MSR (最低限)
   if ((opcode & 0x0FBF0FFFu) == 0x010F0000u) {  // MRS Rd, CPSR/SPSR
     const bool spsr = (opcode & (1u << 22)) != 0;
+    if (spsr && !HasSpsr(GetCpuMode())) {
+      HandleUndefinedInstruction(false);
+      return;
+    }
     const uint32_t rd = ArmRegIndex(opcode, 12);
-    cpu_.regs[rd] = spsr && HasSpsr(GetCpuMode()) ? cpu_.spsr[GetCpuMode() & 0x1Fu] : cpu_.cpsr;
+    cpu_.regs[rd] = spsr ? cpu_.spsr[GetCpuMode() & 0x1Fu] : cpu_.cpsr;
     cpu_.regs[15] += 4;
     return;
   }
