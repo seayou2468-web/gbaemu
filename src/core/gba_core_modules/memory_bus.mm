@@ -293,7 +293,9 @@ uint32_t GBACore::ReadBus32(uint32_t a) const { return Read32(a); }
 
 uint8_t GBACore::Read8(uint32_t addr) const {
   addr &= kAddrMask28;
-  uint8_t v = static_cast<uint8_t>(open_bus_latch_ & 0xFFu);
+  const uint8_t open_bus_byte = static_cast<uint8_t>((open_bus_latch_ >> ((addr & 3u) * 8u)) & 0xFFu);
+  uint8_t v = open_bus_byte;
+  bool bus_drove_value = false;
   const uint32_t region = addr & kRegionMask;
 
   switch (region) {
@@ -302,36 +304,42 @@ uint8_t GBACore::Read8(uint32_t addr) const {
         if (cpu_.regs[15] < 0x4000u || bios_loaded_) {
           v = bios_[addr & 0x3FFFu];
           bios_data_latch_ = (bios_data_latch_ & 0xFFFFFF00u) | v;
+          bus_drove_value = true;
         } else {
           v = static_cast<uint8_t>((bios_fetch_latch_ >> ((addr & 3u) * 8u)) & 0xFFu);
+          bus_drove_value = true;
         }
       }
       break;
-    case 0x02000000u: v = ewram_[addr & 0x3FFFFu]; break;
-    case 0x03000000u: v = iwram_[addr & 0x7FFFu]; break;
-    case 0x04000000u: v = io_regs_[addr & 0x3FFu]; break;
-    case 0x05000000u: v = palette_ram_[addr & 0x3FFu]; break;
+    case 0x02000000u: v = ewram_[addr & 0x3FFFFu]; bus_drove_value = true; break;
+    case 0x03000000u: v = iwram_[addr & 0x7FFFu]; bus_drove_value = true; break;
+    case 0x04000000u: v = io_regs_[addr & 0x3FFu]; bus_drove_value = true; break;
+    case 0x05000000u: v = palette_ram_[addr & 0x3FFu]; bus_drove_value = true; break;
     case 0x06000000u: {
       const uint8_t mode = io_regs_[0] & 0x7u;
       if (!IsInvalidVramBitmapWindow(addr, mode)) {
         v = vram_[MapVramOffset(addr) % vram_.size()];
+        bus_drove_value = true;
       }
       break;
     }
-    case 0x07000000u: v = oam_[addr & 0x3FFu]; break;
+    case 0x07000000u: v = oam_[addr & 0x3FFu]; bus_drove_value = true; break;
     case 0x08000000u:
     case 0x09000000u:
     case 0x0A000000u:
     case 0x0B000000u:
     case 0x0C000000u:
     case 0x0D000000u:
-      if (!rom_.empty()) v = rom_[addr % rom_.size()];
+      if (!rom_.empty()) {
+        v = rom_[addr % rom_.size()];
+        bus_drove_value = true;
+      }
       break;
-    case 0x0E000000u: v = ReadBackup8(addr); break;
+    case 0x0E000000u: v = ReadBackup8(addr); bus_drove_value = true; break;
     default: break;
   }
 
-  UpdateOpenBus(addr, v, 1);
+  UpdateOpenBus(addr, bus_drove_value ? static_cast<uint32_t>(v) : open_bus_latch_, 1);
   AddWaitstates(addr, 1, false);
   return v;
 }
@@ -339,45 +347,53 @@ uint8_t GBACore::Read8(uint32_t addr) const {
 uint16_t GBACore::Read16(uint32_t addr) const {
   const uint32_t aligned = addr & ~1u;
   const uint32_t region = aligned & kRegionMask;
-  uint16_t v = static_cast<uint16_t>(open_bus_latch_ & 0xFFFFu);
+  const uint16_t open_bus_half = static_cast<uint16_t>((open_bus_latch_ >> ((aligned & 2u) * 8u)) & 0xFFFFu);
+  uint16_t v = open_bus_half;
+  bool bus_drove_value = false;
   switch (region) {
     case 0x00000000u:
       if (aligned < 0x4000u) {
         if (cpu_.regs[15] < 0x4000u || bios_loaded_) {
           v = static_cast<uint16_t>(bios_[aligned & 0x3FFFu] | (bios_[(aligned + 1) & 0x3FFFu] << 8));
           bios_data_latch_ = (bios_data_latch_ & 0xFFFF0000u) | v;
+          bus_drove_value = true;
         } else {
           v = static_cast<uint16_t>((bios_fetch_latch_ >> ((aligned & 2u) * 8u)) & 0xFFFFu);
+          bus_drove_value = true;
         }
       }
       break;
-    case 0x02000000u: v = static_cast<uint16_t>(ewram_[aligned & 0x3FFFFu] | (ewram_[(aligned + 1) & 0x3FFFFu] << 8)); break;
-    case 0x03000000u: v = static_cast<uint16_t>(iwram_[aligned & 0x7FFFu] | (iwram_[(aligned + 1) & 0x7FFFu] << 8)); break;
-    case 0x04000000u: v = ReadIO16(aligned); break;
-    case 0x05000000u: v = static_cast<uint16_t>(palette_ram_[aligned & 0x3FFu] | (palette_ram_[(aligned + 1) & 0x3FFu] << 8)); break;
+    case 0x02000000u: v = static_cast<uint16_t>(ewram_[aligned & 0x3FFFFu] | (ewram_[(aligned + 1) & 0x3FFFFu] << 8)); bus_drove_value = true; break;
+    case 0x03000000u: v = static_cast<uint16_t>(iwram_[aligned & 0x7FFFu] | (iwram_[(aligned + 1) & 0x7FFFu] << 8)); bus_drove_value = true; break;
+    case 0x04000000u: v = ReadIO16(aligned); bus_drove_value = true; break;
+    case 0x05000000u: v = static_cast<uint16_t>(palette_ram_[aligned & 0x3FFu] | (palette_ram_[(aligned + 1) & 0x3FFu] << 8)); bus_drove_value = true; break;
     case 0x06000000u: {
       const uint8_t mode = io_regs_[0] & 0x7u;
       if (!IsInvalidVramBitmapWindow(aligned, mode)) {
         const uint32_t vo = MapVramOffset(aligned) % vram_.size();
         const uint32_t vo1 = MapVramOffset(aligned + 1u) % vram_.size();
         v = static_cast<uint16_t>(vram_[vo] | (vram_[vo1] << 8));
+        bus_drove_value = true;
       }
       break;
     }
-    case 0x07000000u: v = static_cast<uint16_t>(oam_[aligned & 0x3FFu] | (oam_[(aligned + 1) & 0x3FFu] << 8)); break;
+    case 0x07000000u: v = static_cast<uint16_t>(oam_[aligned & 0x3FFu] | (oam_[(aligned + 1) & 0x3FFu] << 8)); bus_drove_value = true; break;
     case 0x08000000u:
     case 0x09000000u:
     case 0x0A000000u:
     case 0x0B000000u:
     case 0x0C000000u:
     case 0x0D000000u:
-      if (!rom_.empty()) v = static_cast<uint16_t>(rom_[aligned % rom_.size()] | (rom_[(aligned + 1) % rom_.size()] << 8));
+      if (!rom_.empty()) {
+        v = static_cast<uint16_t>(rom_[aligned % rom_.size()] | (rom_[(aligned + 1) % rom_.size()] << 8));
+        bus_drove_value = true;
+      }
       break;
-    case 0x0E000000u: v = static_cast<uint16_t>(ReadBackup8(aligned) | (ReadBackup8(aligned + 1) << 8)); break;
+    case 0x0E000000u: v = static_cast<uint16_t>(ReadBackup8(aligned) | (ReadBackup8(aligned + 1) << 8)); bus_drove_value = true; break;
     default: break;
   }
   AddWaitstates(aligned, 2, false);
-  UpdateOpenBus(aligned, v, 2);
+  UpdateOpenBus(aligned, bus_drove_value ? static_cast<uint32_t>(v) : open_bus_latch_, 2);
   return v;
 }
 
