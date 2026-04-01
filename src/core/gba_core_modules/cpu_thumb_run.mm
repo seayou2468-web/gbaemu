@@ -159,8 +159,9 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
         return;
       }
     } else if (op == 1) {
-      const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - rm_value;
-      SetSubFlags(cpu_.regs[rd], rm_value, r64);
+      const uint32_t lhs = (rd == 15) ? (cpu_.regs[15] + 4u) : cpu_.regs[rd];
+      const uint64_t r64 = static_cast<uint64_t>(lhs) - rm_value;
+      SetSubFlags(lhs, rm_value, r64);
     } else if (op == 2) {
       cpu_.regs[rd] = rm_value;
       if (rd == 15) {
