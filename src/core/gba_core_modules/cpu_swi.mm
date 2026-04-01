@@ -6,6 +6,7 @@
 #include <functional>
 #include <array>
 #include <vector>
+#include <cstdio>
 
 namespace gba {
 namespace {
@@ -102,26 +103,35 @@ inline bool ShouldHandleSwiInHleFastPath(uint32_t swi_num) {
     case 0x0Du:  // GetBiosChecksum
     case 0x0Eu:  // BgAffineSet
     case 0x0Fu:  // ObjAffineSet
-    case 0x10u:  // BitUnPack
-    case 0x11u:  // LZ77UnCompWRAM
-    case 0x12u:  // LZ77UnCompVRAM
-    case 0x13u:  // HuffUnComp
-    case 0x14u:  // RLUnCompWRAM
-    case 0x15u:  // RLUnCompVRAM
-    case 0x16u:  // Diff8UnFilterWRAM
-    case 0x17u:  // Diff8UnFilterVRAM
-    case 0x18u:  // Diff16UnFilter
       return true;
     default:
       return false;
   }
 }
 
+inline bool SwiTraceEnabled() {
+  static const bool enabled = (std::getenv("GBA_SWI_TRACE") != nullptr);
+  return enabled;
+}
+
+inline void LogSwiTrace(const char* phase, uint32_t swi_num, uint32_t r0, uint32_t r1,
+                        uint32_t r2, uint32_t r3, uint32_t pc) {
+  if (!SwiTraceEnabled()) return;
+  std::fprintf(stderr,
+               "[SWI][%s] #%02X pc=%08X r0=%08X r1=%08X r2=%08X r3=%08X\n",
+               phase, swi_num & 0xFFu, pc, r0, r1, r2, r3);
+}
+
 // =========================================================================
 // 展開ヘルパー: LZ77 (バイトバッファへ)
 // WRAM/VRAM 共用。バックリファレンスはバッファから読むため VRAM 未書込み問題なし。
 // =========================================================================
-inline std::vector<uint8_t> DecompressLZ77Buffer(
+struct DecompressResult {
+  std::vector<uint8_t> data;
+  uint32_t source_end = 0u;
+};
+
+inline DecompressResult DecompressLZ77Buffer(
     uint32_t src,
     std::function<uint8_t(uint32_t)> read8) {
   const uint32_t hdr = static_cast<uint32_t>(read8(src))
@@ -151,38 +161,42 @@ inline std::vector<uint8_t> DecompressLZ77Buffer(
       }
     }
   }
-  return out;
+  return {std::move(out), s};
 }
 
-// =========================================================================
-// 展開ヘルパー: RLE (バイトバッファへ)
-// =========================================================================
-inline std::vector<uint8_t> DecompressRLEBuffer(
-    uint32_t src,
-    std::function<uint8_t(uint32_t)> read8) {
-  const uint32_t decomp_len = (static_cast<uint32_t>(read8(src))
-      | (static_cast<uint32_t>(read8(src + 1u)) << 8)
-      | (static_cast<uint32_t>(read8(src + 2u)) << 16)
-      | (static_cast<uint32_t>(read8(src + 3u)) << 24)) >> 8;
-  if (decomp_len == 0u || decomp_len > 4u * 1024u * 1024u) return {};
-  std::vector<uint8_t> out(decomp_len, 0u);
-  uint32_t s = src + 4u;
-  uint32_t written = 0u;
-  while (written < decomp_len) {
-    const uint8_t flags = read8(s++);
-    if (flags & 0x80u) {
-      const uint32_t count = static_cast<uint32_t>(flags & 0x7Fu) + 3u;
-      const uint8_t val = read8(s++);
-      for (uint32_t i = 0u; i < count && written < decomp_len; ++i)
-        out[written++] = val;
-    } else {
-      const uint32_t count = static_cast<uint32_t>(flags & 0x7Fu) + 1u;
-      for (uint32_t i = 0u; i < count && written < decomp_len; ++i)
-        out[written++] = read8(s++);
-    }
+inline void WriteBufferToVram16(
+    uint32_t dst,
+    const std::vector<uint8_t>& buf,
+    const std::function<void(uint32_t, uint16_t)>& write16) {
+  const uint32_t len = static_cast<uint32_t>(buf.size());
+  for (uint32_t i = 0u; i + 1u < len; i += 2u) {
+    write16(dst + i,
+            static_cast<uint16_t>(buf[i]) |
+            (static_cast<uint16_t>(buf[i + 1u]) << 8));
   }
-  return out;
 }
+
+struct WordMsbBitReader {
+  uint32_t next_addr;
+  uint32_t shifter;
+  int bits_remaining;
+  std::function<uint32_t(uint32_t)> read32;
+
+  explicit WordMsbBitReader(uint32_t addr, std::function<uint32_t(uint32_t)> rd32)
+      : next_addr(addr), shifter(0u), bits_remaining(0), read32(std::move(rd32)) {}
+
+  inline bool ReadBit() {
+    if (bits_remaining == 0) {
+      shifter = read32(next_addr);
+      next_addr += 4u;
+      bits_remaining = 32;
+    }
+    const bool bit = (shifter & 0x80000000u) != 0u;
+    shifter <<= 1;
+    --bits_remaining;
+    return bit;
+  }
+};
 
 }  // namespace
 
@@ -417,6 +431,7 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     //        旧実装は src_len を要素数として扱っていたため大半のタイルが欠落していた。
     // =========================================================================
     case 0x10u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       const uint32_t src_ptr  = cpu_.regs[0];
       const uint32_t dst_ptr  = cpu_.regs[1];
       const uint32_t info_ptr = cpu_.regs[2];
@@ -480,9 +495,10 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
           dst_bits_used = 0;
         }
       }
-
-      // 残余ビットの書き出し
-      wr32(dst_word_addr, dst_word);
+      // BIOS互換: 不完全な最終32bitワードは書き込まない。
+      cpu_.regs[0] = src_byte_addr;
+      cpu_.regs[1] = dst_word_addr;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
 
       cpu_.regs[15] = next_pc;
       return true;
@@ -493,6 +509,7 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     // WRAM はバイト書き込み可能なのでインライン展開で問題なし。
     // =========================================================================
     case 0x11u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       const uint32_t src = cpu_.regs[0];
       const uint32_t dst = cpu_.regs[1];
       const uint32_t hdr = rd32(src);
@@ -520,6 +537,10 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
           }
         }
       }
+      cpu_.regs[0] = s;
+      cpu_.regs[1] = dst + written;
+      cpu_.regs[3] = 0u;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       cpu_.regs[15] = next_pc;
       return true;
     }
@@ -531,17 +552,16 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     //        一旦バイトバッファへ展開後、16bit ペアで VRAM へ書き込む。
     // =========================================================================
     case 0x12u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       const uint32_t src = cpu_.regs[0];
       const uint32_t dst = cpu_.regs[1];
-      const std::vector<uint8_t> buf =
+      const DecompressResult dec =
           DecompressLZ77Buffer(src, [&](uint32_t a) { return rd8(a); });
-      // 16bit ペアで VRAM へ書き出し
-      const uint32_t len = static_cast<uint32_t>(buf.size());
-      for (uint32_t i = 0u; i + 1u <= len; i += 2u) {
-        wr16(dst + i,
-             static_cast<uint16_t>(buf[i]) |
-             (static_cast<uint16_t>(buf[i + 1u]) << 8));
-      }
+      WriteBufferToVram16(dst, dec.data, [&](uint32_t a, uint16_t v) { wr16(a, v); });
+      cpu_.regs[0] = dec.source_end;
+      cpu_.regs[1] = dst + static_cast<uint32_t>(dec.data.size());
+      cpu_.regs[3] = 0u;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       // 奇数バイトは実機でも書かれない (GBATek準拠)
       cpu_.regs[15] = next_pc;
       return true;
@@ -563,52 +583,43 @@ bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
     // ビットストリームは MSB first で処理。
     // =========================================================================
     case 0x13u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       // r0 は 4バイトアライメントされていること (GBATek)
       const uint32_t src_base = cpu_.regs[0] & ~3u;
       const uint32_t dst_base = cpu_.regs[1];
 
       const uint32_t header    = rd32(src_base);
-      const uint32_t sym_bits  = header & 0xFu;        // 通常 4 または 8
+      const uint32_t sym_bits_raw  = header & 0xFu;        // 通常 4 または 8
+      const uint32_t sym_bits = (sym_bits_raw == 0u) ? 8u : sym_bits_raw;
       const uint32_t decomp_len = header >> 8;
 
-      if (sym_bits == 0u || sym_bits > 8u || decomp_len == 0u ||
+      if (sym_bits > 8u || decomp_len == 0u ||
           decomp_len > 4u * 1024u * 1024u) {
         cpu_.regs[15] = next_pc;
         return true;
       }
+      if ((32u % sym_bits) != 0u || sym_bits == 1u) {
+        cpu_.regs[15] = next_pc;
+        return true;
+      }
 
-      // ツリーサイズバイト: (value+1)*2 = ツリーのバイト数
+      // 参照実装準拠: treesize = (tree_size_byte << 1) + 1
       const uint8_t  tree_size_byte = rd8(src_base + 4u);
       const uint32_t tree_base      = src_base + 5u;
-      const uint32_t tree_byte_size = (static_cast<uint32_t>(tree_size_byte) + 1u) * 2u;
-
-      // ビットストリームはツリー直後、4バイトアライメント
-      const uint32_t bs_start = (tree_base + tree_byte_size + 3u) & ~3u;
+      const uint32_t tree_byte_size = (static_cast<uint32_t>(tree_size_byte) << 1) + 1u;
+      const uint32_t bs_start = tree_base + tree_byte_size;
 
       const uint32_t sym_mask   = (sym_bits < 32u) ? ((1u << sym_bits) - 1u) : 0xFFFFFFFFu;
-      // 総シンボル数 = 展開バイト数 * 8 / シンボルビット幅
-      const uint32_t total_syms = (decomp_len * 8u) / sym_bits;
-
-      uint32_t bs_addr = bs_start;
-uint8_t  cur_byte = 0;
-int      bit_rem = 0;
+      WordMsbBitReader bit_reader(bs_start, [&](uint32_t a) { return rd32(a); });
 
       uint32_t node_ptr    = tree_base;   // カレントノードアドレス (ルートから開始)
       uint32_t out_block   = 0u;
       int      out_bits    = 0;
       uint32_t dst         = dst_base;
-      uint32_t syms_done   = 0u;
+      uint32_t remaining   = decomp_len;
 
-      while (syms_done < total_syms) {
-        // 次のビットを取得
-        if (bit_rem == 0) {
-  cur_byte = rd8(bs_addr++);
-  bit_rem = 8;
-}
-
-const bool go_right = (cur_byte & 0x80u) != 0u;
-cur_byte <<= 1;
---bit_rem;
+      while (remaining > 0u) {
+        const bool go_right = bit_reader.ReadBit();
 
         // ノード読み取りと子アドレス計算
         const uint8_t  node_val   = rd8(node_ptr);
@@ -639,21 +650,20 @@ cur_byte <<= 1;
             dst      += 4u;
             out_block = 0u;
             out_bits  = 0;
+            remaining = (remaining >= 4u) ? (remaining - 4u) : 0u;
           }
 
           // ルートへ戻る
           node_ptr = tree_base;
-          ++syms_done;
         } else {
           // 内部ノード: 子ノードへ進む
           node_ptr = child_addr;
         }
       }
 
-      // 残余ビットを書き出し (最終の不完全な 32bit ワード)
-      if (out_bits > 0) {
-        wr32(dst, out_block);
-      }
+      cpu_.regs[0] = bit_reader.next_addr;
+      cpu_.regs[1] = dst;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
 
       cpu_.regs[15] = next_pc;
       return true;
@@ -664,6 +674,7 @@ cur_byte <<= 1;
     // WRAM はバイト書き込み可能なのでインライン展開。
     // =========================================================================
     case 0x14u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       const uint32_t src = cpu_.regs[0];
       const uint32_t dst = cpu_.regs[1];
       const uint32_t decomp_len = rd32(src) >> 8;
@@ -674,6 +685,7 @@ cur_byte <<= 1;
       uint32_t s = src + 4u;
       uint32_t d = dst;
       uint32_t written = 0u;
+      const uint32_t padding = (4u - (decomp_len & 3u)) & 3u;
       while (written < decomp_len) {
         const uint8_t flags = rd8(s++);
         if (flags & 0x80u) {
@@ -687,6 +699,10 @@ cur_byte <<= 1;
             wr8(d++, rd8(s++));
         }
       }
+      for (uint32_t i = 0; i < padding; ++i) wr8(d++, 0u);
+      cpu_.regs[0] = s;
+      cpu_.regs[1] = d;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       cpu_.regs[15] = next_pc;
       return true;
     }
@@ -697,16 +713,56 @@ cur_byte <<= 1;
     //        バイトバッファへ展開後、16bit ペアで VRAM へ書き込む。
     // =========================================================================
     case 0x15u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       const uint32_t src = cpu_.regs[0];
       const uint32_t dst = cpu_.regs[1];
-      const std::vector<uint8_t> buf =
-          DecompressRLEBuffer(src, [&](uint32_t a) { return rd8(a); });
-      const uint32_t len = static_cast<uint32_t>(buf.size());
-      for (uint32_t i = 0u; i + 1u <= len; i += 2u) {
-        wr16(dst + i,
-             static_cast<uint16_t>(buf[i]) |
-             (static_cast<uint16_t>(buf[i + 1u]) << 8));
+      const uint32_t decomp_len = rd32(src & ~3u) >> 8;
+      if (decomp_len == 0u || decomp_len > 4u * 1024u * 1024u) {
+        cpu_.regs[15] = next_pc;
+        return true;
       }
+      uint32_t s = src + 4u;
+      uint32_t d = dst;
+      uint32_t written = 0u;
+      uint16_t half = 0u;
+      uint32_t padding = (4u - (decomp_len & 3u)) & 3u;
+      auto emit_byte = [&](uint8_t v) {
+        if ((d & 1u) != 0u) {
+          half = static_cast<uint16_t>(half | (static_cast<uint16_t>(v) << 8));
+          wr16((d ^ 1u), half);
+        } else {
+          half = v;
+        }
+        ++d;
+      };
+      while (written < decomp_len) {
+        const uint8_t flags = rd8(s++);
+        if (flags & 0x80u) {
+          uint32_t count = static_cast<uint32_t>(flags & 0x7Fu) + 3u;
+          const uint8_t val = rd8(s++);
+          while (count-- && written < decomp_len) {
+            emit_byte(val);
+            ++written;
+          }
+        } else {
+          uint32_t count = static_cast<uint32_t>(flags & 0x7Fu) + 1u;
+          while (count-- && written < decomp_len) {
+            emit_byte(rd8(s++));
+            ++written;
+          }
+        }
+      }
+      if (d & 1u) {
+        if (padding > 0u) --padding;
+        ++d;
+      }
+      for (; padding > 0u; padding -= 2u) {
+        wr16(d, 0u);
+        d += 2u;
+      }
+      cpu_.regs[0] = s;
+      cpu_.regs[1] = d;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       cpu_.regs[15] = next_pc;
       return true;
     }
@@ -718,6 +774,7 @@ cur_byte <<= 1;
     //        8bit 書き込みなので WRAM/WRAM2 向け。
     // =========================================================================
     case 0x16u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       const uint32_t src_addr  = cpu_.regs[0] & ~3u;
       const uint32_t dst_addr  = cpu_.regs[1];
       const uint32_t decomp_len = rd32(src_addr) >> 8;
@@ -732,6 +789,9 @@ cur_byte <<= 1;
         prev = static_cast<uint8_t>(prev + rd8(s++));
         wr8(d++, prev);
       }
+      cpu_.regs[0] = s;
+      cpu_.regs[1] = d;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       cpu_.regs[15] = next_pc;
       return true;
     }
@@ -742,6 +802,7 @@ cur_byte <<= 1;
     //        VRAM は 16bit 書き込みのみ有効なため、2バイトずつペアにして書く。
     // =========================================================================
     case 0x17u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       const uint32_t src_addr  = cpu_.regs[0] & ~3u;
       const uint32_t dst_addr  = cpu_.regs[1];
       const uint32_t decomp_len = rd32(src_addr) >> 8;
@@ -761,6 +822,9 @@ cur_byte <<= 1;
         wr16(d, static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8));
         d += 2u;
       }
+      cpu_.regs[0] = s;
+      cpu_.regs[1] = d;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       // 奇数バイトは実機でも VRAM に書かれない
       cpu_.regs[15] = next_pc;
       return true;
@@ -772,6 +836,7 @@ cur_byte <<= 1;
     //        prev[i] = prev[i-1] + encoded[i] (mod 65536)
     // =========================================================================
     case 0x18u: {
+      LogSwiTrace("begin", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       const uint32_t src_addr  = cpu_.regs[0] & ~3u;
       const uint32_t dst_addr  = cpu_.regs[1];
       const uint32_t decomp_len = rd32(src_addr) >> 8;
@@ -788,6 +853,9 @@ cur_byte <<= 1;
         wr16(d, prev);
         d += 2u;
       }
+      cpu_.regs[0] = s;
+      cpu_.regs[1] = d;
+      LogSwiTrace("end", swi_num, cpu_.regs[0], cpu_.regs[1], cpu_.regs[2], cpu_.regs[3], cpu_.regs[15]);
       cpu_.regs[15] = next_pc;
       return true;
     }

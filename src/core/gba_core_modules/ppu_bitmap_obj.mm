@@ -446,7 +446,13 @@ void GBACore::RenderSprites() {
     frame_buffer_.assign(required, 0xFF000000u);
   }
   const uint16_t dispcnt = ReadIO16(0x04000000u);
-  EnsureBgPriorityBufferSize();
+  // BG renderer initializes this once per frame.
+  // Do NOT reset here, otherwise all pixels become backdrop-priority(4) and
+  // OBJ priority checks against BG are broken (OBJ appears always on top).
+  auto& bg_priority = BgPriorityBuffer();
+  if (bg_priority.size() != required) {
+    bg_priority.assign(required, 4u);
+  }
   EnsureObjDrawnMaskBufferSize(); EnsureObjSemiTransMaskBufferSize();
   EnsureObjPriorityBuffersSize();
   if ((dispcnt & (1u << 12)) == 0) return;
@@ -454,7 +460,6 @@ void GBACore::RenderSprites() {
   const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
   const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
 
-  auto& bg_priority = BgPriorityBuffer();
   auto& obj_drawn = ObjDrawnMaskBuffer();
   auto& obj_semitrans = ObjSemiTransMaskBuffer();
   auto& obj_priority_buf = ObjPriorityBuffer();

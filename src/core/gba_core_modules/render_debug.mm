@@ -20,6 +20,7 @@ void GBACore::ApplyColorEffects() {
   const uint32_t evy = std::min<uint32_t>(16u, bldy & 0x1Fu);
 
   auto& bg_layer = BgLayerBuffer();
+  auto& bg_prio = BgPriorityBuffer();
   auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semi = ObjSemiTransMaskBuffer();
   auto& obj_under_drawn = ObjUnderDrawnMaskBuffer();
   auto& obj_under_prio = ObjUnderPriorityBuffer();
@@ -30,6 +31,7 @@ void GBACore::ApplyColorEffects() {
   auto& bg_sec_prio = BgSecondPriorityBuffer();
   const uint32_t backdrop_color = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
   if (bg_layer.size() != required) EnsureBgLayerBufferSize();
+  if (bg_prio.size() != required) EnsureBgPriorityBufferSize();
   if (obj_drawn.size() != required) EnsureObjDrawnMaskBufferSize();
   if (obj_semi.size() != required) EnsureObjSemiTransMaskBufferSize();
   if (bg_base.size() != required) EnsureBgBaseColorBufferSize();
@@ -80,9 +82,29 @@ void GBACore::ApplyColorEffects() {
         };
 
         if (top_is_obj) {
-          if (has_obj_under && obj_under_drawn[i]) try_target2_obj(obj_under_color[i]);
-          try_target2(bg_layer[i], bg_base[i]);
-          try_target2(bg_sec_layer[i], bg_sec[i]);
+          const bool bg1_ok = bg_layer[i] != kLayerBackdrop;
+          const bool bg2_ok = has_bg_sec_prio && (bg_sec_layer[i] != kLayerBackdrop);
+          const bool obj2_ok = has_obj_under && obj_under_drawn[i];
+          const uint8_t p_obj = obj2_ok ? obj_under_prio[i] : 4u;
+          const uint8_t p_bg1 = bg1_ok ? bg_prio[i] : 4u;
+          const uint8_t p_bg2 = bg2_ok ? bg_sec_prio[i] : 4u;
+          // 第二候補は「最前面に近い下位ピクセル」順に評価する。
+          // 優先度同値では OBJ > BG1 > BG2 の順。
+          struct Candidate { uint8_t prio; uint8_t type; };
+          // type: 0=OBJ-under, 1=BG-base, 2=BG-second
+          std::array<Candidate, 3> order{{
+              {p_obj, 0u}, {p_bg1, 1u}, {p_bg2, 2u}
+          }};
+          std::sort(order.begin(), order.end(), [](const Candidate& a, const Candidate& b) {
+            if (a.prio != b.prio) return a.prio < b.prio;
+            return a.type < b.type;
+          });
+          for (const Candidate& c : order) {
+            if (found_bot) break;
+            if (c.type == 0u && obj2_ok) try_target2_obj(obj_under_color[i]);
+            else if (c.type == 1u && bg1_ok) try_target2(bg_layer[i], bg_base[i]);
+            else if (c.type == 2u && bg2_ok) try_target2(bg_sec_layer[i], bg_sec[i]);
+          }
         } else {
           const bool obj2_ok = has_obj_under && obj_under_drawn[i];
           const bool bg2_ok = has_bg_sec_prio;

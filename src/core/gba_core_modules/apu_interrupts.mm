@@ -1,7 +1,15 @@
 #include "../gba_core.h"
 #include "./ppu_common.mm"
+#include <cstdio>
+#include <cstdlib>
 
 namespace gba {
+namespace {
+inline bool CpuExceptionTraceEnabled() {
+  static const bool enabled = (std::getenv("GBA_CPU_TRACE") != nullptr);
+  return enabled;
+}
+}  // namespace
 
 void GBACore::StepApu(uint32_t cycles) {
   // Lightweight APU model: PSG + FIFO mix.
@@ -321,6 +329,12 @@ void GBACore::EnterException(uint32_t vector_addr, uint32_t new_mode,
 
   cpu_.cpsr &= ~(1u << 5);  // 例外は常に ARM モードで入る
   cpu_.regs[15] = vector_addr;
+  if (CpuExceptionTraceEnabled()) {
+    std::fprintf(stderr,
+                 "[EXC] vec=%08X mode=%02X old_cpsr=%08X new_cpsr=%08X old_thumb=%u lr=%08X pc=%08X\n",
+                 vector_addr, target_mode, old_cpsr, cpu_.cpsr,
+                 thumb_state ? 1u : 0u, cpu_.regs[14], cpu_.regs[15]);
+  }
 }
 
 // =========================================================================
