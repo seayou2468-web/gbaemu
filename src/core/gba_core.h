@@ -171,6 +171,7 @@ class GBACore {
   void Write16(uint32_t addr, uint16_t value);
   void Write8(uint32_t addr, uint8_t value);
   uint16_t ReadIO16(uint32_t addr) const;
+  void WriteIO8(uint32_t addr, uint8_t value);
   void WriteIO16(uint32_t addr, uint16_t value);
   uint32_t RotateRight(uint32_t value, unsigned bits) const;
   uint32_t ApplyShift(uint32_t value, uint32_t shift_type, uint32_t shift_amount, bool* carry_out) const;

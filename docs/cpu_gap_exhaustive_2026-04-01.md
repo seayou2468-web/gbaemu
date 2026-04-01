@@ -50,6 +50,7 @@
 - [x] `Rd=PC` store値 `PC+12`
 - [x] `Rn/Rm=PC` の主要補正
 - [x] `Rn=PC` writeback UNPREDICTABLE を安全抑止
+- [x] `load + writeback + Rd==Rn` UNPREDICTABLE を安全抑止（load結果優先）
 - [ ] 全UNPREDICTABLE組み合わせのハード一致（要命令列テスト）
 
 ### 1.6 Halfword/Signed Transfer (Addr mode 3)
@@ -57,6 +58,7 @@
 - [x] odd-address LDRSH => signed byte
 - [x] `Rn/Rm/Rd=PC` の主要補正
 - [x] `Rn=PC` writeback UNPREDICTABLE 抑止
+- [x] `load + writeback + Rd==Rn` UNPREDICTABLE を安全抑止（load結果優先）
 - [ ] writeback corner の全一致（要網羅テスト）
 
 ### 1.7 Block Transfer (LDM/STM)
