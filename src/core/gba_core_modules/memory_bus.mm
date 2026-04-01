@@ -27,6 +27,12 @@ void GBACore::AddWaitstates(uint32_t addr, int size, bool is_write) const {
   (void)is_write;
   const uint32_t region = (addr >> 24) & 0xFu;
   const bool seq = last_access_valid_ && (((last_access_addr_ + static_cast<uint32_t>(last_access_size_)) & ~1u) == (addr & ~1u));
+  if (region >= 0x8u && region <= 0xDu) {
+    const size_t ws = (region - 0x8u) >> 1u;
+    if (size == 4) waitstates_accum_ += seq ? ws_seq_32_[ws] : ws_nonseq_32_[ws];
+    else waitstates_accum_ += seq ? ws_seq_16_[ws] : ws_nonseq_16_[ws];
+    return;
+  }
   if (size == 4) {
     waitstates_accum_ += seq ? kBaseSeq32[region] : kBaseNonSeq32[region];
   } else {
@@ -151,14 +157,46 @@ uint8_t GBACore::Read8(uint32_t addr) const {
 
 uint16_t GBACore::Read16(uint32_t addr) const {
   const uint32_t aligned = addr & ~1u;
-  const uint16_t v = static_cast<uint16_t>(Read8(aligned) | (Read8(aligned + 1) << 8));
+  const uint32_t region = aligned & kRegionMask;
+  uint16_t v = static_cast<uint16_t>(open_bus_latch_ & 0xFFFFu);
+  switch (region) {
+    case 0x00000000u:
+      if (aligned < 0x4000u) {
+        if (cpu_.regs[15] < 0x4000u || bios_loaded_) {
+          v = static_cast<uint16_t>(bios_[aligned & 0x3FFFu] | (bios_[(aligned + 1) & 0x3FFFu] << 8));
+          bios_data_latch_ = (bios_data_latch_ & 0xFFFF0000u) | v;
+        } else {
+          v = static_cast<uint16_t>(bios_data_latch_ & 0xFFFFu);
+        }
+      }
+      break;
+    case 0x02000000u: v = static_cast<uint16_t>(ewram_[aligned & 0x3FFFFu] | (ewram_[(aligned + 1) & 0x3FFFFu] << 8)); break;
+    case 0x03000000u: v = static_cast<uint16_t>(iwram_[aligned & 0x7FFFu] | (iwram_[(aligned + 1) & 0x7FFFu] << 8)); break;
+    case 0x04000000u: v = ReadIO16(aligned); break;
+    case 0x05000000u: v = static_cast<uint16_t>(palette_ram_[aligned & 0x3FFu] | (palette_ram_[(aligned + 1) & 0x3FFu] << 8)); break;
+    case 0x06000000u: v = static_cast<uint16_t>(vram_[aligned % vram_.size()] | (vram_[(aligned + 1) % vram_.size()] << 8)); break;
+    case 0x07000000u: v = static_cast<uint16_t>(oam_[aligned & 0x3FFu] | (oam_[(aligned + 1) & 0x3FFu] << 8)); break;
+    case 0x08000000u:
+    case 0x09000000u:
+    case 0x0A000000u:
+    case 0x0B000000u:
+    case 0x0C000000u:
+    case 0x0D000000u:
+      if (!rom_.empty()) v = static_cast<uint16_t>(rom_[aligned % rom_.size()] | (rom_[(aligned + 1) % rom_.size()] << 8));
+      break;
+    case 0x0E000000u: v = static_cast<uint16_t>(ReadBackup8(aligned) | (ReadBackup8(aligned + 1) << 8)); break;
+    default: break;
+  }
+  AddWaitstates(aligned, 2, false);
   UpdateOpenBus(aligned, v, 2);
   return v;
 }
 
 uint32_t GBACore::Read32(uint32_t addr) const {
   const uint32_t aligned = addr & ~3u;
-  uint32_t v = Read8(aligned) | (Read8(aligned + 1) << 8) | (Read8(aligned + 2) << 16) | (Read8(aligned + 3) << 24);
+  const uint32_t lo = Read16(aligned);
+  const uint32_t hi = Read16(aligned + 2);
+  uint32_t v = lo | (hi << 16);
   if (addr & 3u) {
     v = RotateRight(v, (addr & 3u) * 8u);
   }
@@ -187,12 +225,36 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
 
 void GBACore::Write16(uint32_t addr, uint16_t value) {
   const uint32_t aligned = addr & ~1u;
-  if ((aligned & kRegionMask) == 0x04000000u) {
-    WriteIO16(aligned, value);
-  } else {
-    Write8(aligned, static_cast<uint8_t>(value & 0xFFu));
-    Write8(aligned + 1, static_cast<uint8_t>(value >> 8));
+  const uint32_t region = aligned & kRegionMask;
+  switch (region) {
+    case 0x02000000u:
+      ewram_[aligned & 0x3FFFFu] = static_cast<uint8_t>(value & 0xFFu);
+      ewram_[(aligned + 1) & 0x3FFFFu] = static_cast<uint8_t>(value >> 8);
+      break;
+    case 0x03000000u:
+      iwram_[aligned & 0x7FFFu] = static_cast<uint8_t>(value & 0xFFu);
+      iwram_[(aligned + 1) & 0x7FFFu] = static_cast<uint8_t>(value >> 8);
+      break;
+    case 0x04000000u: WriteIO16(aligned, value); break;
+    case 0x05000000u:
+      palette_ram_[aligned & 0x3FFu] = static_cast<uint8_t>(value & 0xFFu);
+      palette_ram_[(aligned + 1) & 0x3FFu] = static_cast<uint8_t>(value >> 8);
+      break;
+    case 0x06000000u:
+      vram_[aligned % vram_.size()] = static_cast<uint8_t>(value & 0xFFu);
+      vram_[(aligned + 1) % vram_.size()] = static_cast<uint8_t>(value >> 8);
+      break;
+    case 0x07000000u:
+      oam_[aligned & 0x3FFu] = static_cast<uint8_t>(value & 0xFFu);
+      oam_[(aligned + 1) & 0x3FFu] = static_cast<uint8_t>(value >> 8);
+      break;
+    case 0x0E000000u:
+      WriteBackup8(aligned, static_cast<uint8_t>(value & 0xFFu));
+      WriteBackup8(aligned + 1, static_cast<uint8_t>(value >> 8));
+      break;
+    default: break;
   }
+  AddWaitstates(aligned, 2, true);
   UpdateOpenBus(aligned, value, 2);
 }
 
