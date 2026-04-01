@@ -89,26 +89,6 @@ inline int16_t GbaCosLocal(uint16_t angle) {
   return GbaSinLutLocal()[static_cast<uint16_t>(angle + kQuarterTurn)];
 }
 
-inline bool ShouldHandleSwiInHleFastPath(uint32_t swi_num) {
-  switch (swi_num & 0xFFu) {
-    case 0x04u:  // IntrWait
-    case 0x05u:  // VBlankIntrWait
-    case 0x06u:  // Div
-    case 0x07u:  // DivArm
-    case 0x08u:  // Sqrt
-    case 0x09u:  // ArcTan
-    case 0x0Au:  // ArcTan2
-    case 0x0Bu:  // CpuSet
-    case 0x0Cu:  // CpuFastSet
-    case 0x0Du:  // GetBiosChecksum
-    case 0x0Eu:  // BgAffineSet
-    case 0x0Fu:  // ObjAffineSet
-      return true;
-    default:
-      return false;
-  }
-}
-
 inline bool SwiTraceEnabled() {
   static const bool enabled = (std::getenv("GBA_SWI_TRACE") != nullptr);
   return enabled;
@@ -206,8 +186,8 @@ struct WordMsbBitReader {
 bool GBACore::HandleSoftwareInterrupt(uint32_t swi_imm, bool thumb_state) {
   const uint32_t swi_num = swi_imm & 0xFFu;
   const bool vector_boot = bios_loaded_ && bios_boot_via_vector_;
-  // 実BIOSベクタモードでも、頻出/重い処理はHLEで高速処理するハイブリッド運用。
-  if (vector_boot && !ShouldHandleSwiInHleFastPath(swi_num)) {
+  // 実BIOSベクタモードは正確性優先で常に実BIOS SWIへ委譲する。
+  if (vector_boot) {
     cpu_.regs[15] += thumb_state ? 2u : 4u;
     EnterException(0x00000008u, 0x13u, true, thumb_state);
     return true;
