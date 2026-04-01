@@ -53,15 +53,11 @@ inline void Write32Vram(std::array<uint8_t, 96 * 1024>& vram, uint32_t addr, uin
 
 inline bool IsWriteOnlyIo16(uint32_t addr) {
   addr &= ~1u;
-  // BG scroll/affine parameters and refs (write-only)
   if (addr >= 0x04000010u && addr <= 0x0400001Eu) return true;
   if (addr >= 0x04000020u && addr <= 0x0400003Eu) return true;
-  // MOSAIC
   if (addr == 0x0400004Cu) return true;
-  // Sound FIFO write ports
   if (addr == 0x040000A0u || addr == 0x040000A2u ||
       addr == 0x040000A4u || addr == 0x040000A6u) return true;
-  // DMA SAD/DAD/CNT_L are write-only. CNT_H is readable.
   if (addr >= 0x040000B0u && addr <= 0x040000DEu) {
     if (addr == 0x040000BAu || addr == 0x040000C6u ||
         addr == 0x040000D2u || addr == 0x040000DEu) {
@@ -109,7 +105,7 @@ void GBACore::AddWaitstates(uint32_t addr, int size, bool is_write) const {
     case 0x06: cycles = (size == 4) ? 2 : 1; break;
     case 0x07: cycles = 1; break;
     case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
-      const uint32_t ws_sel = std::min(((addr >> 25) & 3u), 2u); // 0=WS0,1=WS1,2=WS2
+      const uint32_t ws_sel = std::min(((addr >> 25) & 3u), 2u);
       if (size == 4) {
         cycles = seq ? ws_seq_32_[ws_sel] : ws_nonseq_32_[ws_sel];
       } else {
@@ -139,13 +135,8 @@ void GBACore::RebuildGamePakWaitstateTables(uint16_t waitcnt) {
   const uint8_t s1 = kSeq1[(waitcnt >> 7) & 0x1u];
   const uint8_t s2 = kSeq2[(waitcnt >> 10) & 0x1u];
 
-  ws_nonseq_16_[0] = n0;
-  ws_nonseq_16_[1] = n1;
-  ws_nonseq_16_[2] = n2;
-  ws_seq_16_[0] = s0;
-  ws_seq_16_[1] = s1;
-  ws_seq_16_[2] = s2;
-
+  ws_nonseq_16_[0] = n0; ws_nonseq_16_[1] = n1; ws_nonseq_16_[2] = n2;
+  ws_seq_16_[0] = s0;    ws_seq_16_[1] = s1;    ws_seq_16_[2] = s2;
   ws_nonseq_32_[0] = static_cast<uint8_t>(n0 + s0);
   ws_nonseq_32_[1] = static_cast<uint8_t>(n1 + s1);
   ws_nonseq_32_[2] = static_cast<uint8_t>(n2 + s2);
@@ -188,24 +179,28 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
       bios_data_latch_  = val;
       return val;
     }
+    // BIOS protection: return last fetched BIOS word when PC is outside BIOS
     return bios_fetch_latch_;
   }
+
+  // Unused region 0x01000000-0x01FFFFFF → open bus
+  if (a < 0x02000000u) return open_bus_latch_;
 
   if (a >= 0x02000000u && a <= 0x02FFFFFFu)
     return Read32Wrap(ewram_.data(), a & 0x3FFFFu, ewram_.size());
   if (a >= 0x03000000u && a <= 0x03FFFFFFu)
     return Read32Wrap(iwram_.data(), a & 0x7FFFu, iwram_.size());
-  if (a >= 0x04000000u && a <= 0x040003FCu)
-    {
-      auto read_io_cpu = [&](uint32_t ra) -> uint16_t {
-        const uint16_t v = ReadIO16(ra);
-        if (!IsWriteOnlyIo16(ra)) return v;
-        const uint32_t sh = (ra & 2u) ? 16u : 0u;
-        return static_cast<uint16_t>((open_bus_latch_ >> sh) & 0xFFFFu);
-      };
-      return static_cast<uint32_t>(read_io_cpu(a)) |
-             (static_cast<uint32_t>(read_io_cpu(a+2u))<<16);
-    }
+  if (a >= 0x04000000u && a <= 0x040003FCu) {
+    auto read_io_cpu = [&](uint32_t ra) -> uint16_t {
+      const uint16_t v = ReadIO16(ra);
+      if (!IsWriteOnlyIo16(ra)) return v;
+      const uint32_t sh = (ra & 2u) ? 16u : 0u;
+      return static_cast<uint16_t>((open_bus_latch_ >> sh) & 0xFFFFu);
+    };
+    return static_cast<uint32_t>(read_io_cpu(a)) |
+           (static_cast<uint32_t>(read_io_cpu(a+2u))<<16);
+  }
+  // Unused IO space → open bus
   if (a >= 0x04000400u && a < 0x05000000u) return open_bus_latch_;
 
   // Palette / VRAM / OAM : 常時アクセス可能 (GBATek仕様)
@@ -220,17 +215,34 @@ uint32_t GBACore::ReadBus32(uint32_t a) const {
     if (backup_type_ == BackupType::kEEPROM && a >= 0x0D000000u)
       return (open_bus_latch_ & ~1u) | (ReadBackup8(a) & 1u);
     if (!rom_.empty()) {
+      // ROM address maps WS0/WS1/WS2 all to the same 32MB physical ROM space.
       const size_t base = static_cast<size_t>((a - 0x08000000u) & 0x01FFFFFFu);
-      auto rb = [&](size_t o) -> uint8_t { return (o < rom_.size()) ? rom_[o] : 0u; };
-      return rb(base)|(static_cast<uint32_t>(rb(base+1))<<8)|
-             (static_cast<uint32_t>(rb(base+2))<<16)|(static_cast<uint32_t>(rb(base+3))<<24);
+      // FIXED: Out-of-bounds ROM reads return open bus (GBA behavior),
+      //        not zero. Zero would cause garbage instruction execution
+      //        (e.g., 0x00000000 = ANDEQ R0,R0,R0 in ARM loops).
+      auto rb = [&](size_t o) -> uint8_t {
+        if (o < rom_.size()) return rom_[o];
+        // Beyond ROM size: return the corresponding open bus lane.
+        // GBA bus holds last valid data for that lane position.
+        return static_cast<uint8_t>((open_bus_latch_ >> ((o & 3u) * 8u)) & 0xFFu);
+      };
+      const uint32_t v = rb(base) |
+                         (static_cast<uint32_t>(rb(base+1u)) << 8) |
+                         (static_cast<uint32_t>(rb(base+2u)) << 16) |
+                         (static_cast<uint32_t>(rb(base+3u)) << 24);
+      // Update the open bus latch with the ROM fetch value
+      open_bus_latch_ = v;
+      return v;
     }
     return open_bus_latch_;
   }
   if (a >= 0x0E000000u)
-    return static_cast<uint32_t>(ReadBackup8(a)) | (static_cast<uint32_t>(ReadBackup8(a+1u))<<8) |
-           (static_cast<uint32_t>(ReadBackup8(a+2u))<<16) | (static_cast<uint32_t>(ReadBackup8(a+3u))<<24);
+    return static_cast<uint32_t>(ReadBackup8(a)) |
+           (static_cast<uint32_t>(ReadBackup8(a+1u)) << 8) |
+           (static_cast<uint32_t>(ReadBackup8(a+2u)) << 16) |
+           (static_cast<uint32_t>(ReadBackup8(a+3u)) << 24);
 
+  // All other unmapped regions return open bus
   return open_bus_latch_;
 }
 
@@ -244,11 +256,10 @@ uint32_t GBACore::Read32(uint32_t addr) const {
     return v;
   }
   const uint32_t aligned = ReadBus32(addr & ~3u);
-const uint32_t rot = (addr & 3u) * 8u;
-const uint32_t v = rot ? ((aligned >> rot) | (aligned << (32u - rot))) : aligned;
-
-UpdateOpenBus(addr, v, 4);
-return v;
+  const uint32_t rot = (addr & 3u) * 8u;
+  const uint32_t v = rot ? ((aligned >> rot) | (aligned << (32u - rot))) : aligned;
+  UpdateOpenBus(addr, v, 4);
+  return v;
 }
 
 uint16_t GBACore::Read16(uint32_t addr) const {
@@ -275,8 +286,8 @@ uint8_t GBACore::Read8(uint32_t addr) const {
   }
   const uint32_t v32 = ReadBus32(addr & ~3u);
   const uint8_t val = static_cast<uint8_t>(v32 >> ((addr & 3u)*8u));
-UpdateOpenBus(addr, val, 1);
-return val;
+  UpdateOpenBus(addr, val, 1);
+  return val;
 }
 
 // =========================================================================
@@ -319,7 +330,6 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
   UpdateOpenBus(addr, static_cast<uint32_t>(value)|(static_cast<uint32_t>(value)<<16), 2);
   const uint32_t a = addr & ~1u;
   if (a >= 0x04000000u && a <= 0x040003FEu) { WriteIO16(a, value); return; }
-  // Palette / VRAM / OAM 常時書き込み可能
   if (a >= 0x05000000u && a <= 0x05FFFFFFu) {
     Write16Wrap(palette_ram_.data(), a & 0x3FFu, palette_ram_.size(), value); return;
   }
@@ -340,6 +350,7 @@ void GBACore::Write16(uint32_t addr, uint16_t value) {
     WriteBackup8(a+1u, static_cast<uint8_t>((value>>8) & 0xFFu));
     return;
   }
+  // Writes to unmapped regions are ignored on GBA hardware
 }
 
 void GBACore::Write8(uint32_t addr, uint8_t value) {
@@ -369,26 +380,23 @@ void GBACore::Write8(uint32_t addr, uint8_t value) {
     Write16Wrap(palette_ram_.data(), (addr & ~1u) & 0x3FFu, palette_ram_.size(), v16);
     return;
   }
-  // VRAM 8bit: BGエリア(~0xFFFF)のみ有効
+  // VRAM 8bit: BGエリアのみ有効
   if (addr >= 0x06000000u && addr <= 0x06FFFFFFu) {
     const uint32_t a16 = addr & ~1u;
     const uint32_t voff = VramOffset(a16);
     const uint16_t dispcnt = ReadIO16(0x04000000u);
     const uint8_t bg_mode = static_cast<uint8_t>(dispcnt & 0x7u);
-    // In bitmap modes 3-5, BG bitmap area extends to 0x13FFF.
     uint32_t bg_byte_limit;
-if (bg_mode >= 3 && bg_mode <= 5) {
-  bg_byte_limit = 0x14000u;
-} else {
-  bg_byte_limit = 0x10000u;
-}
+    if (bg_mode >= 3 && bg_mode <= 5) {
+      bg_byte_limit = 0x14000u;
+    } else {
+      bg_byte_limit = 0x10000u;
+    }
     if (voff < bg_byte_limit) {
-      // VRAM byte writes behave as mirrored halfword writes.
       const uint16_t v16 = static_cast<uint16_t>(value) |
                            (static_cast<uint16_t>(value) << 8);
       Write16Vram(vram_, a16, v16);
     }
-    // OBJエリアへの8bit書き込みは無視
     return;
   }
   // OAM 8bit: 無視 (GBATek: OAMは16/32bitのみ)
@@ -396,6 +404,7 @@ if (bg_mode >= 3 && bg_mode <= 5) {
   if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) { ewram_[addr & 0x3FFFFu] = value; return; }
   if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) { iwram_[addr & 0x7FFFu]  = value; return; }
   if (addr >= 0x0E000000u) { WriteBackup8(addr, value); return; }
+  // Writes to unmapped regions are ignored
 }
 
 // =========================================================================
@@ -411,10 +420,9 @@ uint16_t GBACore::ReadIO16(uint32_t addr) const {
   switch (addr) {
     case 0x04000006u: val &= 0x00FFu; break;
     case 0x04000130u: val |= 0xFC00u; break;
-    case 0x04000136u: val &= 0xC1FFu; break;  // RCNT
-    case 0x04000208u: val &= 0x0001u; break;  // IME
+    case 0x04000136u: val &= 0xC1FFu; break;
+    case 0x04000208u: val &= 0x0001u; break;
     case 0x04000084u: val &= 0x008Fu; break;
-    // 書き込み専用
     case 0x040000A0u: case 0x040000A2u:
     case 0x040000A4u: case 0x040000A6u: return 0;
     default: break;
@@ -423,7 +431,7 @@ uint16_t GBACore::ReadIO16(uint32_t addr) const {
 }
 
 // =========================================================================
-// I/O Write (DMA CNT_H アドレス修正済み)
+// I/O Write
 // =========================================================================
 void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   addr &= ~1u;
@@ -432,9 +440,9 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (off + 1u >= io_regs_.size()) return;
 
   switch (addr) {
-    case 0x04000000u: value &= 0xFFF7u; break; // DISPCNT
+    case 0x04000000u: value &= 0xFFF7u; break;
 
-    case 0x04000004u: { // DISPSTAT
+    case 0x04000004u: {
       const uint16_t ro = static_cast<uint16_t>(io_regs_[off] & 0x07u);
       value = (value & 0xFF38u) | ro;
       const uint16_t lyc = (value >> 8) & 0xFFu;
@@ -442,8 +450,8 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       if (vc == lyc) value |= 0x0004u; else value &= ~0x0004u;
       break;
     }
-    case 0x04000006u: return; // VCOUNT R/O
-    case 0x04000128u: { // SIOCNT
+    case 0x04000006u: return;
+    case 0x04000128u: {
       value &= 0x7FFFu;
       const uint16_t old = ReadIO16(0x04000128u);
       UpdateSioMode();
@@ -454,42 +462,33 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
       if (start_edge) StartSioTransfer(value);
       return;
     }
-    case 0x04000134u: // RCNT
+    case 0x04000134u:
       value &= 0xC1FFu;
       sio_.transfer_active = false;
       sio_.transfer_cycles_remaining = 0;
       break;
-    case 0x04000140u: // JOYCNT
-      value &= 0x004Fu;
-      break;
-    case 0x04000158u: { // JOYSTAT (partial writable bits)
+    case 0x04000140u: value &= 0x004Fu; break;
+    case 0x04000158u: {
       const uint16_t old = ReadIO16(0x04000158u);
       value = static_cast<uint16_t>((old & ~0x0030u) | (value & 0x0030u));
       break;
     }
 
-    case 0x04000202u: { // IF: ビット書き込みでクリア
+    case 0x04000202u: {
       const uint16_t old = static_cast<uint16_t>(io_regs_[off]) |
                            (static_cast<uint16_t>(io_regs_[off+1]) << 8);
       value = old & ~value;
       break;
     }
-    case 0x04000200u: // IE
-      value &= 0x3FFFu;
-      break;
-    case 0x04000208u: // IME
-      value &= 0x0001u;
-      break;
-    case 0x04000130u: return; // KEYINPUT R/O
-    case 0x04000132u: value &= 0xC3FFu; break; // KEYCNT
+    case 0x04000200u: value &= 0x3FFFu; break;
+    case 0x04000208u: value &= 0x0001u; break;
+    case 0x04000130u: return;
+    case 0x04000132u: value &= 0xC3FFu; break;
 
-    // ----------------------------------------------------------------
-    // DMA CNT_H レジスタ (正しいアドレス: BA/C6/D2/DE)
-    // ----------------------------------------------------------------
-    case 0x040000BAu: // DMA0CNT_H
-    case 0x040000C6u: // DMA1CNT_H
-    case 0x040000D2u: // DMA2CNT_H
-    case 0x040000DEu: { // DMA3CNT_H
+    case 0x040000BAu:
+    case 0x040000C6u:
+    case 0x040000D2u:
+    case 0x040000DEu: {
       int ch;
       if      (addr == 0x040000BAu) ch = 0;
       else if (addr == 0x040000C6u) ch = 1;
@@ -498,23 +497,19 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
 
       const uint16_t old_cnt = static_cast<uint16_t>(io_regs_[off]) |
                                (static_cast<uint16_t>(io_regs_[off+1]) << 8);
-      // ビットマスク (DMA0は送信元DEC禁止など)
       uint16_t mask = (ch == 3) ? 0xFFE0u : 0xF7E0u;
       value &= mask;
       if (ch == 0 && ((value >> 12) & 3u) == 3u) value &= ~(3u << 12);
 
-      // 0→1遷移: シャドウレジスタ初期化
       if (!(old_cnt & 0x8000u) && (value & 0x8000u)) {
-        // DMAレジスタベース (SAD/DAD/CNT_L は前に配置)
-        // DMA0: B0=SAD, B4=DAD, B8=CNT_L, BA=CNT_H
-        // DMA1: BC=SAD, C0=DAD, C4=CNT_L, C6=CNT_H
         uint32_t dma_base;
-switch (ch) {
-  case 0: dma_base = 0x040000B0u; break;
-  case 1: dma_base = 0x040000BCu; break;
-  case 2: dma_base = 0x040000C8u; break;
-  case 3: dma_base = 0x040000D4u; break;
-} // CNT_H - 10 = SAD
+        switch (ch) {
+          case 0: dma_base = 0x040000B0u; break;
+          case 1: dma_base = 0x040000BCu; break;
+          case 2: dma_base = 0x040000C8u; break;
+          case 3: dma_base = 0x040000D4u; break;
+          default: dma_base = 0x040000B0u; break;
+        }
         const size_t boff = static_cast<size_t>(dma_base - 0x04000000u);
         auto read_raw32 = [&](size_t o) -> uint32_t {
           if (o + 3u >= io_regs_.size()) return 0;
@@ -544,13 +539,11 @@ switch (ch) {
       break;
     }
 
-    // タイマーリロード値 (CNT_L)
     case 0x04000100u: timers_[0].reload=value; if(!(timers_[0].control&0x80u)){timers_[0].counter=value;io_regs_[0x100]=value&0xFF;io_regs_[0x101]=(value>>8)&0xFF;} break;
     case 0x04000104u: timers_[1].reload=value; if(!(timers_[1].control&0x80u)){timers_[1].counter=value;io_regs_[0x104]=value&0xFF;io_regs_[0x105]=(value>>8)&0xFF;} break;
     case 0x04000108u: timers_[2].reload=value; if(!(timers_[2].control&0x80u)){timers_[2].counter=value;io_regs_[0x108]=value&0xFF;io_regs_[0x109]=(value>>8)&0xFF;} break;
     case 0x0400010Cu: timers_[3].reload=value; if(!(timers_[3].control&0x80u)){timers_[3].counter=value;io_regs_[0x10C]=value&0xFF;io_regs_[0x10D]=(value>>8)&0xFF;} break;
 
-    // タイマー制御 (CNT_H)
     case 0x04000102u: { const uint16_t old=timers_[0].control; timers_[0].control=value&0x00C7u; if(!(old&0x80u)&&(value&0x80u)){timers_[0].counter=timers_[0].reload;timers_[0].prescaler_accum=0;io_regs_[0x100]=timers_[0].reload&0xFF;io_regs_[0x101]=(timers_[0].reload>>8)&0xFF;} io_regs_[off]=timers_[0].control&0xFF;io_regs_[off+1]=(timers_[0].control>>8)&0xFF;return; }
     case 0x04000106u: { const uint16_t old=timers_[1].control; timers_[1].control=value&0x00C7u; if(!(old&0x80u)&&(value&0x80u)){timers_[1].counter=timers_[1].reload;timers_[1].prescaler_accum=0;io_regs_[0x104]=timers_[1].reload&0xFF;io_regs_[0x105]=(timers_[1].reload>>8)&0xFF;} io_regs_[off]=timers_[1].control&0xFF;io_regs_[off+1]=(timers_[1].control>>8)&0xFF;return; }
     case 0x0400010Au: { const uint16_t old=timers_[2].control; timers_[2].control=value&0x00C7u; if(!(old&0x80u)&&(value&0x80u)){timers_[2].counter=timers_[2].reload;timers_[2].prescaler_accum=0;io_regs_[0x108]=timers_[2].reload&0xFF;io_regs_[0x109]=(timers_[2].reload>>8)&0xFF;} io_regs_[off]=timers_[2].control&0xFF;io_regs_[off+1]=(timers_[2].control>>8)&0xFF;return; }
@@ -559,9 +552,8 @@ switch (ch) {
     case 0x04000204u:
       value &= 0x5FFFu;
       RebuildGamePakWaitstateTables(value);
-      break; // WAITCNT
-    case 0x04000088u: value &= 0xC3FEu; break; // SOUNDBIAS
-    // FIFO書き込みはWrite32で処理
+      break;
+    case 0x04000088u: value &= 0xC3FEu; break;
     case 0x040000A0u: case 0x040000A2u: return;
     case 0x040000A4u: case 0x040000A6u: return;
     default: break;
@@ -574,8 +566,6 @@ switch (ch) {
     UpdateSioMode();
   }
 
-  // Tonc/GBATek: BG2/3X,Y reference registers written outside VBlank are
-  // immediately reflected to the internal affine origin of the current line.
   if (addr >= 0x04000028u && addr <= 0x0400003Eu) {
     const bool is_affine_ref_reg =
         addr == 0x04000028u || addr == 0x0400002Au ||
@@ -603,7 +593,6 @@ switch (ch) {
     }
   }
 
-  // DMA即時起動 (start_timing=0)
   if ((addr==0x040000BAu||addr==0x040000C6u||addr==0x040000D2u||addr==0x040000DEu)
       && (value & 0x8000u) && ((value >> 12) & 3u) == 0u) {
     int ch = static_cast<int>((addr - 0x040000BAu) / 0x0Cu);
