@@ -14,6 +14,7 @@
 ## 今回詰めた差分（拡張版）
 
 ### Thumb
+- Thumb high-register `ADD` で `Rd=PC` の左オペランドを `PC+4` 扱いへ補正。
 - 速度改善: Thumb ALU register-shift で Carry取得の重複呼び出しを削減。
 - Thumb high-register `CMP` で `Rd=PC` の左オペランドを `PC+4` に補正。
 - Thumb ALU register-shift（`LSL/LSR/ASR/ROR`）で `amount=0` 時に値不変・carry保持となる register-shift semantics を補正。

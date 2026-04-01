@@ -153,7 +153,8 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint32_t rm = ((opcode >> 3) & 0x7u) | (h2 << 3);
     const uint32_t rm_value = (rm == 15) ? (cpu_.regs[15] + 4u) : cpu_.regs[rm];
     if (op == 0) {
-      cpu_.regs[rd] += rm_value;
+      const uint32_t lhs = (rd == 15) ? (cpu_.regs[15] + 4u) : cpu_.regs[rd];
+      cpu_.regs[rd] = lhs + rm_value;
       if (rd == 15) {
         cpu_.regs[15] &= ~1u;
         return;
