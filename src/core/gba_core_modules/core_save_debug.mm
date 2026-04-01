@@ -1,368 +1,645 @@
-#include "../gba_core.h"
+// iOS-focused translation-unit optimization hints (no behavior change).
+#if defined(__APPLE__) && defined(__clang__)
+#pragma clang optimize on
+#endif
+// Rebuilt Objective-C++ module from reference implementation sources.
+// NOTE: Source bodies are embedded and adapted here (no direct include of reference files).
+#if defined(__cplusplus)
+extern "C" {
+#endif
 
-#include <algorithm>
+// ---- BEGIN rewritten from reference implementation/dma.c ----
+mLOG_DEFINE_CATEGORY(GBA_DMA, "GBA DMA", "gba.dma");
 
-namespace gba {
+static void _dmaEvent(struct mTiming* timing, void* context, uint32_t cyclesLate);
 
-std::vector<uint8_t> GBACore::SaveStateBlob() const {
-  auto append_u32 = [](std::vector<uint8_t>* out, uint32_t v) {
-    out->push_back(static_cast<uint8_t>(v & 0xFF));
-    out->push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
-    out->push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
-    out->push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
-  };
-  auto append_u64 = [&](std::vector<uint8_t>* out, uint64_t v) {
-    append_u32(out, static_cast<uint32_t>(v & 0xFFFFFFFFu));
-    append_u32(out, static_cast<uint32_t>(v >> 32));
-  };
-  std::vector<uint8_t> blob;
-  blob.reserve(512 * 1024);
-  blob.insert(blob.end(), {'G', 'B', 'A', 'S'});
-  append_u32(&blob, 11u);  // version
-  append_u64(&blob, frame_count_);
-  append_u64(&blob, executed_cycles_);
-  append_u32(&blob, cpu_.cpsr);
-  append_u32(&blob, ppu_cycle_accum_);
-  append_u32(&blob, audio_mix_level_);
-  append_u32(&blob, bios_fetch_latch_);
-  append_u32(&blob, keys_pressed_mask_);
-  append_u32(&blob, previous_keys_mask_);
-  append_u32(&blob, static_cast<uint32_t>(backup_type_));
-  append_u32(&blob, flash_mode_unlocked_ ? 1u : 0u);
-  append_u32(&blob, flash_command_);
-  append_u32(&blob, flash_id_mode_ ? 1u : 0u);
-  append_u32(&blob, flash_program_mode_ ? 1u : 0u);
-  append_u32(&blob, flash_bank_switch_mode_ ? 1u : 0u);
-  append_u32(&blob, flash_bank_);
-  append_u32(&blob, static_cast<uint32_t>(static_cast<uint16_t>(fifo_a_last_sample_)));
-  append_u32(&blob, static_cast<uint32_t>(static_cast<uint16_t>(fifo_b_last_sample_)));
-  append_u32(&blob, apu_phase_sq1_);
-  append_u32(&blob, apu_phase_sq2_);
-  append_u32(&blob, apu_phase_wave_);
-  append_u32(&blob, apu_noise_lfsr_);
-  append_u32(&blob, apu_frame_seq_cycles_);
-  append_u32(&blob, apu_frame_seq_step_);
-  append_u32(&blob, apu_env_ch1_);
-  append_u32(&blob, apu_env_ch2_);
-  append_u32(&blob, apu_env_ch4_);
-  append_u32(&blob, apu_env_timer_ch1_);
-  append_u32(&blob, apu_env_timer_ch2_);
-  append_u32(&blob, apu_env_timer_ch4_);
-  append_u32(&blob, apu_len_ch1_);
-  append_u32(&blob, apu_len_ch2_);
-  append_u32(&blob, apu_len_ch3_);
-  append_u32(&blob, apu_len_ch4_);
-  append_u32(&blob, apu_ch1_sweep_freq_);
-  append_u32(&blob, apu_ch1_sweep_timer_);
-  append_u32(&blob, apu_ch1_sweep_enabled_ ? 1u : 0u);
-  append_u32(&blob, apu_ch1_active_ ? 1u : 0u);
-  append_u32(&blob, apu_ch2_active_ ? 1u : 0u);
-  append_u32(&blob, apu_ch3_active_ ? 1u : 0u);
-  append_u32(&blob, apu_ch4_active_ ? 1u : 0u);
-  append_u32(&blob, static_cast<uint32_t>(fifo_a_.size()));
-  for (uint8_t b : fifo_a_) append_u32(&blob, b);
-  append_u32(&blob, static_cast<uint32_t>(fifo_b_.size()));
-  for (uint8_t b : fifo_b_) append_u32(&blob, b);
-  append_u32(&blob, static_cast<uint32_t>(eeprom_read_pos_));
-  append_u32(&blob, static_cast<uint32_t>(eeprom_addr_bits_));
-  append_u32(&blob, static_cast<uint32_t>(eeprom_cmd_bits_.size()));
-  for (uint8_t b : eeprom_cmd_bits_) append_u32(&blob, b);
-  append_u32(&blob, static_cast<uint32_t>(eeprom_read_bits_.size()));
-  for (uint8_t b : eeprom_read_bits_) append_u32(&blob, b);
-  for (uint32_t r : cpu_.regs) append_u32(&blob, r);
-  for (uint32_t v : cpu_.banked_fiq_r8_r12) append_u32(&blob, v);
-  for (uint32_t v : cpu_.banked_sp) append_u32(&blob, v);
-  for (uint32_t v : cpu_.banked_lr) append_u32(&blob, v);
-  for (uint32_t v : cpu_.spsr) append_u32(&blob, v);
-  append_u32(&blob, cpu_.active_mode);
-  blob.insert(blob.end(), ewram_.begin(), ewram_.end());
-  blob.insert(blob.end(), iwram_.begin(), iwram_.end());
-  blob.insert(blob.end(), io_regs_.begin(), io_regs_.end());
-  blob.insert(blob.end(), palette_ram_.begin(), palette_ram_.end());
-  blob.insert(blob.end(), vram_.begin(), vram_.end());
-  blob.insert(blob.end(), oam_.begin(), oam_.end());
-  blob.insert(blob.end(), sram_.begin(), sram_.end());
-  blob.insert(blob.end(), eeprom_.begin(), eeprom_.end());
-  blob.insert(blob.end(), flash_bank1_.begin(), flash_bank1_.end());
-  return blob;
+static void GBADMAService(struct GBA* gba, int number, struct GBADMA* info);
+
+static const int DMA_OFFSET[] = { 1, -1, 0, 1 };
+
+static const uint32_t DMA_SRC_MASK[] = {
+  0x07FFFFFE,
+  0x0FFFFFFE,
+  0x0FFFFFFE,
+  0x0FFFFFFE,
+};
+
+static const uint32_t DMA_DST_MASK[] = {
+  0x07FFFFFE,
+  0x07FFFFFE,
+  0x07FFFFFE,
+  0x0FFFFFFE,
+};
+
+void GBADMAInit(struct GBA* gba) {
+  gba->memory.dmaEvent.name = "GBA DMA";
+  gba->memory.dmaEvent.callback = _dmaEvent;
+  gba->memory.dmaEvent.context = gba;
+  gba->memory.dmaEvent.priority = 0x40;
 }
 
-bool GBACore::LoadStateBlob(const std::vector<uint8_t>& blob, std::string* error) {
-  auto read_u32 = [&](size_t* off, uint32_t* out) -> bool {
-    if (*off + 4 > blob.size()) return false;
-    *out = static_cast<uint32_t>(blob[*off]) |
-           (static_cast<uint32_t>(blob[*off + 1]) << 8) |
-           (static_cast<uint32_t>(blob[*off + 2]) << 16) |
-           (static_cast<uint32_t>(blob[*off + 3]) << 24);
-    *off += 4;
-    return true;
-  };
-  auto read_u64 = [&](size_t* off, uint64_t* out) -> bool {
-    uint32_t lo = 0, hi = 0;
-    if (!read_u32(off, &lo) || !read_u32(off, &hi)) return false;
-    *out = static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
-    return true;
-  };
+void GBADMAReset(struct GBA* gba) {
+  memset(gba->memory.dma, 0, sizeof(gba->memory.dma));
+  int i;
+  for (i = 0; i < 4; ++i) {
+    gba->memory.dma[i].count = 0x4000;
+    gba->memory.dma[i].latch = 0;
+  }
+  gba->memory.dma[3].count = 0x10000;
+  gba->memory.activeDMA = -1;
+}
+static bool _isValidDMASAD(int dma, uint32_t address) {
+  if (dma == 0 && address >= GBA_BASE_ROM0 && address < GBA_BASE_SRAM) {
+    return false;
+  }
+  return address >= GBA_BASE_EWRAM;
+}
 
-  size_t off = 0;
-  if (blob.size() < 8 || blob[0] != 'G' || blob[1] != 'B' || blob[2] != 'A' || blob[3] != 'S') {
-    if (error) *error = "Invalid savestate magic.";
-    return false;
+static bool _isValidDMADAD(int dma, uint32_t address) {
+  return dma == 3 || address < GBA_BASE_ROM0;
+}
+
+uint32_t GBADMAWriteSAD(struct GBA* gba, int dma, uint32_t address) {
+  struct GBAMemory* memory = &gba->memory;
+  if (!_isValidDMASAD(dma, address)) {
+    mLOG(GBA_DMA, GAME_ERROR, "Invalid DMA source address: 0x%08X", address);
   }
-  off = 4;
-  uint32_t version = 0;
-  if (!read_u32(&off, &version) ||
-      (version != 1u && version != 2u && version != 3u && version != 4u && version != 5u &&
-       version != 6u && version != 7u && version != 8u && version != 9u && version != 10u)) {
-    if (error) *error = "Unsupported savestate version.";
-    return false;
+  memory->dma[dma].source = address & DMA_SRC_MASK[dma];
+  return memory->dma[dma].source;
+}
+
+uint32_t GBADMAWriteDAD(struct GBA* gba, int dma, uint32_t address) {
+  struct GBAMemory* memory = &gba->memory;
+  if (!_isValidDMADAD(dma, address)) {
+    mLOG(GBA_DMA, GAME_ERROR, "Invalid DMA destination address: 0x%08X", address);
   }
-  uint32_t tmp32 = 0;
-  if (!read_u64(&off, &frame_count_) ||
-      !read_u64(&off, &executed_cycles_) ||
-      !read_u32(&off, &cpu_.cpsr) ||
-      !read_u32(&off, &ppu_cycle_accum_) ||
-      !read_u32(&off, &tmp32)) {
-    if (error) *error = "Savestate header truncated.";
-    return false;
-  }
-  audio_mix_level_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
-  apu_frame_seq_cycles_ = 0;
-  apu_frame_seq_step_ = 0;
-  apu_env_ch1_ = apu_env_ch2_ = apu_env_ch4_ = 0;
-  apu_env_timer_ch1_ = apu_env_timer_ch2_ = apu_env_timer_ch4_ = 0;
-  apu_len_ch1_ = apu_len_ch2_ = apu_len_ch4_ = 0;
-  apu_len_ch3_ = 0;
-  apu_ch1_sweep_freq_ = 0;
-  apu_ch1_sweep_timer_ = 0;
-  apu_ch1_sweep_enabled_ = false;
-  apu_ch1_active_ = apu_ch2_active_ = apu_ch3_active_ = apu_ch4_active_ = false;
-  apu_prev_trig_ch1_ = apu_prev_trig_ch2_ = apu_prev_trig_ch3_ = apu_prev_trig_ch4_ = false;
-  if (version >= 6u) {
-    if (!read_u32(&off, &bios_fetch_latch_)) return false;
+  memory->dma[dma].dest = address & DMA_DST_MASK[dma];
+  return memory->dma[dma].dest;
+}
+
+void GBADMAWriteCNT_LO(struct GBA* gba, int dma, uint16_t count) {
+  struct GBAMemory* memory = &gba->memory;
+  memory->dma[dma].count = count ? count : (dma == 3 ? 0x10000 : 0x4000);
+}
+
+uint16_t GBADMAWriteCNT_HI(struct GBA* gba, int dma, uint16_t control) {
+  struct GBAMemory* memory = &gba->memory;
+  struct GBADMA* currentDma = &memory->dma[dma];
+  int wasEnabled = GBADMARegisterIsEnable(currentDma->reg);
+  if (dma < 3) {
+    control &= 0xF7E0;
   } else {
-    bios_fetch_latch_ = 0;
+    control &= 0xFFE0;
   }
-  if (!read_u32(&off, &tmp32)) return false;
-  keys_pressed_mask_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
-  if (!read_u32(&off, &tmp32)) return false;
-  previous_keys_mask_ = static_cast<uint16_t>(tmp32 & 0xFFFFu);
-  if (version >= 2u) {
-    if (!read_u32(&off, &tmp32)) return false;
-    backup_type_ = static_cast<BackupType>(tmp32 & 0xFFu);
-    if (!read_u32(&off, &tmp32)) return false;
-    flash_mode_unlocked_ = (tmp32 & 1u) != 0;
-    if (!read_u32(&off, &tmp32)) return false;
-    flash_command_ = static_cast<uint8_t>(tmp32 & 0xFFu);
-    if (!read_u32(&off, &tmp32)) return false;
-    flash_id_mode_ = (tmp32 & 1u) != 0;
-    if (!read_u32(&off, &tmp32)) return false;
-    flash_program_mode_ = (tmp32 & 1u) != 0;
-    if (version >= 3u) {
-      if (!read_u32(&off, &tmp32)) return false;
-      flash_bank_switch_mode_ = (tmp32 & 1u) != 0;
-      if (!read_u32(&off, &tmp32)) return false;
-      flash_bank_ = static_cast<uint8_t>(tmp32 & 0x1u);
-      if (version >= 8u) {
-        if (!read_u32(&off, &tmp32)) return false;
-        fifo_a_last_sample_ = static_cast<int16_t>(tmp32 & 0xFFFFu);
-        if (!read_u32(&off, &tmp32)) return false;
-        fifo_b_last_sample_ = static_cast<int16_t>(tmp32 & 0xFFFFu);
-        if (version >= 9u) {
-          if (!read_u32(&off, &apu_phase_sq1_)) return false;
-          if (!read_u32(&off, &apu_phase_sq2_)) return false;
-          if (!read_u32(&off, &apu_phase_wave_)) return false;
-          if (!read_u32(&off, &tmp32)) return false;
-          apu_noise_lfsr_ = static_cast<uint16_t>(tmp32 & 0x7FFFu);
-          if (version >= 10u) {
-            if (!read_u32(&off, &apu_frame_seq_cycles_)) return false;
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_frame_seq_step_ = static_cast<uint8_t>(tmp32 & 0x7u);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_env_ch1_ = static_cast<uint8_t>(tmp32 & 0xFu);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_env_ch2_ = static_cast<uint8_t>(tmp32 & 0xFu);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_env_ch4_ = static_cast<uint8_t>(tmp32 & 0xFu);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_env_timer_ch1_ = static_cast<uint8_t>(tmp32 & 0x7u);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_env_timer_ch2_ = static_cast<uint8_t>(tmp32 & 0x7u);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_env_timer_ch4_ = static_cast<uint8_t>(tmp32 & 0x7u);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_len_ch1_ = static_cast<uint8_t>(tmp32 & 0x3Fu);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_len_ch2_ = static_cast<uint8_t>(tmp32 & 0x3Fu);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_len_ch3_ = static_cast<uint16_t>(tmp32 & 0xFFu);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_len_ch4_ = static_cast<uint8_t>(tmp32 & 0x3Fu);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_ch1_sweep_freq_ = static_cast<uint16_t>(tmp32 & 0x7FFu);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_ch1_sweep_timer_ = static_cast<uint8_t>(tmp32 & 0x7u);
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_ch1_sweep_enabled_ = (tmp32 & 1u) != 0;
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_ch1_active_ = (tmp32 & 1u) != 0;
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_ch2_active_ = (tmp32 & 1u) != 0;
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_ch3_active_ = (tmp32 & 1u) != 0;
-            if (!read_u32(&off, &tmp32)) return false;
-            apu_ch4_active_ = (tmp32 & 1u) != 0;
-          }
-        } else {
-          apu_phase_sq1_ = 0;
-          apu_phase_sq2_ = 0;
-          apu_phase_wave_ = 0;
-          apu_noise_lfsr_ = 0x7FFFu;
-        }
-        if (!read_u32(&off, &tmp32)) return false;
-        fifo_a_.assign(tmp32, 0);
-        for (size_t i = 0; i < fifo_a_.size(); ++i) {
-          uint32_t v = 0;
-          if (!read_u32(&off, &v)) return false;
-          fifo_a_[i] = static_cast<uint8_t>(v & 0xFFu);
-        }
-        if (!read_u32(&off, &tmp32)) return false;
-        fifo_b_.assign(tmp32, 0);
-        for (size_t i = 0; i < fifo_b_.size(); ++i) {
-          uint32_t v = 0;
-          if (!read_u32(&off, &v)) return false;
-          fifo_b_[i] = static_cast<uint8_t>(v & 0xFFu);
-        }
-      } else {
-        fifo_a_.clear();
-        fifo_b_.clear();
-        fifo_a_last_sample_ = 0;
-        fifo_b_last_sample_ = 0;
-        apu_phase_sq1_ = 0;
-        apu_phase_sq2_ = 0;
-        apu_phase_wave_ = 0;
-        apu_noise_lfsr_ = 0x7FFFu;
+  currentDma->reg = control;
+
+  uint32_t width = 2 << GBADMARegisterGetWidth(currentDma->reg);
+  if (currentDma->source >= GBA_BASE_ROM0 && currentDma->source < GBA_BASE_SRAM) {
+    currentDma->sourceOffset = width;
+  } else {
+    currentDma->sourceOffset = DMA_OFFSET[GBADMARegisterGetSrcControl(currentDma->reg)] * width;
+  }
+  currentDma->destOffset = DMA_OFFSET[GBADMARegisterGetDestControl(currentDma->reg)] * width;
+
+  if (GBADMARegisterIsDRQ(currentDma->reg)) {
+    mLOG(GBA_DMA, STUB, "DRQ not implemented");
+  }
+
+  if (!wasEnabled && GBADMARegisterIsEnable(currentDma->reg)) {
+    currentDma->nextSource = currentDma->source;
+    currentDma->nextDest = currentDma->dest;
+
+    if (currentDma->nextSource & (width - 1)) {
+      mLOG(GBA_DMA, GAME_ERROR, "Misaligned DMA source address: 0x%08X", currentDma->nextSource);
+    }
+    if (currentDma->nextDest & (width - 1)) {
+      mLOG(GBA_DMA, GAME_ERROR, "Misaligned DMA destination address: 0x%08X", currentDma->nextDest);
+    }
+    mLOG(GBA_DMA, INFO, "Starting DMA %i 0x%08X -> 0x%08X (%04X:%04X)", dma,
+         currentDma->nextSource, currentDma->nextDest,
+         currentDma->reg, currentDma->count & 0xFFFF);
+
+    currentDma->nextSource &= -width;
+    currentDma->nextDest &= -width;
+
+    GBADMASchedule(gba, dma, currentDma);
+  }
+  // If the DMA has already occurred, this value might have changed since the function started
+  return currentDma->reg;
+};
+
+void GBADMASchedule(struct GBA* gba, int number, struct GBADMA* info) {
+  switch (GBADMARegisterGetTiming(info->reg)) {
+  case GBA_DMA_TIMING_NOW:
+    info->when = mTimingCurrentTime(&gba->timing) + 3; // DMAs take 3 cycles to start
+    info->nextCount = info->count;
+    break;
+  case GBA_DMA_TIMING_HBLANK:
+  case GBA_DMA_TIMING_VBLANK:
+    // Handled implicitly
+    return;
+  case GBA_DMA_TIMING_CUSTOM:
+    switch (number) {
+    case 0:
+      mLOG(GBA_DMA, WARN, "Discarding invalid DMA0 scheduling");
+      return;
+    case 1:
+    case 2:
+      GBAAudioScheduleFifoDma(&gba->audio, number, info);
+      break;
+    case 3:
+      // Handled implicitly
+      break;
+    }
+  }
+  GBADMAUpdate(gba);
+}
+
+void GBADMARunHblank(struct GBA* gba, int32_t cycles) {
+  struct GBAMemory* memory = &gba->memory;
+  struct GBADMA* dma;
+  bool found = false;
+  int i;
+  for (i = 0; i < 4; ++i) {
+    dma = &memory->dma[i];
+    if (GBADMARegisterIsEnable(dma->reg) && GBADMARegisterGetTiming(dma->reg) == GBA_DMA_TIMING_HBLANK && !dma->nextCount) {
+      dma->when = mTimingCurrentTime(&gba->timing) + 3 + cycles;
+      dma->nextCount = dma->count;
+      found = true;
+    }
+  }
+  if (found) {
+    GBADMAUpdate(gba);
+  }
+}
+
+void GBADMARunVblank(struct GBA* gba, int32_t cycles) {
+  struct GBAMemory* memory = &gba->memory;
+  struct GBADMA* dma;
+  bool found = false;
+  int i;
+  for (i = 0; i < 4; ++i) {
+    dma = &memory->dma[i];
+    if (GBADMARegisterIsEnable(dma->reg) && GBADMARegisterGetTiming(dma->reg) == GBA_DMA_TIMING_VBLANK && !dma->nextCount) {
+      dma->when = mTimingCurrentTime(&gba->timing) + 3 + cycles;
+      dma->nextCount = dma->count;
+      found = true;
+    }
+  }
+  if (found) {
+    GBADMAUpdate(gba);
+  }
+}
+
+void GBADMARunDisplayStart(struct GBA* gba, int32_t cycles) {
+  struct GBAMemory* memory = &gba->memory;
+  struct GBADMA* dma = &memory->dma[3];
+  if (GBADMARegisterIsEnable(dma->reg) && GBADMARegisterGetTiming(dma->reg) == GBA_DMA_TIMING_CUSTOM && !dma->nextCount) {
+    dma->when = mTimingCurrentTime(&gba->timing) + 3 + cycles;
+    dma->nextCount = dma->count;
+    GBADMAUpdate(gba);
+  }
+}
+
+void _dmaEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) {
+  UNUSED(timing);
+  UNUSED(cyclesLate);
+  struct GBA* gba = context;
+  struct GBAMemory* memory = &gba->memory;
+  struct GBADMA* dma = &memory->dma[memory->activeDMA];
+  if (dma->nextCount == dma->count) {
+    dma->when = mTimingCurrentTime(&gba->timing);
+  }
+  if (dma->nextCount & 0xFFFFF) {
+    GBADMAService(gba, memory->activeDMA, dma);
+  } else {
+    dma->nextCount = 0;
+    bool noRepeat = !GBADMARegisterIsRepeat(dma->reg);
+    noRepeat |= GBADMARegisterGetTiming(dma->reg) == GBA_DMA_TIMING_NOW;
+    noRepeat |= memory->activeDMA == 3 && GBADMARegisterGetTiming(dma->reg) == GBA_DMA_TIMING_CUSTOM && gba->video.vcount == GBA_VIDEO_VERTICAL_PIXELS + 1;
+    if (noRepeat) {
+      dma->reg = GBADMARegisterClearEnable(dma->reg);
+
+      // Clear the enable bit in memory
+      memory->io[(GBA_REG_DMA0CNT_HI + memory->activeDMA * (GBA_REG_DMA1CNT_HI - GBA_REG_DMA0CNT_HI)) >> 1] &= 0x7FE0;
+    }
+    if (GBADMARegisterGetDestControl(dma->reg) == GBA_DMA_INCREMENT_RELOAD) {
+      dma->nextDest = dma->dest;
+    }
+    if (GBADMARegisterIsDoIRQ(dma->reg)) {
+      GBARaiseIRQ(gba, GBA_IRQ_DMA0 + memory->activeDMA, cyclesLate);
+    }
+    GBADMAUpdate(gba);
+  }
+}
+
+void GBADMAUpdate(struct GBA* gba) {
+  int i;
+  struct GBAMemory* memory = &gba->memory;
+  uint32_t currentTime = mTimingCurrentTime(&gba->timing);
+  int32_t leastTime = INT_MAX;
+  memory->activeDMA = -1;
+  for (i = 0; i < 4; ++i) {
+    struct GBADMA* dma = &memory->dma[i];
+    if (GBADMARegisterIsEnable(dma->reg) && dma->nextCount) {
+      int32_t time = dma->when - currentTime;
+      if (memory->activeDMA == -1 || time < leastTime) {
+        leastTime = time;
+        memory->activeDMA = i;
       }
-      if (version >= 7u) {
-        if (!read_u32(&off, &tmp32)) return false;
-        eeprom_read_pos_ = tmp32;
-        if (version >= 11u) {
-          if (!read_u32(&off, &tmp32)) return false;
-          eeprom_addr_bits_ = static_cast<uint8_t>(tmp32 & 0x0Fu);
-        } else {
-          eeprom_addr_bits_ = 0;
-        }
-        if (!read_u32(&off, &tmp32)) return false;
-        eeprom_cmd_bits_.assign(tmp32, 0);
-        for (size_t i = 0; i < eeprom_cmd_bits_.size(); ++i) {
-          uint32_t v = 0;
-          if (!read_u32(&off, &v)) return false;
-          eeprom_cmd_bits_[i] = static_cast<uint8_t>(v & 1u);
-        }
-        if (!read_u32(&off, &tmp32)) return false;
-        eeprom_read_bits_.assign(tmp32, 0);
-        for (size_t i = 0; i < eeprom_read_bits_.size(); ++i) {
-          uint32_t v = 0;
-          if (!read_u32(&off, &v)) return false;
-          eeprom_read_bits_[i] = static_cast<uint8_t>(v & 1u);
-        }
-      } else {
-        eeprom_cmd_bits_.clear();
-        eeprom_read_bits_.clear();
-        eeprom_read_pos_ = 0;
-        eeprom_addr_bits_ = 0;
+    }
+  }
+
+  if (memory->activeDMA >= 0) {
+    gba->dmaPC = gba->cpu->gprs[ARM_PC];
+    mTimingDeschedule(&gba->timing, &memory->dmaEvent);
+    mTimingSchedule(&gba->timing, &memory->dmaEvent, memory->dma[memory->activeDMA].when - currentTime);
+  } else {
+    gba->cpuBlocked = false;
+  }
+}
+
+void GBADMAService(struct GBA* gba, int number, struct GBADMA* info) {
+  struct GBAMemory* memory = &gba->memory;
+  struct ARMCore* cpu = gba->cpu;
+  uint32_t width = 2 << GBADMARegisterGetWidth(info->reg);
+  uint32_t source = info->nextSource;
+  uint32_t dest = info->nextDest;
+  uint32_t sourceRegion = source >> BASE_OFFSET;
+  uint32_t destRegion = dest >> BASE_OFFSET;
+  enum mMemoryAccessSource oldAccess = cpu->memory.accessSource;
+  int32_t cycles = 2;
+
+  gba->cpuBlocked = true;
+  gba->performingDMA = 1 | (number << 1);
+  cpu->memory.accessSource = mACCESS_DMA;
+
+  if (info->count == info->nextCount) {
+    if (width == 4) {
+      cycles += memory->waitstatesNonseq32[sourceRegion] + memory->waitstatesNonseq32[destRegion];
+      info->cycles = memory->waitstatesSeq32[sourceRegion] + memory->waitstatesSeq32[destRegion];
+    } else {
+      if (source >= GBA_BASE_EWRAM) {
+        info->latch = cpu->memory.load32(cpu, source, 0);
+      }
+      cycles += memory->waitstatesNonseq16[sourceRegion] + memory->waitstatesNonseq16[destRegion];
+      info->cycles = memory->waitstatesSeq16[sourceRegion] + memory->waitstatesSeq16[destRegion];
+    }
+  } else {
+    cycles += info->cycles;
+  }
+  info->when += cycles;
+
+  if (width == 4) {
+    if (source >= GBA_BASE_EWRAM) {
+      info->latch = cpu->memory.load32(cpu, source, 0);
+    }
+    cpu->memory.store32(cpu, dest, info->latch, 0);
+    gba->bus = info->latch;
+  } else {
+    if (sourceRegion == GBA_REGION_ROM2_EX && (memory->savedata.type == GBA_SAVEDATA_EEPROM || memory->savedata.type == GBA_SAVEDATA_EEPROM512)) {
+      info->latch = GBASavedataReadEEPROM(&memory->savedata);
+      info->latch |= info->latch << 16;
+    } else if (source >= GBA_BASE_EWRAM) {
+      info->latch = cpu->memory.load16(cpu, source, 0);
+      info->latch |= info->latch << 16;
+    }
+    if (UNLIKELY(destRegion == GBA_REGION_ROM2_EX)) {
+      if (memory->savedata.type == GBA_SAVEDATA_AUTODETECT) {
+        mLOG(GBA_MEM, INFO, "Detected EEPROM savegame");
+        GBASavedataInitEEPROM(&memory->savedata);
+      }
+      if (memory->savedata.type == GBA_SAVEDATA_EEPROM512 || memory->savedata.type == GBA_SAVEDATA_EEPROM) {
+        GBASavedataWriteEEPROM(&memory->savedata, info->latch, info->nextCount);
       }
     } else {
-      flash_bank_switch_mode_ = false;
-      flash_bank_ = 0;
-      eeprom_cmd_bits_.clear();
-      eeprom_read_bits_.clear();
-      eeprom_read_pos_ = 0;
-      eeprom_addr_bits_ = 0;
+      cpu->memory.store16(cpu, dest, info->latch >> (8 * (dest & 2)), 0);
     }
-  } else {
-    backup_type_ = DetectBackupTypeFromRom();
-    ResetBackupControllerState();
-    fifo_a_.clear();
-    fifo_b_.clear();
-    fifo_a_last_sample_ = 0;
-    fifo_b_last_sample_ = 0;
-    apu_phase_sq1_ = 0;
-    apu_phase_sq2_ = 0;
-    apu_phase_wave_ = 0;
-    apu_noise_lfsr_ = 0x7FFFu;
+    gba->bus = (info->latch & 0xFFFF) | (info->latch << 16);
   }
-  for (uint32_t& r : cpu_.regs) {
-    if (!read_u32(&off, &r)) return false;
-  }
-  if (version >= 4u) {
-    if (version >= 5u) {
-      for (uint32_t& v : cpu_.banked_fiq_r8_r12) if (!read_u32(&off, &v)) return false;
+
+  info->nextSource += info->sourceOffset;
+  info->nextDest += info->destOffset;
+  if (UNLIKELY(sourceRegion != info->nextSource >> BASE_OFFSET) || UNLIKELY(destRegion != info->nextDest >> BASE_OFFSET)) {
+    // Crossed region boundary
+    if (info->nextSource >= GBA_BASE_ROM0 && info->nextSource < GBA_BASE_SRAM) {
+      info->sourceOffset = width;
     } else {
-      cpu_.banked_fiq_r8_r12.fill(0);
+      info->sourceOffset = DMA_OFFSET[GBADMARegisterGetSrcControl(info->reg)] * width;
     }
-    for (uint32_t& v : cpu_.banked_sp) if (!read_u32(&off, &v)) return false;
-    for (uint32_t& v : cpu_.banked_lr) if (!read_u32(&off, &v)) return false;
-    for (uint32_t& v : cpu_.spsr) if (!read_u32(&off, &v)) return false;
-    if (!read_u32(&off, &cpu_.active_mode)) return false;
-    cpu_.active_mode &= 0x1Fu;
-    cpu_.cpsr = (cpu_.cpsr & ~0x1Fu) | cpu_.active_mode;
+
+    // Recalculate cached cycles
+    if (width == 4) {
+      info->cycles = memory->waitstatesSeq32[info->nextSource >> BASE_OFFSET] + memory->waitstatesSeq32[info->nextDest >> BASE_OFFSET];
+    } else {
+      info->cycles = memory->waitstatesSeq16[info->nextSource >> BASE_OFFSET] + memory->waitstatesSeq16[info->nextDest >> BASE_OFFSET];
+    }
+  }
+  --info->nextCount;
+
+  gba->performingDMA = 0;
+  cpu->memory.accessSource = oldAccess;
+
+  int i;
+  for (i = 0; i < 4; ++i) {
+    struct GBADMA* dma = &memory->dma[i];
+    if (GBADMARegisterIsEnable(dma->reg) && dma->nextCount) {
+      int32_t time = dma->when - info->when;
+      if (time < 0) {
+        dma->when = info->when;
+      }
+    }
+  }
+
+  if (!info->nextCount) {
+    info->nextCount |= 0x80000000;
+    if (sourceRegion < GBA_REGION_ROM0 || destRegion < GBA_REGION_ROM0) {
+      info->when += 2;
+    }
+  }
+  GBADMAUpdate(gba);
+}
+
+void GBADMARecalculateCycles(struct GBA* gba) {
+  int i;
+  for (i = 0; i < 4; ++i) {
+    struct GBADMA* dma = &gba->memory.dma[i];
+    if (!GBADMARegisterIsEnable(dma->reg)) {
+      continue;
+    }
+
+    uint32_t width = GBADMARegisterGetWidth(dma->reg);
+    uint32_t sourceRegion = dma->nextSource >> BASE_OFFSET;
+    uint32_t destRegion = dma->nextDest >> BASE_OFFSET;
+    if (width) {
+      dma->cycles = gba->memory.waitstatesSeq32[sourceRegion] + gba->memory.waitstatesSeq32[destRegion];
+    } else {
+      dma->cycles = gba->memory.waitstatesSeq16[sourceRegion] + gba->memory.waitstatesSeq16[destRegion];
+    }
+  }
+}
+
+void GBADMASerialize(const struct GBA* gba, struct GBASerializedState* state) {
+  int i;
+  for (i = 0; i < 4; ++i) {
+    STORE_32(gba->memory.dma[i].nextSource, 0, &state->dma[i].nextSource);
+    STORE_32(gba->memory.dma[i].nextDest, 0, &state->dma[i].nextDest);
+    STORE_32(gba->memory.dma[i].nextCount, 0, &state->dma[i].nextCount);
+    STORE_32(gba->memory.dma[i].when, 0, &state->dma[i].when);
+  }
+
+  STORE_32(gba->memory.dma[0].latch, 0, &state->dmaTransferRegister);
+  STORE_32(gba->memory.dma[1].latch, 0, &state->dmaLatch[0]);
+  STORE_32(gba->memory.dma[2].latch, 0, &state->dmaLatch[1]);
+  STORE_32(gba->memory.dma[3].latch, 0, &state->dmaLatch[2]);
+  STORE_32(gba->dmaPC, 0, &state->dmaBlockPC);
+}
+
+void GBADMADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
+  int i;
+  for (i = 0; i < 4; ++i) {
+    LOAD_16(gba->memory.dma[i].reg, (GBA_REG_DMA0CNT_HI + i * 12), state->io);
+    LOAD_32(gba->memory.dma[i].nextSource, 0, &state->dma[i].nextSource);
+    LOAD_32(gba->memory.dma[i].nextDest, 0, &state->dma[i].nextDest);
+    LOAD_32(gba->memory.dma[i].nextCount, 0, &state->dma[i].nextCount);
+    LOAD_32(gba->memory.dma[i].when, 0, &state->dma[i].when);
+
+    uint32_t width = 2 << GBADMARegisterGetWidth(gba->memory.dma[i].reg);
+    if (gba->memory.dma[i].source >= GBA_BASE_ROM0 && gba->memory.dma[i].source < GBA_BASE_SRAM) {
+      gba->memory.dma[i].sourceOffset = width;
+    } else {
+      gba->memory.dma[i].sourceOffset = DMA_OFFSET[GBADMARegisterGetSrcControl(gba->memory.dma[i].reg)] * width;
+    }
+    gba->memory.dma[i].destOffset = DMA_OFFSET[GBADMARegisterGetDestControl(gba->memory.dma[i].reg)] * width;
+  }
+  uint32_t version;
+  LOAD_32(version, 0, &state->versionMagic);
+  LOAD_32(gba->memory.dma[0].latch, 0, &state->dmaTransferRegister);
+  if (version >= GBASavestateMagic + 0xA) {
+    LOAD_32(gba->memory.dma[1].latch, 0, &state->dmaLatch[0]);
+    LOAD_32(gba->memory.dma[2].latch, 0, &state->dmaLatch[1]);
+    LOAD_32(gba->memory.dma[3].latch, 0, &state->dmaLatch[2]);
   } else {
-    cpu_.active_mode = cpu_.cpsr & 0x1Fu;
-    cpu_.banked_fiq_r8_r12.fill(0);
-    cpu_.banked_sp.fill(0);
-    cpu_.banked_lr.fill(0);
-    cpu_.spsr.fill(0);
-    const uint32_t bank_mode = NormalizeSpLrBankMode(cpu_.active_mode);
-    cpu_.banked_sp[bank_mode] = cpu_.regs[13];
-    cpu_.banked_lr[bank_mode] = cpu_.regs[14];
+    gba->memory.dma[1].latch = gba->memory.dma[0].latch;
+    gba->memory.dma[2].latch = gba->memory.dma[0].latch;
+    gba->memory.dma[3].latch = gba->memory.dma[0].latch;
   }
-  if (cpu_.banked_sp[0x1Fu] == 0u && cpu_.banked_sp[0x10u] != 0u) {
-    cpu_.banked_sp[0x1Fu] = cpu_.banked_sp[0x10u];
+  LOAD_32(gba->dmaPC, 0, &state->dmaBlockPC);
+
+  GBADMARecalculateCycles(gba);
+  GBADMAUpdate(gba);
+}
+// ---- END rewritten from reference implementation/dma.c ----
+
+// ---- BEGIN rewritten from reference implementation/dolphin.c ----
+#define BITS_PER_SECOND 115200 // This is wrong, but we need to maintain compat for the time being
+#define CYCLES_PER_BIT (GBA_ARM7TDMI_FREQUENCY / BITS_PER_SECOND)
+#define CLOCK_GRAIN (CYCLES_PER_BIT * 8)
+#define CLOCK_WAIT 500
+
+const uint16_t DOLPHIN_CLOCK_PORT = 49420;
+const uint16_t DOLPHIN_DATA_PORT = 54970;
+
+enum {
+  WAIT_FOR_FIRST_CLOCK = 0,
+  WAIT_FOR_CLOCK,
+  WAIT_FOR_COMMAND,
+};
+
+static bool GBASIODolphinInit(struct GBASIODriver* driver);
+static void GBASIODolphinReset(struct GBASIODriver* driver);
+static void GBASIODolphinSetMode(struct GBASIODriver* driver, enum GBASIOMode mode);
+static bool GBASIODolphinHandlesMode(struct GBASIODriver* driver, enum GBASIOMode mode);
+static int GBASIODolphinConnectedDevices(struct GBASIODriver* driver);
+static void GBASIODolphinProcessEvents(struct mTiming* timing, void* context, uint32_t cyclesLate);
+
+static int32_t _processCommand(struct GBASIODolphin* dol, uint32_t cyclesLate);
+static void _flush(struct GBASIODolphin* dol);
+
+void GBASIODolphinCreate(struct GBASIODolphin* dol) {
+  memset(&dol->d, 0, sizeof(dol->d));
+  dol->d.init = GBASIODolphinInit;
+  dol->d.reset = GBASIODolphinReset;
+  dol->d.setMode = GBASIODolphinSetMode;
+  dol->d.handlesMode = GBASIODolphinHandlesMode;
+  dol->d.connectedDevices = GBASIODolphinConnectedDevices;
+  dol->event.context = dol;
+  dol->event.name = "GB SIO Lockstep";
+  dol->event.callback = GBASIODolphinProcessEvents;
+  dol->event.priority = 0x80;
+
+  dol->data = INVALID_SOCKET;
+  dol->clock = INVALID_SOCKET;
+  dol->active = false;
+}
+
+void GBASIODolphinDestroy(struct GBASIODolphin* dol) {
+  if (!SOCKET_FAILED(dol->data)) {
+    SocketClose(dol->data);
+    dol->data = INVALID_SOCKET;
   }
-  if (cpu_.banked_lr[0x1Fu] == 0u && cpu_.banked_lr[0x10u] != 0u) {
-    cpu_.banked_lr[0x1Fu] = cpu_.banked_lr[0x10u];
+
+  if (!SOCKET_FAILED(dol->clock)) {
+    SocketClose(dol->clock);
+    dol->clock = INVALID_SOCKET;
   }
-  cpu_.banked_sp[0x10u] = cpu_.banked_sp[0x1Fu];
-  cpu_.banked_lr[0x10u] = cpu_.banked_lr[0x1Fu];
-  auto read_block = [&](auto& arr) -> bool {
-    if (off + arr.size() > blob.size()) return false;
-    std::copy_n(blob.begin() + static_cast<std::ptrdiff_t>(off), arr.size(), arr.begin());
-    off += arr.size();
-    return true;
-  };
-  if (!read_block(ewram_) || !read_block(iwram_) || !read_block(io_regs_) ||
-      !read_block(palette_ram_) || !read_block(vram_) || !read_block(oam_) || !read_block(sram_)) {
-    if (error) *error = "Savestate payload truncated.";
+}
+
+bool GBASIODolphinConnect(struct GBASIODolphin* dol, const struct Address* address, short dataPort, short clockPort) {
+  if (!SOCKET_FAILED(dol->data)) {
+    SocketClose(dol->data);
+    dol->data = INVALID_SOCKET;
+  }
+  if (!dataPort) {
+    dataPort = DOLPHIN_DATA_PORT;
+  }
+
+  if (!SOCKET_FAILED(dol->clock)) {
+    SocketClose(dol->clock);
+    dol->clock = INVALID_SOCKET;
+  }
+  if (!clockPort) {
+    clockPort = DOLPHIN_CLOCK_PORT;
+  }
+
+  dol->data = SocketConnectTCP(dataPort, address);
+  if (SOCKET_FAILED(dol->data)) {
     return false;
   }
-  if (version >= 7u) {
-    if (!read_block(eeprom_)) {
-      if (error) *error = "Savestate payload truncated.";
-      return false;
-    }
-  } else {
-    std::fill(eeprom_.begin(), eeprom_.end(), 0xFF);
+
+  dol->clock = SocketConnectTCP(clockPort, address);
+  if (SOCKET_FAILED(dol->clock)) {
+    SocketClose(dol->data);
+    dol->data = INVALID_SOCKET;
+    return false;
   }
-  if (version >= 3u) {
-    if (!read_block(flash_bank1_)) {
-      if (error) *error = "Savestate payload truncated.";
-      return false;
-    }
-  } else {
-    std::fill(flash_bank1_.begin(), flash_bank1_.end(), 0xFF);
-  }
-  loaded_ = true;
-  SyncKeyInputRegister();
-  RenderDebugFrame();
+
+  SocketSetBlocking(dol->data, false);
+  SocketSetBlocking(dol->clock, false);
+  SocketSetTCPPush(dol->data, true);
   return true;
 }
 
-uint8_t GBACore::DebugRead8(uint32_t addr) const { return Read8(addr); }
-uint16_t GBACore::DebugRead16(uint32_t addr) const { return Read16(addr); }
-uint32_t GBACore::DebugRead32(uint32_t addr) const { return Read32(addr); }
-void GBACore::DebugWrite8(uint32_t addr, uint8_t value) { Write8(addr, value); }
-void GBACore::DebugWrite16(uint32_t addr, uint16_t value) { Write16(addr, value); }
-void GBACore::DebugWrite32(uint32_t addr, uint32_t value) { Write32(addr, value); }
+static bool GBASIODolphinInit(struct GBASIODriver* driver) {
+  struct GBASIODolphin* dol = (struct GBASIODolphin*) driver;
+  dol->clockSlice = 0;
+  dol->state = WAIT_FOR_FIRST_CLOCK;
+  GBASIODolphinReset(driver);
+  return true;
+}
 
-}  // namespace gba
+static void GBASIODolphinReset(struct GBASIODriver* driver) {
+  struct GBASIODolphin* dol = (struct GBASIODolphin*) driver;
+  dol->active = false;
+  _flush(dol);
+  mTimingDeschedule(&dol->d.p->p->timing, &dol->event);
+  mTimingSchedule(&dol->d.p->p->timing, &dol->event, 0);
+}
+
+static void GBASIODolphinSetMode(struct GBASIODriver* driver, enum GBASIOMode mode) {
+  struct GBASIODolphin* dol = (struct GBASIODolphin*) driver;
+  dol->active = mode == GBA_SIO_JOYBUS;
+}
+
+static bool GBASIODolphinHandlesMode(struct GBASIODriver* driver, enum GBASIOMode mode) {
+  UNUSED(driver);
+  return mode == GBA_SIO_JOYBUS;
+}
+
+static int GBASIODolphinConnectedDevices(struct GBASIODriver* driver) {
+  UNUSED(driver);
+  return 1;
+}
+
+void GBASIODolphinProcessEvents(struct mTiming* timing, void* context, uint32_t cyclesLate) {
+  struct GBASIODolphin* dol = context;
+  if (SOCKET_FAILED(dol->data)) {
+    return;
+  }
+
+  dol->clockSlice -= cyclesLate;
+
+  int32_t clockSlice;
+
+  int32_t nextEvent = CLOCK_GRAIN;
+  switch (dol->state) {
+  case WAIT_FOR_FIRST_CLOCK:
+    dol->clockSlice = 0;
+    // Fall through
+  case WAIT_FOR_CLOCK:
+    if (dol->clockSlice < 0) {
+      Socket r = dol->clock;
+      SocketPoll(1, &r, 0, 0, CLOCK_WAIT);
+    }
+    if (SocketRecv(dol->clock, &clockSlice, 4) == 4) {
+      clockSlice = ntohl(clockSlice);
+      dol->clockSlice += clockSlice;
+      dol->state = WAIT_FOR_COMMAND;
+      nextEvent = 0;
+    }
+    // Fall through
+  case WAIT_FOR_COMMAND:
+    if (dol->clockSlice < -VIDEO_TOTAL_LENGTH * 4) {
+      Socket r = dol->data;
+      SocketPoll(1, &r, 0, 0, CLOCK_WAIT);
+    }
+    if (_processCommand(dol, cyclesLate) >= 0) {
+      dol->state = WAIT_FOR_CLOCK;
+      nextEvent = CLOCK_GRAIN;
+    }
+    break;
+  }
+
+  dol->clockSlice -= nextEvent;
+  mTimingSchedule(timing, &dol->event, nextEvent);
+}
+
+void _flush(struct GBASIODolphin* dol) {
+  uint8_t buffer[32];
+  while (SocketRecv(dol->clock, buffer, sizeof(buffer)) == sizeof(buffer));
+  while (SocketRecv(dol->data, buffer, sizeof(buffer)) == sizeof(buffer));
+}
+
+int32_t _processCommand(struct GBASIODolphin* dol, uint32_t cyclesLate) {
+  // This does not include the stop bits due to compatibility reasons
+  int bitsOnLine = 8;
+  uint8_t buffer[6];
+  int gotten = SocketRecv(dol->data, buffer, 1);
+  if (gotten < 1) {
+    return -1;
+  }
+
+  switch (buffer[0]) {
+  case JOY_RESET:
+  case JOY_POLL:
+    bitsOnLine += 24;
+    break;
+  case JOY_RECV:
+    gotten = SocketRecv(dol->data, &buffer[1], 4);
+    if (gotten < 4) {
+      return -1;
+    }
+    mLOG(GBA_SIO, DEBUG, "DOL recv: %02X%02X%02X%02X", buffer[1], buffer[2], buffer[3], buffer[4]);
+    // Fall through
+  case JOY_TRANS:
+    bitsOnLine += 40;
+    break;
+  }
+
+  if (!dol->active) {
+    return 0;
+  }
+
+  int sent = GBASIOJOYSendCommand(&dol->d, buffer[0], &buffer[1]);
+  SocketSend(dol->data, &buffer[1], sent);
+
+  return bitsOnLine * CYCLES_PER_BIT - cyclesLate;
+}
+
+bool GBASIODolphinIsConnected(struct GBASIODolphin* dol) {
+  return dol->data != INVALID_SOCKET;
+}
+// ---- END rewritten from reference implementation/dolphin.c ----
+#if defined(__cplusplus)
+}  // extern "C"
+#endif

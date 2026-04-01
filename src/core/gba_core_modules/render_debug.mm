@@ -1,289 +1,244 @@
-#include "../gba_core.h"
-#include "./ppu_common.mm"
+// iOS-focused translation-unit optimization hints (no behavior change).
+#if defined(__APPLE__) && defined(__clang__)
+#pragma clang optimize on
+#endif
+// Rebuilt Objective-C++ module from reference implementation sources.
+// NOTE: Source bodies are embedded and adapted here (no direct include of reference files).
+#if defined(__cplusplus)
+extern "C" {
+#endif
 
-namespace gba {
+// ---- BEGIN rewritten from reference implementation/serialize.c ----
 
-void GBACore::ApplyColorEffects() {
-  const size_t required = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
-  if (frame_buffer_.size() != required) {
-    frame_buffer_.assign(required, 0xFF000000U);
+
+MGBA_EXPORT const uint32_t GBASavestateMagic = 0x01000000;
+MGBA_EXPORT const uint32_t GBASavestateVersion = 0x0000000A;
+
+mLOG_DEFINE_CATEGORY(GBA_STATE, "GBA Savestate", "gba.serialize");
+
+struct GBABundledState {
+  struct GBASerializedState* state;
+  struct mStateExtdata* extdata;
+};
+
+void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
+  STORE_32(GBASavestateMagic + GBASavestateVersion, 0, &state->versionMagic);
+  STORE_32(gba->biosChecksum, 0, &state->biosChecksum);
+  STORE_32(gba->romCrc32, 0, &state->romCrc32);
+  STORE_32(gba->timing.masterCycles, 0, &state->masterCycles);
+  STORE_64LE(gba->timing.globalCycles, 0, &state->globalCycles);
+
+  if (gba->memory.rom) {
+    switch (gba->memory.unl.type) {
+    case GBA_UNL_CART_NONE:
+    case GBA_UNL_CART_VFAME:
+      state->id = ((struct GBACartridge*) gba->memory.rom)->id;
+      memcpy(state->title, ((struct GBACartridge*) gba->memory.rom)->title, sizeof(state->title));
+      break;
+    case GBA_UNL_CART_MULTICART:
+      state->id = ((struct GBACartridge*) gba->memory.unl.multi.rom)->id;
+      memcpy(state->title, ((struct GBACartridge*) gba->memory.unl.multi.rom)->title, sizeof(state->title));
+      break;
+    }
+  } else {
+    state->id = 0;
+    memset(state->title, 0, sizeof(state->title));
   }
 
-  const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const uint16_t winin = ReadIO16(0x04000048u), winout = ReadIO16(0x0400004Au);
-  const uint16_t win0h = ReadIO16(0x04000040u), win0v = ReadIO16(0x04000042u);
-  const uint16_t win1h = ReadIO16(0x04000044u), win1v = ReadIO16(0x04000046u);
-  const uint16_t bldcnt = ReadIO16(0x04000050u);
-  const uint16_t bldalpha = ReadIO16(0x04000052u);
-  const uint16_t bldy = ReadIO16(0x04000054u);
-  const uint32_t mode = (bldcnt >> 6) & 0x3u;
-  const uint32_t evy = std::min<uint32_t>(16u, bldy & 0x1Fu);
-
-  auto& bg_layer = BgLayerBuffer();
-  auto& bg_prio = BgPriorityBuffer();
-  auto& obj_drawn = ObjDrawnMaskBuffer(); auto& obj_semi = ObjSemiTransMaskBuffer();
-  auto& obj_under_drawn = ObjUnderDrawnMaskBuffer();
-  auto& obj_under_prio = ObjUnderPriorityBuffer();
-  auto& obj_under_idx = ObjUnderIndexBuffer();
-  auto& obj_under_color = ObjUnderColorBuffer();
-  auto& bg_base = BgBaseColorBuffer(); auto& bg_sec = BgSecondColorBuffer();
-  auto& bg_sec_layer = BgSecondLayerBuffer();
-  auto& bg_sec_prio = BgSecondPriorityBuffer();
-  const uint32_t backdrop_color = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
-  if (bg_layer.size() != required) EnsureBgLayerBufferSize();
-  if (bg_prio.size() != required) EnsureBgPriorityBufferSize();
-  if (obj_drawn.size() != required) EnsureObjDrawnMaskBufferSize();
-  if (obj_semi.size() != required) EnsureObjSemiTransMaskBufferSize();
-  if (bg_base.size() != required) EnsureBgBaseColorBufferSize();
-  if (bg_sec.size() != required || bg_sec_layer.size() != required) EnsureBgSecondBuffersSize();
-  const bool has_obj_under = obj_under_drawn.size() == required &&
-                             obj_under_color.size() == required &&
-                             obj_under_prio.size() == required;
-  const bool has_obj_under_idx = obj_under_idx.size() == required;
-  const bool has_bg_sec_prio = bg_sec_prio.size() == required;
-
-  int i = 0;
-  for (int y = 0; y < kScreenHeight; ++y) {
-    for (int x = 0; x < kScreenWidth; ++x, ++i) {
-      const uint8_t win_ctrl = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
-      if (!(win_ctrl & 0x20)) continue;
-
-      const bool top_is_obj = obj_drawn[i] != 0;
-      const bool top_is_semi = top_is_obj && obj_semi[i];
-      const uint8_t top_l = top_is_obj ? 4 : bg_layer[i];
-      const uint16_t top_m = LayerToBlendMask(top_l, top_is_obj);
-
-      uint32_t effect = top_is_semi ? 1 : mode;
-      if (effect == 0) continue;
-      if (!top_is_semi && !(bldcnt & top_m)) continue;
-
-      uint32_t top_color = frame_buffer_[i];
-      int r = (top_color >> 16) & 0xFF, g = (top_color >> 8) & 0xFF, b = top_color & 0xFF;
-
-      if (effect == 1) { // Alpha Blending
-        bool found_bot = false;
-        uint32_t bot_color = backdrop_color;
-
-        auto try_target2 = [&](uint8_t layer, uint32_t color) {
-          if (found_bot) return;
-          const uint16_t mask = static_cast<uint16_t>(LayerToBlendMask(layer, false) << 8);
-          if ((bldcnt & mask) != 0) {
-            found_bot = true;
-            bot_color = color;
-          }
-        };
-        auto try_target2_obj = [&](uint32_t color) {
-          if (found_bot) return;
-          const uint16_t mask = static_cast<uint16_t>((1u << 4) << 8);
-          if ((bldcnt & mask) != 0) {
-            found_bot = true;
-            bot_color = color;
-          }
-        };
-
-        if (top_is_obj) {
-          const bool bg1_ok = bg_layer[i] != kLayerBackdrop;
-          const bool bg2_ok = has_bg_sec_prio && (bg_sec_layer[i] != kLayerBackdrop);
-          const bool obj2_ok = has_obj_under && obj_under_drawn[i];
-          const uint8_t p_obj = obj2_ok ? obj_under_prio[i] : 4u;
-          const uint8_t p_bg1 = bg1_ok ? bg_prio[i] : 4u;
-          const uint8_t p_bg2 = bg2_ok ? bg_sec_prio[i] : 4u;
-          // 第二候補は「最前面に近い下位ピクセル」順に評価する。
-          // 優先度同値では OBJ > BG1 > BG2 の順。
-          struct Candidate { uint8_t prio; uint8_t type; };
-          // type: 0=OBJ-under, 1=BG-base, 2=BG-second
-          std::array<Candidate, 3> order{{
-              {p_obj, 0u}, {p_bg1, 1u}, {p_bg2, 2u}
-          }};
-          std::sort(order.begin(), order.end(), [](const Candidate& a, const Candidate& b) {
-            if (a.prio != b.prio) return a.prio < b.prio;
-            return a.type < b.type;
-          });
-          for (const Candidate& c : order) {
-            if (found_bot) break;
-            if (c.type == 0u && obj2_ok) try_target2_obj(obj_under_color[i]);
-            else if (c.type == 1u && bg1_ok) try_target2(bg_layer[i], bg_base[i]);
-            else if (c.type == 2u && bg2_ok) try_target2(bg_sec_layer[i], bg_sec[i]);
-          }
-        } else {
-          const bool obj2_ok = has_obj_under && obj_under_drawn[i];
-          const bool bg2_ok = has_bg_sec_prio;
-          if (obj2_ok && bg2_ok) {
-            // Pick the higher-priority lower pixel (smaller priority number).
-            // On tie, prefer OBJ as secondary target to match common GBA blend stacking.
-            const bool prefer_obj =
-                (obj_under_prio[i] < bg_sec_prio[i]) ||
-                (obj_under_prio[i] == bg_sec_prio[i] && has_obj_under_idx);
-            if (prefer_obj) {
-              try_target2_obj(obj_under_color[i]);
-              try_target2(bg_sec_layer[i], bg_sec[i]);
-            } else {
-              try_target2(bg_sec_layer[i], bg_sec[i]);
-              try_target2_obj(obj_under_color[i]);
-            }
-          } else {
-            if (obj2_ok) try_target2_obj(obj_under_color[i]);
-            try_target2(bg_sec_layer[i], bg_sec[i]);
-          }
-        }
-        try_target2(kLayerBackdrop, backdrop_color);
-        if (!found_bot) continue;
-        frame_buffer_[i] = AlphaBlendLocal(top_color, bot_color, bldalpha);
-      } else {
-        if (effect == 2) { // Brighten
-          r += ((255 - r) * evy) >> 4; g += ((255 - g) * evy) >> 4; b += ((255 - b) * evy) >> 4;
-        } else if (effect == 3) { // Darken
-          r -= (r * evy) >> 4; g -= (g * evy) >> 4; b -= (b * evy) >> 4;
-        }
-        frame_buffer_[i] = 0xFF000000 | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
-      }
+  int i;
+  for (i = 0; i < 16; ++i) {
+    STORE_32(gba->cpu->gprs[i], i * sizeof(state->cpu.gprs[0]), state->cpu.gprs);
+  }
+  STORE_32(gba->cpu->cpsr.packed, 0, &state->cpu.cpsr.packed);
+  STORE_32(gba->cpu->spsr.packed, 0, &state->cpu.spsr.packed);
+  STORE_32(gba->cpu->cycles, 0, &state->cpu.cycles);
+  STORE_32(gba->cpu->nextEvent, 0, &state->cpu.nextEvent);
+  for (i = 0; i < 6; ++i) {
+    int j;
+    for (j = 0; j < 7; ++j) {
+      STORE_32(gba->cpu->bankedRegisters[i][j], (i * 7 + j) * sizeof(gba->cpu->bankedRegisters[0][0]), state->cpu.bankedRegisters);
     }
+    STORE_32(gba->cpu->bankedSPSRs[i], i * sizeof(gba->cpu->bankedSPSRs[0]), state->cpu.bankedSPSRs);
+  }
+
+  STORE_32(gba->memory.biosPrefetch, 0, &state->biosPrefetch);
+  STORE_32(gba->cpu->prefetch[0], 0, state->cpuPrefetch);
+  STORE_32(gba->cpu->prefetch[1], 4, state->cpuPrefetch);
+  STORE_32(gba->memory.lastPrefetchedPc, 0, &state->lastPrefetchedPc);
+
+  GBASerializedMiscFlags miscFlags = 0;
+  miscFlags = GBASerializedMiscFlagsSetHalted(miscFlags, gba->cpu->halted);
+  miscFlags = GBASerializedMiscFlagsSetPOSTFLG(miscFlags, gba->memory.io[GBA_REG(POSTFLG)] & 1);
+  if (mTimingIsScheduled(&gba->timing, &gba->irqEvent)) {
+    miscFlags = GBASerializedMiscFlagsFillIrqPending(miscFlags);
+    STORE_32(gba->irqEvent.when - mTimingCurrentTime(&gba->timing), 0, &state->nextIrq);
+  }
+  miscFlags = GBASerializedMiscFlagsSetBlocked(miscFlags, gba->cpuBlocked);
+  miscFlags = GBASerializedMiscFlagsSetKeyIRQKeys(miscFlags, gba->keysLast);
+  STORE_32(miscFlags, 0, &state->miscFlags);
+  STORE_32(gba->biosStall, 0, &state->biosStall);
+
+  GBAMemorySerialize(&gba->memory, state);
+  GBAIOSerialize(gba, state);
+  GBAUnlCartSerialize(gba, state);
+  GBAVideoSerialize(&gba->video, state);
+  GBAAudioSerialize(&gba->audio, state);
+  GBASavedataSerialize(&gba->memory.savedata, state);
+
+  if (gba->memory.matrix.size) {
+    GBAMatrixSerialize(gba, state);
   }
 }
 
-void GBACore::RenderDebugFrame() {
-  const size_t required = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
-  if (frame_buffer_.size() != required) {
-    frame_buffer_.assign(required, 0xFF000000U);
+bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
+  bool error = false;
+  int32_t check;
+  uint32_t ucheck;
+  LOAD_32(ucheck, 0, &state->versionMagic);
+  if (ucheck > GBASavestateMagic + GBASavestateVersion) {
+    mLOG(GBA_STATE, WARN, "Invalid or too new savestate: expected %08X, got %08X", GBASavestateMagic + GBASavestateVersion, ucheck);
+    error = true;
+  } else if (ucheck < GBASavestateMagic) {
+    mLOG(GBA_STATE, WARN, "Invalid savestate: expected %08X, got %08X", GBASavestateMagic + GBASavestateVersion, ucheck);
+    error = true;
+  } else if (ucheck < GBASavestateMagic + GBASavestateVersion) {
+    mLOG(GBA_STATE, WARN, "Old savestate: expected %08X, got %08X, continuing anyway", GBASavestateMagic + GBASavestateVersion, ucheck);
   }
-
-  const uint16_t dispcnt = ReadIO16(0x04000000u);
-  const bool forced_blank = (dispcnt & (1u << 7)) != 0;
-  if (forced_blank) {
-    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0xFFFFFFFFu);
-    EnsureBgPriorityBufferSize();
-    std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-              static_cast<uint8_t>(kBackdropPriority));
-    return;
-  }
-  EnsureObjDrawnMaskBufferSize();
-  EnsureObjSemiTransMaskBufferSize();
-  EnsureBgBaseColorBufferSize();
-  EnsureBgSecondBuffersSize();
-  BuildObjWindowMask();
-  const uint16_t bg_mode = dispcnt & 0x7u;
-  if (bg_mode == 0u) {
-    RenderMode0Frame();
-    BgBaseColorBuffer() = frame_buffer_;
-    RenderSprites();
-    ApplyColorEffects();
-    return;
-  }
-  if (bg_mode == 1u) {
-    RenderMode1Frame();
-    BgBaseColorBuffer() = frame_buffer_;
-    RenderSprites();
-    ApplyColorEffects();
-    return;
-  }
-  if (bg_mode == 2u) {
-    RenderMode2Frame();
-    BgBaseColorBuffer() = frame_buffer_;
-    RenderSprites();
-    ApplyColorEffects();
-    return;
-  }
-  if (bg_mode == 3u) {
-    RenderMode3Frame();
-    BgBaseColorBuffer() = frame_buffer_;
-    RenderSprites();
-    ApplyColorEffects();
-    return;
-  }
-  if (bg_mode == 4u) {
-    RenderMode4Frame();
-    BgBaseColorBuffer() = frame_buffer_;
-    RenderSprites();
-    ApplyColorEffects();
-    return;
-  }
-  if (bg_mode == 5u) {
-    RenderMode5Frame();
-    BgBaseColorBuffer() = frame_buffer_;
-    RenderSprites();
-    ApplyColorEffects();
-    return;
-  }
-  if (bg_mode >= 6u) {
-    // GBA has no official mode 6/7, but some homebrew/debug code may leave
-    // transient values. Use affine pipeline as a mode7-like fallback to keep
-    // output stable instead of dropping to backdrop-only.
-    RenderMode2Frame();
-    BgBaseColorBuffer() = frame_buffer_;
-    RenderSprites();
-    ApplyColorEffects();
-    return;
-  }
-  const uint32_t backdrop = Bgr555ToRgba8888(ReadBackdropBgr(palette_ram_));
-  std::fill(frame_buffer_.begin(), frame_buffer_.end(), backdrop);
-  EnsureBgPriorityBufferSize();
-  std::fill(BgPriorityBuffer().begin(), BgPriorityBuffer().end(),
-            static_cast<uint8_t>(kBackdropPriority));
-}
-
-uint64_t GBACore::ComputeFrameHash() const {
-  uint64_t hash = 1469598103934665603ULL;
-  constexpr uint64_t kPrime = 1099511628211ULL;
-
-  for (uint32_t px : frame_buffer_) {
-    hash ^= px;
-    hash *= kPrime;
-  }
-  hash ^= static_cast<uint64_t>(gameplay_state_.player_x) << 1;
-  hash ^= static_cast<uint64_t>(gameplay_state_.player_y) << 9;
-  hash ^= static_cast<uint64_t>(gameplay_state_.score) << 17;
-  return hash;
-}
-
-bool GBACore::ValidateFrameBuffer(std::string* error) const {
-  const size_t expected_size = static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight);
-  if (frame_buffer_.size() != expected_size) {
-    if (error) *error = "Invalid framebuffer size.";
-    return false;
-  }
-
-  uint32_t first_px = 0;
-  bool first_px_set = false;
-  bool found_distinct_pixel = false;
-  uint32_t row_xor_accum = 0;
-
-  for (int y = 0; y < kScreenHeight; ++y) {
-    uint32_t row_hash = 2166136261u;
-    for (int x = 0; x < kScreenWidth; ++x) {
-      const uint32_t px = frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x];
-      if ((px & 0xFF000000u) != 0xFF000000u) {
-        if (error) *error = "Found pixel with invalid alpha channel.";
-        return false;
-      }
-      row_hash ^= px;
-      row_hash *= 16777619u;
-    }
-
-    row_xor_accum ^= row_hash;
-
-    for (int x = 0; x < kScreenWidth; ++x) {
-      const uint32_t px = frame_buffer_[static_cast<size_t>(y) * kScreenWidth + x];
-      if (!first_px_set) {
-        first_px = px;
-        first_px_set = true;
-      } else if (px != first_px) {
-        found_distinct_pixel = true;
-      }
+  LOAD_32(ucheck, 0, &state->biosChecksum);
+  if (ucheck != gba->biosChecksum) {
+    mLOG(GBA_STATE, WARN, "Savestate created using a different version of the BIOS: expected %08X, got %08X", gba->biosChecksum, ucheck);
+    uint32_t pc;
+    LOAD_32(pc, ARM_PC * sizeof(state->cpu.gprs[0]), state->cpu.gprs);
+    if ((ucheck == GBA_BIOS_CHECKSUM || gba->biosChecksum == GBA_BIOS_CHECKSUM) && pc < GBA_SIZE_BIOS && pc >= 0x20) {
+      error = true;
     }
   }
+  if (gba->memory.rom) {
+    struct GBACartridge* cart;
+    switch (gba->memory.unl.type) {
+    case GBA_UNL_CART_NONE:
+    case GBA_UNL_CART_VFAME:
+    default:
+      cart = (struct GBACartridge*) gba->memory.rom;
+      break;
+    case GBA_UNL_CART_MULTICART:
+      cart = (struct GBACartridge*) gba->memory.unl.multi.rom;
+      break;
+    }
+    if (state->id != cart->id || memcmp(state->title, cart->title, sizeof(state->title))) {
+      mLOG(GBA_STATE, WARN, "Savestate is for a different game");
+      error = true;
+    }
+  } else if (!gba->memory.rom && state->id != 0) {
+    mLOG(GBA_STATE, WARN, "Savestate is for a game, but no game loaded");
+    error = true;
+  }
+  LOAD_32(ucheck, 0, &state->romCrc32);
+  if (ucheck != gba->romCrc32) {
+    mLOG(GBA_STATE, WARN, "Savestate is for a different version of the game");
+  }
+  LOAD_32(check, 0, &state->cpu.cycles);
+  if (check < 0) {
+    mLOG(GBA_STATE, WARN, "Savestate is corrupted: CPU cycles are negative");
+    error = true;
+  }
+  if (check >= (int32_t) GBA_ARM7TDMI_FREQUENCY) {
+    mLOG(GBA_STATE, WARN, "Savestate is corrupted: CPU cycles are too high");
+    error = true;
+  }
+  LOAD_32(check, ARM_PC * sizeof(state->cpu.gprs[0]), state->cpu.gprs);
+  int region = (check >> BASE_OFFSET);
+  if ((region == GBA_REGION_ROM0 || region == GBA_REGION_ROM1 || region == GBA_REGION_ROM2) && ((check - WORD_SIZE_ARM) & GBA_SIZE_ROM0) >= gba->memory.romSize - WORD_SIZE_ARM) {
+    mLOG(GBA_STATE, WARN, "Savestate created using a differently sized version of the ROM");
+    error = true;
+  }
+  if (error) {
+    return false;
+  }
+  mTimingClear(&gba->timing);
+  LOAD_32(gba->timing.masterCycles, 0, &state->masterCycles);
+  LOAD_64LE(gba->timing.globalCycles, 0, &state->globalCycles);
 
-  if (!found_distinct_pixel) {
-    if (error) *error = "Framebuffer has no visible variation (all pixels identical).";
-    return false;
+  size_t i;
+  for (i = 0; i < 16; ++i) {
+    LOAD_32(gba->cpu->gprs[i], i * sizeof(gba->cpu->gprs[0]), state->cpu.gprs);
   }
-  if (row_xor_accum == 0u) {
-    if (error) *error = "Framebuffer row signatures collapsed unexpectedly.";
-    return false;
+  LOAD_32(gba->cpu->cpsr.packed, 0, &state->cpu.cpsr.packed);
+  LOAD_32(gba->cpu->spsr.packed, 0, &state->cpu.spsr.packed);
+  LOAD_32(gba->cpu->cycles, 0, &state->cpu.cycles);
+  LOAD_32(gba->cpu->nextEvent, 0, &state->cpu.nextEvent);
+  for (i = 0; i < 6; ++i) {
+    int j;
+    for (j = 0; j < 7; ++j) {
+      LOAD_32(gba->cpu->bankedRegisters[i][j], (i * 7 + j) * sizeof(gba->cpu->bankedRegisters[0][0]), state->cpu.bankedRegisters);
+    }
+    LOAD_32(gba->cpu->bankedSPSRs[i], i * sizeof(gba->cpu->bankedSPSRs[0]), state->cpu.bankedSPSRs);
   }
+  gba->cpu->privilegeMode = gba->cpu->cpsr.priv;
+  if (gba->cpu->gprs[ARM_PC] & 1) {
+    mLOG(GBA_STATE, WARN, "Savestate has unaligned PC and is probably corrupted");
+    gba->cpu->gprs[ARM_PC] &= ~1;
+  }
+
+  // Since this can remap the ROM, we need to do this before we reset the pipeline
+  GBAUnlCartDeserialize(gba, state);
+  gba->memory.activeRegion = -1;
+  gba->cpu->memory.setActiveRegion(gba->cpu, gba->cpu->gprs[ARM_PC]);
+  if (state->biosPrefetch) {
+    LOAD_32(gba->memory.biosPrefetch, 0, &state->biosPrefetch);
+  }
+  LOAD_32(gba->memory.lastPrefetchedPc, 0, &state->lastPrefetchedPc);
+  if (gba->cpu->cpsr.t) {
+    gba->cpu->executionMode = MODE_THUMB;
+    if (state->cpuPrefetch[0] && state->cpuPrefetch[1]) {
+      LOAD_32(gba->cpu->prefetch[0], 0, state->cpuPrefetch);
+      LOAD_32(gba->cpu->prefetch[1], 4, state->cpuPrefetch);
+      gba->cpu->prefetch[0] &= 0xFFFF;
+      gba->cpu->prefetch[1] &= 0xFFFF;
+    } else {
+      // Maintain backwards compat
+      LOAD_16(gba->cpu->prefetch[0], (gba->cpu->gprs[ARM_PC] - WORD_SIZE_THUMB) & gba->cpu->memory.activeMask, gba->cpu->memory.activeRegion);
+      LOAD_16(gba->cpu->prefetch[1], (gba->cpu->gprs[ARM_PC]) & gba->cpu->memory.activeMask, gba->cpu->memory.activeRegion);
+    }
+  } else {
+    gba->cpu->executionMode = MODE_ARM;
+    if (state->cpuPrefetch[0] && state->cpuPrefetch[1]) {
+      LOAD_32(gba->cpu->prefetch[0], 0, state->cpuPrefetch);
+      LOAD_32(gba->cpu->prefetch[1], 4, state->cpuPrefetch);
+    } else {
+      // Maintain backwards compat
+      LOAD_32(gba->cpu->prefetch[0], (gba->cpu->gprs[ARM_PC] - WORD_SIZE_ARM) & gba->cpu->memory.activeMask, gba->cpu->memory.activeRegion);
+      LOAD_32(gba->cpu->prefetch[1], (gba->cpu->gprs[ARM_PC]) & gba->cpu->memory.activeMask, gba->cpu->memory.activeRegion);
+    }
+  }
+  GBASerializedMiscFlags miscFlags = 0;
+  LOAD_32(miscFlags, 0, &state->miscFlags);
+  gba->cpu->halted = GBASerializedMiscFlagsGetHalted(miscFlags);
+  gba->memory.io[GBA_REG(POSTFLG)] = GBASerializedMiscFlagsGetPOSTFLG(miscFlags);
+  if (GBASerializedMiscFlagsIsIrqPending(miscFlags)) {
+    int32_t when;
+    LOAD_32(when, 0, &state->nextIrq);
+    mTimingSchedule(&gba->timing, &gba->irqEvent, when);
+  }
+  gba->cpuBlocked = GBASerializedMiscFlagsGetBlocked(miscFlags);
+  gba->keysLast = GBASerializedMiscFlagsGetKeyIRQKeys(miscFlags);
+  LOAD_32(gba->biosStall, 0, &state->biosStall);
+
+  GBAVideoDeserialize(&gba->video, state);
+  GBAMemoryDeserialize(&gba->memory, state);
+  GBAIODeserialize(gba, state);
+  GBAAudioDeserialize(&gba->audio, state);
+  GBASavedataDeserialize(&gba->memory.savedata, state);
+
+  if (gba->memory.matrix.size) {
+    GBAMatrixDeserialize(gba, state);
+  }
+
+  mTimingInterrupt(&gba->timing);
+
   return true;
 }
-
-
-}  // namespace gba
-
-// ---- END gba_core_ppu.cpp ----
+// ---- END rewritten from reference implementation/serialize.c ----
+#if defined(__cplusplus)
+}  // extern "C"
+#endif

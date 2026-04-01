@@ -1,403 +1,795 @@
-#include "../gba_core.h"
-#include "./ppu_common.mm"
+// iOS-focused translation-unit optimization hints (no behavior change).
+#if defined(__APPLE__) && defined(__clang__)
+#pragma clang optimize on
+#endif
+// Rebuilt Objective-C++ module from reference implementation sources.
+// NOTE: Source bodies are embedded and adapted here (no direct include of reference files).
+#if defined(__cplusplus)
+extern "C" {
+#endif
 
-namespace gba {
-namespace {
-constexpr uint32_t kBgVramSize = 0x10000u;
-inline bool SampleAffineBgAt(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
-                             int tx, int ty, uint16_t* out_idx);
-inline bool SampleAffineBgFromCoord(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
-                                    int16_t pa, int16_t pc, int32_t refx, int32_t refy, int sx,
-                                    uint16_t* out_idx);
+// ---- BEGIN rewritten from reference implementation/savedata.c ----
 
-uint32_t GetPaletteColor(const std::array<uint8_t, 1024>& palette_ram, uint16_t idx) {
-  const size_t off = (static_cast<size_t>(idx) & 0x1FFu) * 2;
-  if (off + 1 >= palette_ram.size()) return 0xFF000000u;
-  const uint16_t bgr = static_cast<uint16_t>(palette_ram[off]) | (static_cast<uint16_t>(palette_ram[off+1]) << 8);
-  return Bgr555ToRgba8888(bgr);
+
+// Some testing was done here...
+// Erase cycles can vary greatly.
+// Some games may vary anywhere between about 2000 cycles to up to 30000 cycles. (Observed on a Macronix (09C2) chip).
+// Other games vary from very little, with a fairly solid 20500 cycle count. (Observed on a SST (D4BF) chip).
+// An average estimation is as follows.
+#define FLASH_ERASE_CYCLES 30000
+#define FLASH_PROGRAM_CYCLES 650
+// This needs real testing, and is only an estimation currently
+#define EEPROM_SETTLE_CYCLES 115000
+
+mLOG_DEFINE_CATEGORY(GBA_SAVE, "GBA Savedata", "gba.savedata");
+
+static void _flashSwitchBank(struct GBASavedata* savedata, int bank);
+static void _flashErase(struct GBASavedata* savedata);
+static void _flashEraseSector(struct GBASavedata* savedata, uint16_t sectorStart);
+
+static void _ashesToAshes(struct mTiming* timing, void* user, uint32_t cyclesLate) {
+  UNUSED(timing);
+  UNUSED(user);
+  UNUSED(cyclesLate);
+  // Funk to funky
 }
 
-void BuildPaletteCache(const std::array<uint8_t, 1024>& palette_ram, std::array<uint32_t, 512>* out) {
-  if (out == nullptr) return;
-  for (size_t i = 0; i < out->size(); ++i) {
-    const size_t off = i * 2u;
-    const uint16_t bgr = static_cast<uint16_t>(palette_ram[off]) |
-                         (static_cast<uint16_t>(palette_ram[off + 1u]) << 8);
-    (*out)[i] = Bgr555ToRgba8888(bgr);
+void GBASavedataInit(struct GBASavedata* savedata, struct VFile* vf) {
+  savedata->type = GBA_SAVEDATA_AUTODETECT;
+  savedata->data = NULL;
+  savedata->command = EEPROM_COMMAND_NULL;
+  savedata->flashState = FLASH_STATE_RAW;
+  savedata->vf = vf;
+  if (savedata->realVf && savedata->realVf != vf) {
+    savedata->realVf->close(savedata->realVf);
   }
+  savedata->realVf = vf;
+  savedata->mapMode = MAP_WRITE;
+  savedata->maskWriteback = false;
+  savedata->dirty = 0;
+  savedata->dirtAge = 0;
+  savedata->dust.name = "GBA Savedata Settling";
+  savedata->dust.priority = 0x70;
+  savedata->dust.context = savedata;
+  savedata->dust.callback = _ashesToAshes;
 }
 
-void SampleTextBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt, uint16_t hofs, uint16_t vofs,
-                  uint16_t mosaic_reg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
-  *out_opaque = false;
-  int sx = x, sy = y;
-  if (bgcnt & 0x40) {
-    int mh = (mosaic_reg & 0xF) + 1;
-    int mv = ((mosaic_reg >> 4) & 0xF) + 1;
-    sx = (x / mh) * mh; sy = (y / mv) * mv;
-  }
-  sx = (sx + hofs) & 0x1FF; sy = (sy + vofs) & 0x1FF;
-
-  const uint32_t char_base = ((bgcnt >> 2) & 0x3) * 0x4000;
-  const uint32_t screen_base = ((bgcnt >> 8) & 0x1F) * 0x800;
-  const int screen_size = (bgcnt >> 14) & 0x3;
-
-  int tx = sx / 8, ty = sy / 8;
-  uint32_t map_addr = screen_base;
-  if (screen_size == 1) { if (tx >= 32) { map_addr += 0x800; tx -= 32; } }
-  else if (screen_size == 2) { if (ty >= 32) { map_addr += 0x800; ty -= 32; } }
-  else if (screen_size == 3) {
-    if (tx >= 32) { map_addr += 0x800; tx -= 32; }
-    if (ty >= 32) { map_addr += 0x1000; ty -= 32; }
-  }
-  tx &= 31; ty &= 31;
-  map_addr += (static_cast<uint32_t>(ty) * 32 + static_cast<uint32_t>(tx)) * 2;
-  map_addr %= kBgVramSize;
-  if (map_addr + 1 >= kBgVramSize) return;
-  const uint16_t info = static_cast<uint16_t>(vram[map_addr]) | (static_cast<uint16_t>(vram[map_addr+1]) << 8);
-  const uint16_t tile = info & 0x3FF;
-  int px = sx % 8, py = sy % 8;
-  if (info & 0x400) px = 7 - px;
-  if (info & 0x800) py = 7 - py;
-
-  if (bgcnt & 0x80) { // 8bpp
-    const uint32_t off = (char_base + static_cast<uint32_t>(tile) * 64 + static_cast<uint32_t>(py) * 8 + static_cast<uint32_t>(px)) % kBgVramSize;
-    const uint8_t color = vram[off];
-    if (color) { *out_idx = color; *out_opaque = true; }
-  } else { // 4bpp
-    const uint32_t off = (char_base + static_cast<uint32_t>(tile) * 32 + static_cast<uint32_t>(py) * 4 + static_cast<uint32_t>(px) / 2) % kBgVramSize;
-    const uint8_t val = vram[off];
-    const uint8_t color = (px & 1) ? (val >> 4) : (val & 0xF);
-    if (color) { *out_idx = ((info >> 12) & 0xF) * 16 + color; *out_opaque = true; }
-  }
+void GBASavedataReset(struct GBASavedata* savedata) {
+  savedata->command = EEPROM_COMMAND_NULL;
+  savedata->flashState = FLASH_STATE_RAW;
 }
 
-void SampleAffineBg(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
-                    int16_t pa, int16_t pb, int16_t pc, int16_t pd, int32_t refx, int32_t refy,
-                    uint16_t mosaic_reg, int x, int y, uint16_t* out_idx, bool* out_opaque) {
-  *out_opaque = false;
-
-  int sx = x;
-  int sy = y;
-
-  if (bgcnt & 0x40) {
-    int mh = (mosaic_reg & 0xF) + 1;
-    int mv = ((mosaic_reg >> 4) & 0xF) + 1;
-    sx = (x / mh) * mh;
-    sy = (y / mv) * mv;
+void GBASavedataDeinit(struct GBASavedata* savedata) {
+  if (savedata->vf) {
+    size_t size = GBASavedataSize(savedata);
+    if (savedata->data) {
+      savedata->vf->unmap(savedata->vf, savedata->data, size);
+    }
+    savedata->vf = NULL;
+  } else {
+    switch (savedata->type) {
+    case GBA_SAVEDATA_SRAM:
+      mappedMemoryFree(savedata->data, GBA_SIZE_SRAM);
+      break;
+    case GBA_SAVEDATA_SRAM512:
+      mappedMemoryFree(savedata->data, GBA_SIZE_SRAM512);
+      break;
+    case GBA_SAVEDATA_FLASH512:
+      mappedMemoryFree(savedata->data, GBA_SIZE_FLASH512);
+      break;
+    case GBA_SAVEDATA_FLASH1M:
+      mappedMemoryFree(savedata->data, GBA_SIZE_FLASH1M);
+      break;
+    case GBA_SAVEDATA_EEPROM:
+      mappedMemoryFree(savedata->data, GBA_SIZE_EEPROM);
+      break;
+    case GBA_SAVEDATA_EEPROM512:
+      mappedMemoryFree(savedata->data, GBA_SIZE_EEPROM512);
+      break;
+    case GBA_SAVEDATA_FORCE_NONE:
+    case GBA_SAVEDATA_AUTODETECT:
+      break;
+    }
   }
-
-  const int32_t u = refx + static_cast<int32_t>(pa) * sx;
-  const int32_t v = refy + static_cast<int32_t>(pc) * sx;
-
-  uint16_t idx = 0;
-  if (SampleAffineBgAt(vram, bgcnt, u >> 8, v >> 8, &idx)) {
-    *out_idx = idx;
-    *out_opaque = true;
-  }
+  savedata->data = 0;
+  savedata->type = GBA_SAVEDATA_AUTODETECT;
 }
 
-inline bool SampleAffineBgAt(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
-                             int tx, int ty, uint16_t* out_idx) {
-  const int screen_size = (bgcnt >> 14) & 0x3;
-  const int size = 128 << screen_size;
-  if (bgcnt & 0x2000) {
-    tx %= size; ty %= size;
-    if (tx < 0) tx += size;
-    if (ty < 0) ty += size;
-  } else if (tx < 0 || ty < 0 || tx >= size || ty >= size) {
-    return false;
+void GBASavedataMask(struct GBASavedata* savedata, struct VFile* vf, bool writeback) {
+  enum GBASavedataType type = savedata->type;
+  struct VFile* oldVf = savedata->vf;
+  GBASavedataDeinit(savedata);
+  if (oldVf && oldVf != savedata->realVf) {
+    oldVf->close(oldVf);
   }
-  const uint32_t char_base = ((bgcnt >> 2) & 0x3) * 0x4000;
-  const uint32_t screen_base = ((bgcnt >> 8) & 0x1F) * 0x800;
-  const int tiles_per_row = size / 8;
-  uint32_t map_off =
-    screen_base +
-    static_cast<uint32_t>(ty / 8) * static_cast<uint32_t>(tiles_per_row) +
-    static_cast<uint32_t>(tx / 8);
+  savedata->vf = vf;
+  savedata->mapMode = MAP_READ;
+  savedata->maskWriteback = writeback;
+  GBASavedataForceType(savedata, type);
+}
 
-map_off &= 0xFFFF;
-  const uint8_t tile = vram[map_off];
-  const uint32_t chr_off = (char_base + static_cast<uint32_t>(tile) * 64 +
-                            static_cast<uint32_t>(ty & 7) * 8 +
-                            static_cast<uint32_t>(tx & 7)) % kBgVramSize;
-  const uint8_t color = vram[chr_off];
-  if (color == 0u) return false;
-  if (out_idx) *out_idx = color;
+void GBASavedataUnmask(struct GBASavedata* savedata) {
+  if (!savedata->realVf || savedata->vf == savedata->realVf) {
+    return;
+  }
+  enum GBASavedataType type = savedata->type;
+  struct VFile* vf = savedata->vf;
+  GBASavedataDeinit(savedata);
+  savedata->vf = savedata->realVf;
+  savedata->mapMode = MAP_WRITE;
+  GBASavedataForceType(savedata, type);
+  if (savedata->maskWriteback) {
+    GBASavedataLoad(savedata, vf);
+    savedata->maskWriteback = false;
+  }
+  vf->close(vf);
+}
+
+bool GBASavedataClone(struct GBASavedata* savedata, struct VFile* out) {
+  if (savedata->data) {
+    switch (savedata->type) {
+    case GBA_SAVEDATA_SRAM:
+      return out->write(out, savedata->data, GBA_SIZE_SRAM) == GBA_SIZE_SRAM;
+    case GBA_SAVEDATA_SRAM512:
+      return out->write(out, savedata->data, GBA_SIZE_SRAM512) == GBA_SIZE_SRAM512;
+    case GBA_SAVEDATA_FLASH512:
+      return out->write(out, savedata->data, GBA_SIZE_FLASH512) == GBA_SIZE_FLASH512;
+    case GBA_SAVEDATA_FLASH1M:
+      return out->write(out, savedata->data, GBA_SIZE_FLASH1M) == GBA_SIZE_FLASH1M;
+    case GBA_SAVEDATA_EEPROM:
+      return out->write(out, savedata->data, GBA_SIZE_EEPROM) == GBA_SIZE_EEPROM;
+    case GBA_SAVEDATA_EEPROM512:
+      return out->write(out, savedata->data, GBA_SIZE_EEPROM512) == GBA_SIZE_EEPROM512;
+    case GBA_SAVEDATA_AUTODETECT:
+    case GBA_SAVEDATA_FORCE_NONE:
+      return true;
+    }
+  } else if (savedata->vf) {
+    off_t read = 0;
+    uint8_t buffer[2048];
+    savedata->vf->seek(savedata->vf, 0, SEEK_SET);
+    do {
+      read = savedata->vf->read(savedata->vf, buffer, sizeof(buffer));
+      out->write(out, buffer, read);
+    } while (read == sizeof(buffer));
+    return read >= 0;
+  }
   return true;
 }
 
-inline bool SampleAffineBgFromCoord(const std::array<uint8_t, 96*1024>& vram, uint16_t bgcnt,
-                                    int16_t pa, int16_t pc, int32_t refx, int32_t refy, int sx,
-                                    uint16_t* out_idx) {
-  const int32_t tx_fp = refx + static_cast<int32_t>(pa) * sx;
-  const int32_t ty_fp = refy + static_cast<int32_t>(pc) * sx;
-  return SampleAffineBgAt(vram, bgcnt, tx_fp >> 8, ty_fp >> 8, out_idx);
+size_t GBASavedataSize(const struct GBASavedata* savedata) {
+  switch (savedata->type) {
+  case GBA_SAVEDATA_SRAM:
+    return GBA_SIZE_SRAM;
+  case GBA_SAVEDATA_SRAM512:
+    return GBA_SIZE_SRAM512;
+  case GBA_SAVEDATA_FLASH512:
+    return GBA_SIZE_FLASH512;
+  case GBA_SAVEDATA_FLASH1M:
+    return GBA_SIZE_FLASH1M;
+  case GBA_SAVEDATA_EEPROM:
+    return GBA_SIZE_EEPROM;
+  case GBA_SAVEDATA_EEPROM512:
+    return GBA_SIZE_EEPROM512;
+  case GBA_SAVEDATA_FORCE_NONE:
+    return 0;
+  case GBA_SAVEDATA_AUTODETECT:
+  default:
+    if (savedata->vf) {
+      return savedata->vf->size(savedata->vf);
+    }
+    return 0;
+  }
 }
 
-} // namespace
+bool GBASavedataLoad(struct GBASavedata* savedata, struct VFile* in) {
+  if (savedata->data) {
+    if (!in || savedata->type == GBA_SAVEDATA_FORCE_NONE) {
+      return false;
+    }
+    ssize_t size = GBASavedataSize(savedata);
+    in->seek(in, 0, SEEK_SET);
+    return in->read(in, savedata->data, size) == size;
+  } else if (savedata->vf) {
+    off_t read = 0;
+    uint8_t buffer[2048];
+    savedata->vf->seek(savedata->vf, 0, SEEK_SET);
+    if (in) {
+      in->seek(in, 0, SEEK_SET);
+      do {
+        read = in->read(in, buffer, sizeof(buffer));
+        read = savedata->vf->write(savedata->vf, buffer, read);
+      } while (read == sizeof(buffer));
+    }
+    memset(buffer, 0xFF, sizeof(buffer));
+    ssize_t fsize = savedata->vf->size(savedata->vf);
+    ssize_t pos = savedata->vf->seek(savedata->vf, 0, SEEK_CUR);
+    while (fsize - pos >= (ssize_t) sizeof(buffer)) {
+      savedata->vf->write(savedata->vf, buffer, sizeof(buffer));
+      pos = savedata->vf->seek(savedata->vf, 0, SEEK_CUR);
+    }
+    if (fsize - pos > 0) {
+      savedata->vf->write(savedata->vf, buffer, fsize - pos);
+    }
+    return read >= 0;
+  }
+  return true;
+}
 
-void GBACore::RenderMode0Frame() {
-  std::array<uint32_t, 512> pal_cache{};
-  BuildPaletteCache(palette_ram_, &pal_cache);
-  const uint32_t backdrop = pal_cache[0];
-  const uint16_t dispcnt = ReadIO16(0x04000000);
-  const uint16_t winin = ReadIO16(0x04000048), winout = ReadIO16(0x0400004A);
-  const uint16_t win0h = ReadIO16(0x04000040), win0v = ReadIO16(0x04000042);
-  const uint16_t win1h = ReadIO16(0x04000044), win1v = ReadIO16(0x04000046);
-  const uint16_t mosaic_reg = ReadIO16(0x0400004C);
+void GBASavedataForceType(struct GBASavedata* savedata, enum GBASavedataType type) {
+  if (savedata->type == type) {
+    return;
+  }
+  if (savedata->type != GBA_SAVEDATA_AUTODETECT) {
+    struct VFile* vf = savedata->vf;
+    int mapMode = savedata->mapMode;
+    bool maskWriteback = savedata->maskWriteback;
+    GBASavedataDeinit(savedata);
+    GBASavedataInit(savedata, vf);
+    savedata->mapMode = mapMode;
+    savedata->maskWriteback = maskWriteback;
+  }
+  switch (type) {
+  case GBA_SAVEDATA_FLASH512:
+  case GBA_SAVEDATA_FLASH1M:
+    savedata->type = type;
+    GBASavedataInitFlash(savedata);
+    return;
+  case GBA_SAVEDATA_EEPROM:
+  case GBA_SAVEDATA_EEPROM512:
+    savedata->type = type;
+    GBASavedataInitEEPROM(savedata);
+    return;
+  case GBA_SAVEDATA_SRAM:
+    GBASavedataInitSRAM(savedata);
+    return;
+  case GBA_SAVEDATA_SRAM512:
+    GBASavedataInitSRAM512(savedata);
+    return;
+  case GBA_SAVEDATA_FORCE_NONE:
+    savedata->type = GBA_SAVEDATA_FORCE_NONE;
+    break;
+  case GBA_SAVEDATA_AUTODETECT:
+    break;
+  }
+  mCALLBACKS_INVOKE(savedata->p, memoryBlocksChanged);
+}
 
-  EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
-  auto& bg_layer = BgLayerBuffer(); auto& bg_priority = BgPriorityBuffer();
-  auto& sec_color = BgSecondColorBuffer(); auto& sec_layer = BgSecondLayerBuffer();
-  auto& sec_prio = BgSecondPriorityBuffer();
+void GBASavedataInitFlash(struct GBASavedata* savedata) {
+  if (savedata->type == GBA_SAVEDATA_AUTODETECT) {
+    savedata->type = GBA_SAVEDATA_FLASH512;
+  }
+  if (savedata->type != GBA_SAVEDATA_FLASH512 && savedata->type != GBA_SAVEDATA_FLASH1M) {
+    mLOG(GBA_SAVE, WARN, "Can't re-initialize savedata");
+    return;
+  }
+  int32_t flashSize = GBA_SIZE_FLASH512;
+  if (savedata->type == GBA_SAVEDATA_FLASH1M) {
+    flashSize = GBA_SIZE_FLASH1M;
+  }
+  off_t end;
+  if (!savedata->vf) {
+    end = 0;
+    savedata->data = anonymousMemoryMap(GBA_SIZE_FLASH1M);
+  } else {
+    end = savedata->vf->size(savedata->vf);
+    if (end < flashSize) {
+      savedata->vf->truncate(savedata->vf, flashSize);
+    }
+    savedata->data = savedata->vf->map(savedata->vf, flashSize, savedata->mapMode);
+  }
 
-  for (int y=0; y<kScreenHeight; ++y) {
-    for (int x=0; x<kScreenWidth; ++x) {
-      uint16_t b_idx = 0; int b_prio = 4; uint8_t b_layer = kLayerBackdrop; bool h_bg = false;
-      uint16_t s_idx = 0; int s_prio = 4; uint8_t s_layer = kLayerBackdrop; bool h_sec = false;
-      auto consider = [&](uint16_t idx, int prio, uint8_t layer) {
-        if (!h_bg || prio < b_prio || (prio == b_prio && layer < b_layer)) {
-          if (h_bg) { s_idx = b_idx; s_prio = b_prio; s_layer = b_layer; h_sec = true; }
-          b_idx = idx; b_prio = prio; b_layer = layer; h_bg = true;
-        } else if (!h_sec || prio < s_prio || (prio == s_prio && layer < s_layer)) {
-          s_idx = idx; s_prio = prio; s_layer = layer; h_sec = true;
-        }
-      };
-      for (int bg=0; bg<4; ++bg) {
-        if (!(dispcnt & (1 << (8+bg)))) continue;
-        if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) continue;
-        const uint16_t bgcnt = bg_scroll_line_valid_ ? bg_cnt_line_[y][bg] : ReadIO16(0x04000008+bg*2);
-        uint16_t idx=0; bool opaque=false;
-        const uint16_t hofs = bg_scroll_line_valid_ ? bg_hofs_line_[y][bg] : ReadIO16(0x04000010+bg*4);
-        const uint16_t vofs = bg_scroll_line_valid_ ? bg_vofs_line_[y][bg] : ReadIO16(0x04000012+bg*4);
-        SampleTextBg(vram_, bgcnt, hofs, vofs, mosaic_reg, x, y, &idx, &opaque);
-        if (opaque) consider(idx, bgcnt & 3, static_cast<uint8_t>(bg));
+  savedata->currentBank = savedata->data;
+  if (end < GBA_SIZE_FLASH512) {
+    memset(&savedata->data[end], 0xFF, flashSize - end);
+  }
+
+  mCALLBACKS_INVOKE(savedata->p, memoryBlocksChanged);
+}
+
+void GBASavedataInitEEPROM(struct GBASavedata* savedata) {
+  if (savedata->type == GBA_SAVEDATA_AUTODETECT) {
+    savedata->type = GBA_SAVEDATA_EEPROM512;
+  } else if (savedata->type != GBA_SAVEDATA_EEPROM512 && savedata->type != GBA_SAVEDATA_EEPROM) {
+    mLOG(GBA_SAVE, WARN, "Can't re-initialize savedata");
+    return;
+  }
+  int32_t eepromSize = GBA_SIZE_EEPROM512;
+  if (savedata->type == GBA_SAVEDATA_EEPROM) {
+    eepromSize = GBA_SIZE_EEPROM;
+  }
+  off_t end;
+  if (!savedata->vf) {
+    end = 0;
+    savedata->data = anonymousMemoryMap(GBA_SIZE_EEPROM);
+  } else {
+    end = savedata->vf->size(savedata->vf);
+    if (end < eepromSize) {
+      savedata->vf->truncate(savedata->vf, eepromSize);
+    }
+    savedata->data = savedata->vf->map(savedata->vf, eepromSize, savedata->mapMode);
+  }
+  if (end < GBA_SIZE_EEPROM512) {
+    memset(&savedata->data[end], 0xFF, GBA_SIZE_EEPROM512 - end);
+  }
+  mCALLBACKS_INVOKE(savedata->p, memoryBlocksChanged);
+}
+
+void GBASavedataInitSRAM(struct GBASavedata* savedata) {
+  if (savedata->type == GBA_SAVEDATA_AUTODETECT) {
+    savedata->type = GBA_SAVEDATA_SRAM;
+  } else {
+    mLOG(GBA_SAVE, WARN, "Can't re-initialize savedata");
+    return;
+  }
+  off_t end;
+  if (!savedata->vf) {
+    end = 0;
+    savedata->data = anonymousMemoryMap(GBA_SIZE_SRAM);
+  } else {
+    end = savedata->vf->size(savedata->vf);
+    if (end < GBA_SIZE_SRAM) {
+      savedata->vf->truncate(savedata->vf, GBA_SIZE_SRAM);
+    }
+    savedata->data = savedata->vf->map(savedata->vf, GBA_SIZE_SRAM, savedata->mapMode);
+  }
+
+  if (end < GBA_SIZE_SRAM) {
+    memset(&savedata->data[end], 0xFF, GBA_SIZE_SRAM - end);
+  }
+  mCALLBACKS_INVOKE(savedata->p, memoryBlocksChanged);
+}
+
+void GBASavedataInitSRAM512(struct GBASavedata* savedata) {
+  if (savedata->type == GBA_SAVEDATA_AUTODETECT) {
+    savedata->type = GBA_SAVEDATA_SRAM512;
+  } else {
+    mLOG(GBA_SAVE, WARN, "Can't re-initialize savedata");
+    return;
+  }
+  off_t end;
+  if (!savedata->vf) {
+    end = 0;
+    savedata->data = anonymousMemoryMap(GBA_SIZE_SRAM512);
+  } else {
+    end = savedata->vf->size(savedata->vf);
+    if (end < GBA_SIZE_SRAM512) {
+      savedata->vf->truncate(savedata->vf, GBA_SIZE_SRAM512);
+    }
+    savedata->data = savedata->vf->map(savedata->vf, GBA_SIZE_SRAM512, savedata->mapMode);
+  }
+
+  if (end < GBA_SIZE_SRAM512) {
+    memset(&savedata->data[end], 0xFF, GBA_SIZE_SRAM512 - end);
+  }
+  mCALLBACKS_INVOKE(savedata->p, memoryBlocksChanged);
+}
+
+uint8_t GBASavedataReadFlash(struct GBASavedata* savedata, uint16_t address) {
+  if (savedata->command == FLASH_COMMAND_ID) {
+    if (savedata->type == GBA_SAVEDATA_FLASH512) {
+      if (address < 2) {
+        return FLASH_PANASONIC_MN63F805MNP >> (address * 8);
       }
-      const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = h_bg ? pal_cache[static_cast<size_t>(b_idx) & 0x1FFu] : backdrop;
-      bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
-      sec_color[off] = h_sec ? pal_cache[static_cast<size_t>(s_idx) & 0x1FFu] : backdrop;
-      sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
-      sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
+    } else if (savedata->type == GBA_SAVEDATA_FLASH1M) {
+      if (address < 2) {
+        return FLASH_SANYO_LE26FV10N1TS >> (address * 8);
+      }
+    }
+  }
+  if (mTimingIsScheduled(&savedata->p->timing, &savedata->dust) && (address >> 12) == savedata->settling) {
+    // This should read Q7 XOR data bit 7 (data# polling), Q6 flipping
+    // every read (toggle bit), and /Q5 (error bit cleared), but implementing
+    // just data# polling is sufficient for games to figure it out
+    return (savedata->currentBank[address] ^ 0x80) & 0x80;
+  }
+  return savedata->currentBank[address];
+}
+
+void GBASavedataWriteFlash(struct GBASavedata* savedata, uint16_t address, uint8_t value) {
+  switch (savedata->flashState) {
+  case FLASH_STATE_RAW:
+    switch (savedata->command) {
+    case FLASH_COMMAND_PROGRAM:
+      savedata->dirty |= mSAVEDATA_DIRT_NEW;
+      savedata->currentBank[address] = value;
+      savedata->command = FLASH_COMMAND_NONE;
+      mTimingDeschedule(&savedata->p->timing, &savedata->dust);
+      mTimingSchedule(&savedata->p->timing, &savedata->dust, FLASH_PROGRAM_CYCLES);
+      break;
+    case FLASH_COMMAND_SWITCH_BANK:
+      if (address == 0 && value < 2) {
+        _flashSwitchBank(savedata, value);
+      } else {
+        mLOG(GBA_SAVE, GAME_ERROR, "Bad flash bank switch");
+        savedata->command = FLASH_COMMAND_NONE;
+      }
+      savedata->command = FLASH_COMMAND_NONE;
+      break;
+    default:
+      if (address == FLASH_BASE_HI && value == FLASH_COMMAND_START) {
+        savedata->flashState = FLASH_STATE_START;
+      } else {
+        mLOG(GBA_SAVE, GAME_ERROR, "Bad flash write: %#04x = %#02x", address, value);
+      }
+      break;
+    }
+    break;
+  case FLASH_STATE_START:
+    if (address == FLASH_BASE_LO && value == FLASH_COMMAND_CONTINUE) {
+      savedata->flashState = FLASH_STATE_CONTINUE;
+    } else {
+      mLOG(GBA_SAVE, GAME_ERROR, "Bad flash write: %#04x = %#02x", address, value);
+      savedata->flashState = FLASH_STATE_RAW;
+    }
+    break;
+  case FLASH_STATE_CONTINUE:
+    savedata->flashState = FLASH_STATE_RAW;
+    if (address == FLASH_BASE_HI) {
+      switch (savedata->command) {
+      case FLASH_COMMAND_NONE:
+        switch (value) {
+        case FLASH_COMMAND_ERASE:
+        case FLASH_COMMAND_ID:
+        case FLASH_COMMAND_PROGRAM:
+        case FLASH_COMMAND_SWITCH_BANK:
+          savedata->command = value;
+          break;
+        default:
+          mLOG(GBA_SAVE, GAME_ERROR, "Unsupported flash operation: %#02x", value);
+          break;
+        }
+        break;
+      case FLASH_COMMAND_ERASE:
+        switch (value) {
+        case FLASH_COMMAND_ERASE_CHIP:
+          _flashErase(savedata);
+          break;
+        default:
+          mLOG(GBA_SAVE, GAME_ERROR, "Unsupported flash erase operation: %#02x", value);
+          break;
+        }
+        savedata->command = FLASH_COMMAND_NONE;
+        break;
+      case FLASH_COMMAND_ID:
+        if (value == FLASH_COMMAND_TERMINATE) {
+          savedata->command = FLASH_COMMAND_NONE;
+        }
+        break;
+      default:
+        mLOG(GBA_SAVE, ERROR, "Flash entered bad state: %#02x", savedata->command);
+        savedata->command = FLASH_COMMAND_NONE;
+        break;
+      }
+    } else if (savedata->command == FLASH_COMMAND_ERASE) {
+      if (value == FLASH_COMMAND_ERASE_SECTOR) {
+        _flashEraseSector(savedata, address);
+        savedata->command = FLASH_COMMAND_NONE;
+      } else {
+        mLOG(GBA_SAVE, GAME_ERROR, "Unsupported flash erase operation: %#02x", value);
+      }
+    }
+    break;
+  }
+}
+
+static void _ensureEeprom(struct GBASavedata* savedata, uint32_t size) {
+  if (size < GBA_SIZE_EEPROM512) {
+    return;
+  }
+  if (savedata->type == GBA_SAVEDATA_EEPROM) {
+    return;
+  }
+  savedata->type = GBA_SAVEDATA_EEPROM;
+  if (!savedata->vf) {
+    return;
+  }
+  savedata->vf->unmap(savedata->vf, savedata->data, GBA_SIZE_EEPROM512);
+  if (savedata->vf->size(savedata->vf) < GBA_SIZE_EEPROM) {
+    savedata->vf->truncate(savedata->vf, GBA_SIZE_EEPROM);
+    savedata->data = savedata->vf->map(savedata->vf, GBA_SIZE_EEPROM, savedata->mapMode);
+    memset(&savedata->data[GBA_SIZE_EEPROM512], 0xFF, GBA_SIZE_EEPROM - GBA_SIZE_EEPROM512);
+  } else {
+    savedata->data = savedata->vf->map(savedata->vf, GBA_SIZE_EEPROM, savedata->mapMode);
+  }
+  mCALLBACKS_INVOKE(savedata->p, memoryBlocksChanged);
+}
+
+void GBASavedataWriteEEPROM(struct GBASavedata* savedata, uint16_t value, uint32_t writeSize) {
+  switch (savedata->command) {
+  // Read header
+  case EEPROM_COMMAND_NULL:
+  default:
+    savedata->command = value & 0x1;
+    break;
+  case EEPROM_COMMAND_PENDING:
+    savedata->command <<= 1;
+    savedata->command |= value & 0x1;
+    if (savedata->command == EEPROM_COMMAND_WRITE) {
+      savedata->writeAddress = 0;
+    } else {
+      savedata->readAddress = 0;
+    }
+    break;
+  // Do commands
+  case EEPROM_COMMAND_WRITE:
+    // Write
+    if (writeSize > 65) {
+      savedata->writeAddress <<= 1;
+      savedata->writeAddress |= (value & 0x1) << 6;
+    } else if (writeSize == 1) {
+      savedata->command = EEPROM_COMMAND_NULL;
+    } else if ((savedata->writeAddress >> 3) < GBA_SIZE_EEPROM) {
+      _ensureEeprom(savedata, savedata->writeAddress >> 3);
+      uint8_t current = savedata->data[savedata->writeAddress >> 3];
+      current &= ~(1 << (0x7 - (savedata->writeAddress & 0x7)));
+      current |= (value & 0x1) << (0x7 - (savedata->writeAddress & 0x7));
+      savedata->dirty |= mSAVEDATA_DIRT_NEW;
+      savedata->data[savedata->writeAddress >> 3] = current;
+      mTimingDeschedule(&savedata->p->timing, &savedata->dust);
+      mTimingSchedule(&savedata->p->timing, &savedata->dust, EEPROM_SETTLE_CYCLES);
+      ++savedata->writeAddress;
+    } else {
+      mLOG(GBA_SAVE, GAME_ERROR, "Writing beyond end of EEPROM: %08X", (savedata->writeAddress >> 3));
+    }
+    break;
+  case EEPROM_COMMAND_READ_PENDING:
+    // Read
+    if (writeSize > 1) {
+      savedata->readAddress <<= 1;
+      if (value & 0x1) {
+        savedata->readAddress |= 0x40;
+      }
+    } else {
+      savedata->readBitsRemaining = 68;
+      savedata->command = EEPROM_COMMAND_READ;
+    }
+    break;
+  }
+}
+
+uint16_t GBASavedataReadEEPROM(struct GBASavedata* savedata) {
+  if (savedata->command != EEPROM_COMMAND_READ) {
+    if (!mTimingIsScheduled(&savedata->p->timing, &savedata->dust)) {
+      return 1;
+    } else {
+      return 0;
+    }
+  }
+  --savedata->readBitsRemaining;
+  if (savedata->readBitsRemaining < 64) {
+    int step = 63 - savedata->readBitsRemaining;
+    uint32_t address = (savedata->readAddress + step) >> 3;
+    _ensureEeprom(savedata, address);
+    if (address >= GBA_SIZE_EEPROM) {
+      mLOG(GBA_SAVE, GAME_ERROR, "Reading beyond end of EEPROM: %08X", address);
+      return 0xFF;
+    }
+    uint8_t data = savedata->data[address] >> (0x7 - (step & 0x7));
+    if (!savedata->readBitsRemaining) {
+      savedata->command = EEPROM_COMMAND_NULL;
+    }
+    return data & 0x1;
+  }
+  return 0;
+}
+
+void GBASavedataClean(struct GBASavedata* savedata, uint32_t frameCount) {
+  if (!savedata->vf) {
+    return;
+  }
+  if (mSavedataClean(&savedata->dirty, &savedata->dirtAge, frameCount)) {
+    if (savedata->maskWriteback) {
+      GBASavedataUnmask(savedata);
+    }
+    if (savedata->mapMode & MAP_WRITE) {
+      size_t size = GBASavedataSize(savedata);
+      if (savedata->data && savedata->vf->sync(savedata->vf, savedata->data, size)) {
+        GBASavedataRTCWrite(savedata);
+        mLOG(GBA_SAVE, INFO, "Savedata synced");
+      } else {
+        mLOG(GBA_SAVE, INFO, "Savedata failed to sync!");
+      }
     }
   }
 }
 
-void GBACore::RenderMode1Frame() {
-  std::array<uint32_t, 512> pal_cache{};
-  BuildPaletteCache(palette_ram_, &pal_cache);
-  const uint32_t backdrop = pal_cache[0];
-  const uint16_t dispcnt = ReadIO16(0x04000000);
-  const uint16_t winin = ReadIO16(0x04000048), winout = ReadIO16(0x0400004A);
-  const uint16_t win0h = ReadIO16(0x04000040), win0v = ReadIO16(0x04000042);
-  const uint16_t win1h = ReadIO16(0x04000044), win1v = ReadIO16(0x04000046);
-  const uint16_t mosaic_reg = ReadIO16(0x0400004C);
-  const int mosaic_h = (mosaic_reg & 0xF) + 1;
+void GBASavedataRTCWrite(struct GBASavedata* savedata) {
+  if (!(savedata->p->memory.hw.devices & HW_RTC) || !savedata->vf || savedata->mapMode == MAP_READ) {
+    return;
+  }
 
-  EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
-  auto& bg_layer = BgLayerBuffer(); auto& bg_priority = BgPriorityBuffer();
-  auto& sec_color = BgSecondColorBuffer(); auto& sec_layer = BgSecondLayerBuffer();
-  auto& sec_prio = BgSecondPriorityBuffer();
+  struct GBASavedataRTCBuffer buffer;
 
-  for (int y=0; y<kScreenHeight; ++y) {
-    for (int x=0; x<kScreenWidth; ++x) {
-      uint16_t b_idx = 0; int b_prio = 4; uint8_t b_layer = kLayerBackdrop; bool h_bg = false;
-      uint16_t s_idx = 0; int s_prio = 4; uint8_t s_layer = kLayerBackdrop; bool h_sec = false;
-      auto consider = [&](uint16_t idx, int prio, uint8_t layer) {
-        if (!h_bg || prio < b_prio || (prio == b_prio && layer < b_layer)) {
-          if (h_bg) { s_idx = b_idx; s_prio = b_prio; s_layer = b_layer; h_sec = true; }
-          b_idx = idx; b_prio = prio; b_layer = layer; h_bg = true;
-        } else if (!h_sec || prio < s_prio || (prio == s_prio && layer < s_layer)) {
-          s_idx = idx; s_prio = prio; s_layer = layer; h_sec = true;
-        }
-      };
-      for (int bg=0; bg<2; ++bg) {
-        if (!(dispcnt & (1 << (8+bg)))) continue;
-        if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) continue;
-        const uint16_t bgcnt = bg_scroll_line_valid_ ? bg_cnt_line_[y][bg] : ReadIO16(0x04000008+bg*2);
-        uint16_t idx=0; bool opaque=false;
-        const uint16_t hofs = bg_scroll_line_valid_ ? bg_hofs_line_[y][bg] : ReadIO16(0x04000010+bg*4);
-        const uint16_t vofs = bg_scroll_line_valid_ ? bg_vofs_line_[y][bg] : ReadIO16(0x04000012+bg*4);
-        SampleTextBg(vram_, bgcnt, hofs, vofs, mosaic_reg, x, y, &idx, &opaque);
-        if (opaque) consider(idx, bgcnt & 3, static_cast<uint8_t>(bg));
-      }
-      if ((dispcnt & (1 << 10)) && IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, 2, x, y)) {
-        uint16_t idx=0; bool opaque=false;
-        const uint16_t bg2cnt = bg_affine_params_line_valid_ ? bg_cnt_line_[y][2] : ReadIO16(0x0400000C);
-        const int mosaic_v = ((mosaic_reg >> 4) & 0xF) + 1;
-        const int sy = (bg2cnt & 0x40) ? (y / mosaic_v) * mosaic_v : y;
-        const int16_t pa = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pa : static_cast<int16_t>(ReadIO16(0x04000020));
-        const int16_t pb = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pb : static_cast<int16_t>(ReadIO16(0x04000022));
-        const int16_t pc = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pc : static_cast<int16_t>(ReadIO16(0x04000024));
-        const int16_t pd = bg_affine_params_line_valid_ ? bg2_affine_line_[sy].pd : static_cast<int16_t>(ReadIO16(0x04000026));
-        const int32_t base_refx = affine_line_refs_valid_
-                              ? bg2_refx_line_[sy]
-                              : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4);
+  memcpy(&buffer.time, savedata->p->memory.hw.rtc.time, 7);
+  buffer.control = savedata->p->memory.hw.rtc.control;
+  STORE_64LE(savedata->p->memory.hw.rtc.lastLatch, 0, &buffer.lastLatch);
 
-const int32_t base_refy = affine_line_refs_valid_
-                              ? bg2_refy_line_[sy]
-                              : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4);
+  size_t size = GBASavedataSize(savedata);
+  savedata->vf->seek(savedata->vf, size & ~0xFF, SEEK_SET);
 
-const int32_t refx = base_refx + static_cast<int32_t>(pb) * sy;
-const int32_t refy = base_refy + static_cast<int32_t>(pd) * sy;
-        SampleAffineBg(vram_, bg2cnt, pa, pb, pc, pd, refx, refy, mosaic_reg, x, y, &idx, &opaque);
-        if (opaque) consider(idx, bg2cnt & 3, 2);
-      }
-      const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = h_bg ? pal_cache[static_cast<size_t>(b_idx) & 0x1FFu] : backdrop;
-      bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
-      sec_color[off] = h_sec ? pal_cache[static_cast<size_t>(s_idx) & 0x1FFu] : backdrop;
-      sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
-      sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
+  int bank = 0;
+  if ((savedata->vf->size(savedata->vf) & 0xFF) != sizeof(buffer)) {
+    // Writing past the end of the file can invalidate the file mapping
+    if (savedata->type == GBA_SAVEDATA_FLASH1M) {
+      bank = savedata->currentBank == &savedata->data[0x10000];
+    }
+    savedata->vf->unmap(savedata->vf, savedata->data, size);
+    savedata->data = NULL;
+  }
+  savedata->vf->write(savedata->vf, &buffer, sizeof(buffer));
+  if (!savedata->data) {
+    savedata->data = savedata->vf->map(savedata->vf, size, MAP_WRITE);
+    if (savedata->type == GBA_SAVEDATA_FLASH1M) {
+      savedata->currentBank = &savedata->data[bank << 16];
+    } else if (savedata->type == GBA_SAVEDATA_FLASH512) {
+      savedata->currentBank = savedata->data;
     }
   }
 }
 
-void GBACore::RenderMode2Frame() {
-  std::array<uint32_t, 512> pal_cache{};
-  BuildPaletteCache(palette_ram_, &pal_cache);
-  const uint32_t backdrop = pal_cache[0];
-  const uint16_t dispcnt = ReadIO16(0x04000000);
-  const uint16_t winin = ReadIO16(0x04000048), winout = ReadIO16(0x0400004A);
-  const uint16_t win0h = ReadIO16(0x04000040), win0v = ReadIO16(0x04000042);
-  const uint16_t win1h = ReadIO16(0x04000044), win1v = ReadIO16(0x04000046);
-  const uint16_t mosaic_reg = ReadIO16(0x0400004C);
-  const int mosaic_h = (mosaic_reg & 0xF) + 1;
+static uint8_t _unBCD(uint8_t byte) {
+  return (byte >> 4) * 10 + (byte & 0xF);
+}
 
-  EnsureBgPriorityBufferSize(); EnsureBgLayerBufferSize(); EnsureBgSecondBuffersSize();
-  auto& bg_layer = BgLayerBuffer(); auto& bg_priority = BgPriorityBuffer();
-  auto& sec_color = BgSecondColorBuffer(); auto& sec_layer = BgSecondLayerBuffer();
-  auto& sec_prio = BgSecondPriorityBuffer();
-  const bool windows_enabled = (dispcnt & ((1u << 13) | (1u << 14) | (1u << 15))) != 0;
-
-  if (!windows_enabled) {
-    const uint16_t bg2cnt_now = bg_affine_params_line_valid_ ? bg_cnt_line_[0][2] : ReadIO16(0x0400000C);
-    const uint16_t bg3cnt_now = bg_affine_params_line_valid_ ? bg_cnt_line_[0][3] : ReadIO16(0x0400000E);
-    const bool bg2_mosaic = (bg2cnt_now & 0x40u) != 0u;
-    const bool bg3_mosaic = (bg3cnt_now & 0x40u) != 0u;
-    if (!bg2_mosaic && !bg3_mosaic) {
-      for (int y = 0; y < kScreenHeight; ++y) {
-        const uint16_t bg2cnt = bg_affine_params_line_valid_ ? bg_cnt_line_[y][2] : ReadIO16(0x0400000C);
-        const uint16_t bg3cnt = bg_affine_params_line_valid_ ? bg_cnt_line_[y][3] : ReadIO16(0x0400000E);
-        const int16_t pa2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pa : static_cast<int16_t>(ReadIO16(0x04000020));
-const int16_t pb2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pb : static_cast<int16_t>(ReadIO16(0x04000022));
-const int16_t pc2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pc : static_cast<int16_t>(ReadIO16(0x04000024));
-const int16_t pd2 = bg_affine_params_line_valid_ ? bg2_affine_line_[y].pd : static_cast<int16_t>(ReadIO16(0x04000026));
-        const int16_t pa3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pa : static_cast<int16_t>(ReadIO16(0x04000030));
-        const int16_t pc3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pc : static_cast<int16_t>(ReadIO16(0x04000034));
-        const int32_t base_refx2 = affine_line_refs_valid_
-                               ? bg2_refx_line_[y]
-                               : (static_cast<int32_t>(Read32(0x04000028) << 4) >> 4);
-
-const int32_t base_refy2 = affine_line_refs_valid_
-                               ? bg2_refy_line_[y]
-                               : (static_cast<int32_t>(Read32(0x0400002C) << 4) >> 4);
-
-int32_t u2 = base_refx2 + static_cast<int32_t>(pb2) * y;
-int32_t v2 = base_refy2 + static_cast<int32_t>(pd2) * y;
-        const int16_t pb3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pb : static_cast<int16_t>(ReadIO16(0x04000032));
-const int16_t pd3 = bg_affine_params_line_valid_ ? bg3_affine_line_[y].pd : static_cast<int16_t>(ReadIO16(0x04000036));
-
-const int32_t base_refx3 = affine_line_refs_valid_
-                               ? bg3_refx_line_[y]
-                               : (static_cast<int32_t>(Read32(0x04000038) << 4) >> 4);
-
-const int32_t base_refy3 = affine_line_refs_valid_
-                               ? bg3_refy_line_[y]
-                               : (static_cast<int32_t>(Read32(0x0400003C) << 4) >> 4);
-
-int32_t u3 = base_refx3 + static_cast<int32_t>(pb3) * y;
-int32_t v3 = base_refy3 + static_cast<int32_t>(pd3) * y;
-        for (int x = 0; x < kScreenWidth; ++x) {
-          uint16_t b_idx = 0; int b_prio = 4; uint8_t b_layer = kLayerBackdrop; bool h_bg = false;
-          uint16_t s_idx = 0; int s_prio = 4; uint8_t s_layer = kLayerBackdrop; bool h_sec = false;
-          auto consider = [&](uint16_t idx, int prio, uint8_t layer) {
-            if (!h_bg || prio < b_prio || (prio == b_prio && layer < b_layer)) {
-              if (h_bg) { s_idx = b_idx; s_prio = b_prio; s_layer = b_layer; h_sec = true; }
-              b_idx = idx; b_prio = prio; b_layer = layer; h_bg = true;
-            } else if (!h_sec || prio < s_prio || (prio == s_prio && layer < s_layer)) {
-              s_idx = idx; s_prio = prio; s_layer = layer; h_sec = true;
-            }
-          };
-          if (dispcnt & (1u << 10)) {
-            uint16_t idx;
-            if (SampleAffineBgAt(vram_, bg2cnt, static_cast<int>(u2 >> 8), static_cast<int>(v2 >> 8), &idx)) {
-              consider(idx, bg2cnt & 3, 2);
-            }
-          }
-          if (dispcnt & (1u << 11)) {
-            uint16_t idx;
-            if (SampleAffineBgAt(vram_, bg3cnt, static_cast<int>(u3 >> 8), static_cast<int>(v3 >> 8), &idx)) {
-              consider(idx, bg3cnt & 3, 3);
-            }
-          }
-          const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-          frame_buffer_[off] = h_bg ? pal_cache[static_cast<size_t>(b_idx) & 0x1FFu] : backdrop;
-          bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
-          sec_color[off] = h_sec ? pal_cache[static_cast<size_t>(s_idx) & 0x1FFu] : backdrop;
-          sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
-          sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
-          u2 += pa2; v2 += pc2; u3 += pa3; v3 += pc3;
-        }
-      }
-      return;
-    }
+void GBASavedataRTCRead(struct GBASavedata* savedata) {
+  if (!savedata->vf) {
+    return;
   }
 
-  for (int y=0; y<kScreenHeight; ++y) {
-    for (int x=0; x<kScreenWidth; ++x) {
-      uint16_t b_idx = 0; int b_prio = 4; uint8_t b_layer = kLayerBackdrop; bool h_bg = false;
-      uint16_t s_idx = 0; int s_prio = 4; uint8_t s_layer = kLayerBackdrop; bool h_sec = false;
-      auto consider = [&](uint16_t idx, int prio, uint8_t layer) {
-        if (!h_bg || prio < b_prio || (prio == b_prio && layer < b_layer)) {
-          if (h_bg) { s_idx = b_idx; s_prio = b_prio; s_layer = b_layer; h_sec = true; }
-          b_idx = idx; b_prio = prio; b_layer = layer; h_bg = true;
-        } else if (!h_sec || prio < s_prio || (prio == s_prio && layer < s_layer)) {
-          s_idx = idx; s_prio = prio; s_layer = layer; h_sec = true;
-        }
-      };
-      for (int bg=2; bg<=3; ++bg) {
-        if (!(dispcnt & (1 << (8+bg)))) continue;
-        if (!IsBgVisibleByWindow(dispcnt, winin, winout, win0h, win0v, win1h, win1v, bg, x, y)) continue;
-        uint16_t idx=0; bool opaque=false;
-        const uint32_t a_base = (bg==2)?0x04000020:0x04000030;
-        const uint32_t r_base = (bg==2)?0x04000028:0x04000038;
-        const uint16_t bgcnt = bg_affine_params_line_valid_ ? bg_cnt_line_[y][bg] : ReadIO16(0x04000008+bg*2);
-        const int mosaic_v = ((mosaic_reg >> 4) & 0xF) + 1;
-        const int sy = (bgcnt & 0x40) ? (y / mosaic_v) * mosaic_v : y;
-        const int16_t pa = bg_affine_params_line_valid_
-                               ? (bg==2 ? bg2_affine_line_[sy].pa : bg3_affine_line_[sy].pa)
-                               : static_cast<int16_t>(ReadIO16(a_base));
-        const int16_t pb = bg_affine_params_line_valid_
-                               ? (bg==2 ? bg2_affine_line_[sy].pb : bg3_affine_line_[sy].pb)
-                               : static_cast<int16_t>(ReadIO16(a_base+2));
-        const int16_t pc = bg_affine_params_line_valid_
-                               ? (bg==2 ? bg2_affine_line_[sy].pc : bg3_affine_line_[sy].pc)
-                               : static_cast<int16_t>(ReadIO16(a_base+4));
-        const int16_t pd = bg_affine_params_line_valid_
-                               ? (bg==2 ? bg2_affine_line_[sy].pd : bg3_affine_line_[sy].pd)
-                               : static_cast<int16_t>(ReadIO16(a_base+6));
-        const int32_t refx = affine_line_refs_valid_
-                                 ? (bg == 2 ? bg2_refx_line_[sy] : bg3_refx_line_[sy])
-                                 : (static_cast<int32_t>(Read32(r_base) << 4) >> 4) + static_cast<int32_t>(pb) * sy;
-        const int32_t refy = affine_line_refs_valid_
-                                 ? (bg == 2 ? bg2_refy_line_[sy] : bg3_refy_line_[sy])
-                                 : (static_cast<int32_t>(Read32(r_base + 4) << 4) >> 4) + static_cast<int32_t>(pd) * sy;
-        const int sx = (bgcnt & 0x40) ? (x / mosaic_h) * mosaic_h : x;
-        if (SampleAffineBgFromCoord(vram_, bgcnt, pa, pc, refx, refy, sx, &idx)) {
-          opaque = true;
-        }
-        if (opaque) consider(idx, bgcnt & 3, static_cast<uint8_t>(bg));
-      }
-      const size_t off = static_cast<size_t>(y) * kScreenWidth + x;
-      frame_buffer_[off] = h_bg ? pal_cache[static_cast<size_t>(b_idx) & 0x1FFu] : backdrop;
-      bg_priority[off] = static_cast<uint8_t>(b_prio); bg_layer[off] = b_layer;
-      sec_color[off] = h_sec ? pal_cache[static_cast<size_t>(s_idx) & 0x1FFu] : backdrop;
-      sec_layer[off] = h_sec ? s_layer : kLayerBackdrop;
-      sec_prio[off] = h_sec ? static_cast<uint8_t>(s_prio) : static_cast<uint8_t>(kBackdropPriority);
-    }
+  struct GBASavedataRTCBuffer buffer;
+
+  size_t size = GBASavedataSize(savedata) & ~0xFF;
+  savedata->vf->seek(savedata->vf, size, SEEK_SET);
+  size = savedata->vf->read(savedata->vf, &buffer, sizeof(buffer));
+  if (size < sizeof(buffer)) {
+    return;
+  }
+
+  memcpy(savedata->p->memory.hw.rtc.time, &buffer.time, 7);
+
+  // Older FlashGBX sets this to 0x01 instead of the control flag.
+  // Since that bit is invalid on hardware, we can check for != 0x01
+  // to see if it's a valid value instead of just a filler value.
+  if (buffer.control != 1) {
+    savedata->p->memory.hw.rtc.control = buffer.control;
+  }
+  LOAD_64LE(savedata->p->memory.hw.rtc.lastLatch, 0, &buffer.lastLatch);
+
+  time_t rtcTime;
+
+#ifndef PSP2
+  struct tm date;
+  date.tm_year = _unBCD(savedata->p->memory.hw.rtc.time[0]) + 100;
+  date.tm_mon = _unBCD(savedata->p->memory.hw.rtc.time[1]) - 1;
+  date.tm_mday = _unBCD(savedata->p->memory.hw.rtc.time[2]);
+  date.tm_hour = _unBCD(savedata->p->memory.hw.rtc.time[4]);
+  date.tm_min = _unBCD(savedata->p->memory.hw.rtc.time[5]);
+  date.tm_sec = _unBCD(savedata->p->memory.hw.rtc.time[6]);
+  date.tm_isdst = -1;
+  rtcTime = mktime(&date);
+#else
+  struct SceDateTime date;
+  date.year = _unBCD(savedata->p->memory.hw.rtc.time[0]) + 2000;
+  date.month = _unBCD(savedata->p->memory.hw.rtc.time[1]);
+  date.day = _unBCD(savedata->p->memory.hw.rtc.time[2]);
+  date.hour = _unBCD(savedata->p->memory.hw.rtc.time[4]);
+  date.minute = _unBCD(savedata->p->memory.hw.rtc.time[5]);
+  date.second = _unBCD(savedata->p->memory.hw.rtc.time[6]);
+  date.microsecond = 0;
+
+  struct SceRtcTick tick;
+  int res;
+  res = sceRtcConvertDateTimeToTick(&date, &tick);
+  if (res < 0) {
+    mLOG(GBA_SAVE, ERROR, "sceRtcConvertDateTimeToTick %lx", res);
+  }
+  res = sceRtcConvertLocalTimeToUtc(&tick, &tick);
+  if (res < 0) {
+    mLOG(GBA_SAVE, ERROR, "sceRtcConvertUtcToLocalTime %lx", res);
+  }
+  res = sceRtcConvertTickToDateTime(&tick, &date);
+  if (res < 0) {
+    mLOG(GBA_SAVE, ERROR, "sceRtcConvertTickToDateTime %lx", res);
+  }
+  res = sceRtcConvertDateTimeToTime_t(&date, &rtcTime);
+  if (res < 0) {
+    mLOG(GBA_SAVE, ERROR, "sceRtcConvertDateTimeToTime_t %lx", res);
+  }
+#endif
+
+  savedata->p->memory.hw.rtc.offset = savedata->p->memory.hw.rtc.lastLatch - rtcTime;
+
+  mLOG(GBA_SAVE, DEBUG, "Savegame time offset set to %li", savedata->p->memory.hw.rtc.offset);
+}
+
+void GBASavedataSerialize(const struct GBASavedata* savedata, struct GBASerializedState* state) {
+  state->savedata.type = savedata->type;
+  state->savedata.command = savedata->command;
+  GBASerializedSavedataFlags flags = 0;
+  flags = GBASerializedSavedataFlagsSetFlashState(flags, savedata->flashState);
+  flags = GBASerializedSavedataFlagsTestFillFlashBank(flags, savedata->currentBank == &savedata->data[0x10000]);
+
+  if (mTimingIsScheduled(&savedata->p->timing, &savedata->dust)) {
+    STORE_32(savedata->dust.when - mTimingCurrentTime(&savedata->p->timing), 0, &state->savedata.settlingDust);
+    flags = GBASerializedSavedataFlagsFillDustSettling(flags);
+  }
+
+  state->savedata.flags = flags;
+  state->savedata.readBitsRemaining = savedata->readBitsRemaining;
+  STORE_32(savedata->readAddress, 0, &state->savedata.readAddress);
+  STORE_32(savedata->writeAddress, 0, &state->savedata.writeAddress);
+  STORE_16(savedata->settling, 0, &state->savedata.settlingSector);
+
+}
+
+void GBASavedataDeserialize(struct GBASavedata* savedata, const struct GBASerializedState* state) {
+  if (savedata->type != state->savedata.type) {
+    mLOG(GBA_SAVE, DEBUG, "Switching save types");
+    GBASavedataForceType(savedata, state->savedata.type);
+  }
+  savedata->command = state->savedata.command;
+  GBASerializedSavedataFlags flags = state->savedata.flags;
+  savedata->flashState = GBASerializedSavedataFlagsGetFlashState(flags);
+  savedata->readBitsRemaining = state->savedata.readBitsRemaining;
+  LOAD_32(savedata->readAddress, 0, &state->savedata.readAddress);
+  LOAD_32(savedata->writeAddress, 0, &state->savedata.writeAddress);
+  LOAD_16(savedata->settling, 0, &state->savedata.settlingSector);
+
+  if (savedata->type == GBA_SAVEDATA_FLASH1M) {
+    _flashSwitchBank(savedata, GBASerializedSavedataFlagsGetFlashBank(flags));
+  }
+
+  if (GBASerializedSavedataFlagsIsDustSettling(flags)) {
+    uint32_t when;
+    LOAD_32(when, 0, &state->savedata.settlingDust);
+    mTimingSchedule(&savedata->p->timing, &savedata->dust, when);
   }
 }
 
-} // namespace gba
+void _flashSwitchBank(struct GBASavedata* savedata, int bank) {
+  mLOG(GBA_SAVE, DEBUG, "Performing flash bank switch to bank %i", bank);
+  if (bank > 0 && savedata->type == GBA_SAVEDATA_FLASH512) {
+    mLOG(GBA_SAVE, INFO, "Updating flash chip from 512kb to 1Mb");
+    savedata->type = GBA_SAVEDATA_FLASH1M;
+    if (savedata->vf) {
+      savedata->vf->unmap(savedata->vf, savedata->data, GBA_SIZE_FLASH512);
+      if (savedata->vf->size(savedata->vf) < GBA_SIZE_FLASH1M) {
+        savedata->vf->truncate(savedata->vf, GBA_SIZE_FLASH1M);
+        savedata->data = savedata->vf->map(savedata->vf, GBA_SIZE_FLASH1M, MAP_WRITE);
+        memset(&savedata->data[GBA_SIZE_FLASH512], 0xFF, GBA_SIZE_FLASH512);
+      } else {
+        savedata->data = savedata->vf->map(savedata->vf, GBA_SIZE_FLASH1M, MAP_WRITE);
+      }
+    }
+    mCALLBACKS_INVOKE(savedata->p, memoryBlocksChanged);
+  }
+  savedata->currentBank = &savedata->data[bank << 16];
+}
+
+void _flashErase(struct GBASavedata* savedata) {
+  mLOG(GBA_SAVE, DEBUG, "Performing flash chip erase");
+  savedata->dirty |= mSAVEDATA_DIRT_NEW;
+  size_t size = GBA_SIZE_FLASH512;
+  if (savedata->type == GBA_SAVEDATA_FLASH1M) {
+    size = GBA_SIZE_FLASH1M;
+  }
+  memset(savedata->data, 0xFF, size);
+}
+
+void _flashEraseSector(struct GBASavedata* savedata, uint16_t sectorStart) {
+  mLOG(GBA_SAVE, DEBUG, "Performing flash sector erase at 0x%04x", sectorStart);
+  savedata->dirty |= mSAVEDATA_DIRT_NEW;
+  size_t size = 0x1000;
+  if (savedata->type == GBA_SAVEDATA_FLASH1M) {
+    mLOG(GBA_SAVE, DEBUG, "Performing unknown sector-size erase at 0x%04x", sectorStart);
+  }
+  savedata->settling = sectorStart >> 12;
+  mTimingDeschedule(&savedata->p->timing, &savedata->dust);
+  mTimingSchedule(&savedata->p->timing, &savedata->dust, FLASH_ERASE_CYCLES);
+  memset(&savedata->currentBank[sectorStart & ~(size - 1)], 0xFF, size);
+}
+// ---- END rewritten from reference implementation/savedata.c ----
+#if defined(__cplusplus)
+}  // extern "C"
+#endif
