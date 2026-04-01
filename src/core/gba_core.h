@@ -138,9 +138,9 @@ class GBACore {
   void ApplyColorEffects();
   void StepPpu(uint32_t cycles);
   void StepTimers(uint32_t cycles);
-  void StepDma();
-  void StepDmaVBlank();
-  void StepDmaHBlank();
+  void StepDma(uint32_t cycles);
+  void StepDmaVBlank(uint32_t cycles);
+  void StepDmaHBlank(uint32_t cycles);
   void ScheduleDmaStart(int ch, uint16_t cnt_h, uint32_t delay_cycles_override = 0xFFFFFFFFu);
   bool IsDmaAddressValid(int ch, uint32_t src, uint32_t dst, bool fifo_dma) const;
   uint32_t EstimateDmaStartupDelay(int ch, uint16_t cnt_h) const;

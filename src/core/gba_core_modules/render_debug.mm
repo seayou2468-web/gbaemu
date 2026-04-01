@@ -38,7 +38,7 @@ void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   RunCpuSlice(cycles);
   StepTimers(cycles);
-  StepDma();
+  StepDma(cycles);
   StepApu(cycles);
   StepSio(cycles);
   StepPpu(cycles);

@@ -30,6 +30,7 @@
 - DMA SAD/DAD レジスタ書込み時にチャンネル別アドレス有効bitマスク（27/28bit）を適用し、無効上位bitを正規化。
 - `Read8/Read16` の open-bus 参照をアドレスbyte-lane対応に補正し、未駆動(read-as-open-bus)アクセスでラッチ値を破壊しないよう更新条件を分離。
 - DMA転送1beatごとに `waitstates_accum_` 差分を取り込み、固定値加算ではなく実バス待機由来で `wait_cycles` を進める形へ補正（先頭beatは非順次開始）。
+- `StepDma(cycles)` をbeat駆動化し、startup/waitを`cycles`予算で減算しながら進行するよう変更（DMA完了時のrepeat/IRQ/enable落しもunit進行側で反映）。
 
 ## まだ残る主な差分（優先度高）
 
