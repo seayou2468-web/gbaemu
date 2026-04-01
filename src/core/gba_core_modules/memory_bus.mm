@@ -287,13 +287,6 @@ uint8_t GBACore::Read8(uint32_t addr) const {
         if (cpu_.regs[15] < 0x4000u || bios_loaded_) {
           v = bios_[addr & 0x3FFFu];
           bios_data_latch_ = (bios_data_latch_ & 0xFFFFFF00u) | v;
-          if ((addr & ~3u) == (cpu_.regs[15] & ~3u)) {
-            const uint32_t a = addr & ~3u;
-            bios_fetch_latch_ = static_cast<uint32_t>(bios_[a & 0x3FFFu]) |
-                                (static_cast<uint32_t>(bios_[(a + 1) & 0x3FFFu]) << 8) |
-                                (static_cast<uint32_t>(bios_[(a + 2) & 0x3FFFu]) << 16) |
-                                (static_cast<uint32_t>(bios_[(a + 3) & 0x3FFFu]) << 24);
-          }
         } else {
           v = static_cast<uint8_t>((bios_fetch_latch_ >> ((addr & 3u) * 8u)) & 0xFFu);
         }
@@ -338,13 +331,6 @@ uint16_t GBACore::Read16(uint32_t addr) const {
         if (cpu_.regs[15] < 0x4000u || bios_loaded_) {
           v = static_cast<uint16_t>(bios_[aligned & 0x3FFFu] | (bios_[(aligned + 1) & 0x3FFFu] << 8));
           bios_data_latch_ = (bios_data_latch_ & 0xFFFF0000u) | v;
-          if ((aligned & ~3u) == (cpu_.regs[15] & ~3u)) {
-            const uint32_t a = aligned & ~3u;
-            bios_fetch_latch_ = static_cast<uint32_t>(bios_[a & 0x3FFFu]) |
-                                (static_cast<uint32_t>(bios_[(a + 1) & 0x3FFFu]) << 8) |
-                                (static_cast<uint32_t>(bios_[(a + 2) & 0x3FFFu]) << 16) |
-                                (static_cast<uint32_t>(bios_[(a + 3) & 0x3FFFu]) << 24);
-          }
         } else {
           v = static_cast<uint16_t>((bios_fetch_latch_ >> ((aligned & 2u) * 8u)) & 0xFFFFu);
         }
@@ -393,9 +379,6 @@ uint32_t GBACore::Read32(uint32_t addr) const {
               (static_cast<uint32_t>(bios_[(aligned + 2) & 0x3FFFu]) << 16) |
               (static_cast<uint32_t>(bios_[(aligned + 3) & 0x3FFFu]) << 24);
           bios_data_latch_ = raw;
-          if (aligned == (cpu_.regs[15] & ~3u)) {
-            bios_fetch_latch_ = raw;
-          }
         } else {
           raw = bios_fetch_latch_;
         }

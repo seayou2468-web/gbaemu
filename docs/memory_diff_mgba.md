@@ -23,6 +23,7 @@
 - FIFO A/B (`0x0A0..0x0A7`) へのIO書込みで音声FIFOへバイト投入し、`SOUNDCNT_H` のFIFO reset bitでキューをクリアする挙動を反映。
 - bitmap mode(3/4/5) 時の VRAM `0x06018000-0x0601BFFF` を無効窓として扱い、readはopen-bus相当/ writeは破棄する mGBA寄り挙動を反映。
 - BIOS外実行時の BIOS read で `bios_fetch_latch_` を返す経路を追加し、命令フェッチ起点ラッチに近い挙動へ補正。
+- `bios_fetch_latch_` 更新を `RunCpuSlice` の実フェッチ点に寄せ、データread経路での過剰更新を抑制。
 - `Read32` の open-bus 更新値を「回転後値」ではなく「バス生値(raw)」でラッチするよう補正し、非アライン読出し時のラッチ汚染を抑止。
 - DMA SAD/DAD レジスタ書込み時にチャンネル別アドレス有効bitマスク（27/28bit）を適用し、無効上位bitを正規化。
 
