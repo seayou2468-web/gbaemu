@@ -186,8 +186,28 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
     return;
   }
 
+  // Direct Sound FIFOs (A/B): enqueue written bytes.
+  if (o == 0x0A0 || o == 0x0A2 || o == 0x0A4 || o == 0x0A6) {
+    const bool fifo_a = (o < 0x0A4);
+    const uint32_t packed = static_cast<uint32_t>(value & 0xFFu) |
+                            (static_cast<uint32_t>(value >> 8) << 8);
+    auto& fifo = fifo_a ? fifo_a_ : fifo_b_;
+    fifo.push_back(static_cast<uint8_t>(packed & 0xFFu));
+    fifo.push_back(static_cast<uint8_t>((packed >> 8) & 0xFFu));
+    while (fifo.size() > mgba_compat::kAudioFifoCapacityBytes) fifo.pop_front();
+    io_regs_[o] = static_cast<uint8_t>(value & 0xFFu);
+    io_regs_[(o + 1) & 0x3FFu] = static_cast<uint8_t>(value >> 8);
+    return;
+  }
+
   io_regs_[o] = static_cast<uint8_t>(value & 0xFFu);
   io_regs_[(o + 1) & 0x3FFu] = static_cast<uint8_t>(value >> 8);
+
+  // SOUNDCNT_H: FIFO reset bits clear corresponding FIFOs.
+  if (o == 0x082) {
+    if (value & (1u << 11)) fifo_a_.clear();
+    if (value & (1u << 15)) fifo_b_.clear();
+  }
 
   // DMA source/destination address register masks.
   if (o >= 0x0B0 && o <= 0x0DE) {
