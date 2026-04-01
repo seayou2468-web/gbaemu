@@ -529,10 +529,15 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
     if (cpu_.halted) break;
 
     const bool thumb = (cpu_.cpsr & (1u << 5)) != 0;
+    const uint32_t pc_before = cpu_.regs[15];
     const uint64_t ws_before = waitstates_accum_;
     if (thumb) {
       const uint16_t op = Read16(cpu_.regs[15]);
       ExecuteThumbInstruction(op);
+      if (cpu_.regs[15] != pc_before + 2u) {
+        // 分岐/例外でパイプラインがフラッシュされるため次アクセスは非連続扱い。
+        last_access_valid_ = false;
+      }
       const uint32_t base_spent = EstimateThumbCycles(op);
       const uint64_t ws_delta = waitstates_accum_ - ws_before;
       const uint32_t spent = base_spent + static_cast<uint32_t>(ws_delta);
@@ -541,6 +546,10 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
     } else {
       const uint32_t op = Read32(cpu_.regs[15]);
       ExecuteArmInstruction(op);
+      if (cpu_.regs[15] != pc_before + 4u) {
+        // 分岐/例外でパイプラインがフラッシュされるため次アクセスは非連続扱い。
+        last_access_valid_ = false;
+      }
       const uint32_t base_spent = EstimateArmCycles(op);
       const uint64_t ws_delta = waitstates_accum_ - ws_before;
       const uint32_t spent = base_spent + static_cast<uint32_t>(ws_delta);

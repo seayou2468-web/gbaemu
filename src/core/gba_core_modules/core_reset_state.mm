@@ -42,6 +42,13 @@ void GBACore::Reset() {
   apu_frame_seq_cycles_ = 0;
   frame_count_ = 0;
   executed_cycles_ = 0;
+  waitstates_accum_ = 0;
+  last_access_valid_ = false;
+  last_access_addr_ = 0;
+  last_access_size_ = 0;
+  open_bus_latch_ = 0;
+  bios_data_latch_ = 0;
+  RebuildGamePakWaitstateTables(0);
   debug_last_exception_vector_ = 0;
   debug_last_exception_pc_ = 0;
   debug_last_exception_cpsr_ = cpu_.cpsr;
