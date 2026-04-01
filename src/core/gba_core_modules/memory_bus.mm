@@ -158,10 +158,19 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (o == 0x052) value &= 0x1F1Fu;
   // BLDY: EVY is 5-bit.
   if (o == 0x054) value &= 0x001Fu;
+  // SOUNDBIAS: bias level (10-bit) + amplitude resolution (2-bit).
+  if (o == 0x088) value &= 0xC3FFu;
+  // SOUNDCNT_X/NR52: only master enable bit is writable; status bits are read-only.
+  if (o == 0x084) {
+    const uint16_t cur = ReadIO16(0x04000084u);
+    value = static_cast<uint16_t>((cur & 0x000Fu) | (value & 0x0080u));
+  }
   // Timer control high registers: only start/irq/countup/prescaler bits are meaningful.
   if ((o == 0x102) || (o == 0x106) || (o == 0x10A) || (o == 0x10E)) value &= 0x00C7u;
   // KEYCNT: key bits (0-9) + IRQ control bits (14-15).
   if (o == 0x132) value &= 0xC3FFu;
+  // RCNT: only serial/gpio control bits are meaningful.
+  if (o == 0x134) value &= 0xC1FFu;
   // DMA control high masks (ch0-2: no gamepak DRQ bit, ch3: include DRQ).
   if (o == 0x0BA || o == 0x0C6 || o == 0x0D2) value &= 0xF7E0u;
   if (o == 0x0DE) value &= 0xFFE0u;

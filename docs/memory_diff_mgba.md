@@ -18,6 +18,7 @@
 - 追加のPPU/ブレンド/タイマ制約を反映（`DISPCNT` bit3固定, `WININ/WINOUT`, `BLDCNT/BLDALPHA/BLDY`, `TMxCNT_H` マスク）。
 - 追加で `BG0/1CNT`, `MOSAIC`, `KEYCNT`, `DMAxCNT_H` の有効bitマスクを反映し、無効bit書込みを抑制。
 - `WriteIO8` を独立化し、`IF` byte単位W1C / `IME` 上位byte無視 / `IE`・`WAITCNT` 上位byteマスク / `DISPSTAT` 下位status保持 を個別処理。
+- さらに `SOUNDBIAS`, `NR52(SOUNDCNT_X)`, `RCNT` のマスク/読取専用bit保持を追加。
 - bitmap mode(3/4/5) 時の VRAM `0x06018000-0x0601BFFF` を無効窓として扱い、readはopen-bus相当/ writeは破棄する mGBA寄り挙動を反映。
 - BIOS外実行時の BIOS read で `bios_fetch_latch_` を返す経路を追加し、命令フェッチ起点ラッチに近い挙動へ補正。
 - `Read32` の open-bus 更新値を「回転後値」ではなく「バス生値(raw)」でラッチするよう補正し、非アライン読出し時のラッチ汚染を抑止。
@@ -26,4 +27,4 @@
 ## まだ残る主な差分（優先度高）
 
 - BIOS read ラッチ更新タイミング（prefetch段の更新規則）を実機/参照実装に合わせてさらに厳密化する。
-- APU/SIO/PPU周辺IOレジスタの書き込みマスクを mGBA テーブル準拠で網羅する。
+- APU/SIO/PPU周辺IOレジスタの書き込みマスクを mGBA テーブル準拠で最終網羅する（残りは個別レジスタ微差分）。
