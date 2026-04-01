@@ -21,7 +21,7 @@ void GBACore::StepPpu(uint32_t cycles) {
 
       const uint16_t vcount = ReadIO16(0x04000006u);
       if (vcount < mgba_compat::kVideoVisibleLines) {
-        StepDmaHBlank(1);
+        StepDmaHBlank(mgba_compat::kVideoHDrawCycles);
       }
       continue;
     }
@@ -33,7 +33,7 @@ void GBACore::StepPpu(uint32_t cycles) {
 
     if (vcount == mgba_compat::kVideoVisibleLines) {
       dispstat = static_cast<uint16_t>(dispstat | 0x1u);
-      StepDmaVBlank(1);
+      StepDmaVBlank(mgba_compat::kVideoHDrawCycles);
       if (dispstat & (1u << 3)) RaiseInterrupt(1u << 0);  // VBlank IRQ
       const uint16_t dispcnt = ReadIO16(0x04000000u);
       switch (dispcnt & 0x7u) {
