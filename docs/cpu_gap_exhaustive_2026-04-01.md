@@ -127,3 +127,10 @@
 - 実行テスト無しでは「100%一致」を断言できない。
 - ただし命令カテゴリ単位では上記が**現時点の全列挙**。
 - 残りは主に「実装欠落」より「厳密挙動一致（cycle/pipeline/unpredictable）」。
+
+## 5. 直近で追加完了した仕上げ項目
+- ARM register-specified shift (amount=0) の carry/value セマンティクスを ARM専用ヘルパへ移行。
+- Thumb ALU register-shift (amount=0) の carry/value セマンティクスを Thumb専用ヘルパへ移行。
+- ARM block transfer で `Rn=PC` ベースを `PC+8` に統一。
+- ARM empty-rlist STM store の PC可視値を `PC+12` へ補正。
+- 危険箇所: empty-rlist load + `Rn=PC` writeback を抑止し PC破壊を防止。
