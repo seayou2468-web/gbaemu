@@ -1,7 +1,6 @@
 #include "../gba_core.h"
 #include <algorithm>
 #include <cstring>
-#include <vector>
 
 namespace gba {
 
@@ -16,9 +15,14 @@ void GBACore::StepPpu(uint32_t cycles) {
     vcount++;
     if (vcount >= kTotalScanlines) vcount = 0;
 
+    // HBlank = 0 at start of scanline
+    dispstat &= ~(1 << 1);
+
     // Update dispstat based on vcount
     if (vcount < kVisibleScanlines) {
       dispstat &= ~(1 << 0); // VBlank = 0
+      // Draw scanline if needed
+      // (Renderer calls would be here)
     } else {
       dispstat |= (1 << 0); // VBlank = 1
       if (vcount == kVisibleScanlines) {
@@ -27,8 +31,9 @@ void GBACore::StepPpu(uint32_t cycles) {
       }
     }
 
-    // HBlank handling inside loop or before?
-    // Simplified: Always HBlank IRQ at end of scanline
+    // HBlank starts later in scanline, but simplified here
+    // In GBA: HDRAW (1006 cycles), HBLANK (226 cycles)
+    // For now, trigger HBlank IRQ / DMA at start of scanline for simplicity
     RaiseInterrupt(1 << 1);
     StepDmaHBlank();
 
@@ -44,12 +49,19 @@ void GBACore::StepPpu(uint32_t cycles) {
     WriteIO16(0x04000006, vcount);
     WriteIO16(0x04000004, dispstat);
 
-    if (vcount < kVisibleScanlines) {
-      // Render the scanline if possible
-    }
-
+    // Mode specific frame rendering at start of VBlank
     if (vcount == kVisibleScanlines) {
-      // End of frame, buffer is ready
+        uint16_t dispcnt = ReadIO16(0x04000000);
+        uint8_t mode = dispcnt & 7;
+        switch (mode) {
+            case 0: RenderMode0Frame(); break;
+            case 1: RenderMode1Frame(); break;
+            case 2: RenderMode2Frame(); break;
+            case 3: RenderMode3Frame(); break;
+            case 4: RenderMode4Frame(); break;
+            case 5: RenderMode5Frame(); break;
+            default: break;
+        }
     }
   }
 }
