@@ -81,6 +81,10 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
     d.seq_access = false;
     d.last_value = 0;
   }
+  if (!d.seq_access) {
+    // First DMA beat should start as non-sequential on the memory bus.
+    last_access_valid_ = false;
+  }
 
   const bool is_32 = (cnt_h & (1u << 10)) != 0;
   const uint32_t width = is_32 ? 4u : 2u;
@@ -92,6 +96,7 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
     return false;
   }
 
+  const uint64_t ws_before = waitstates_accum_;
   if (is_32) {
     d.last_value = Read32(src);
     Write32(dst, d.last_value);
@@ -111,7 +116,8 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
   }
 
   if (d.count > 0) --d.count;
-  d.wait_cycles += 2;
+  const uint32_t ws_spent = static_cast<uint32_t>(waitstates_accum_ - ws_before);
+  d.wait_cycles += ws_spent ? ws_spent : 2u;
   d.seq_access = true;
   return d.count != 0;
 }
