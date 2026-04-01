@@ -24,7 +24,6 @@ void GBACore::UpdateOpenBus(uint32_t addr, uint32_t val, int size) const {
 }
 
 void GBACore::AddWaitstates(uint32_t addr, int size, bool is_write) const {
-  (void)is_write;
   const uint32_t region = (addr >> 24) & 0xFu;
   const bool seq = last_access_valid_ && (((last_access_addr_ + static_cast<uint32_t>(last_access_size_)) & ~1u) == (addr & ~1u));
   if (region >= 0x8u && region <= 0xDu) {

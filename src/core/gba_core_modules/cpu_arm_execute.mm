@@ -378,6 +378,9 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const uint32_t rn = ArmRegIndex(opcode, 16);
     uint32_t rlist = opcode & 0xFFFFu;
     uint32_t addr = (rn == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
+    const uint32_t base_addr = addr;
+    const uint32_t transfer_count = rlist ? static_cast<uint32_t>(__builtin_popcount(rlist)) : 1u;
+    const uint32_t writeback_addr = up ? (base_addr + transfer_count * 4u) : (base_addr - transfer_count * 4u);
     const bool user_register_transfer = s && ((rlist & (1u << 15)) == 0);
     const bool in_fiq_mode = GetCpuMode() == 0x11u;
     if (rlist == 0) {
@@ -431,6 +434,10 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         write_transfer_reg(r, Read32(addr));
       } else {
         uint32_t store_value = read_transfer_reg(r);
+        if (writeback && r == rn && rn != 15) {
+          const bool rn_is_first = (rlist & ((1u << r) - 1u)) == 0;
+          if (!rn_is_first) store_value = writeback_addr;
+        }
         if (r == 15) store_value = cpu_.regs[15] + 12u;
         Write32(addr, store_value);
       }
