@@ -1,290 +1,600 @@
-// iOS-focused translation-unit optimization hints (no behavior change).
-#if defined(__APPLE__) && defined(__clang__)
-#pragma clang optimize on
-#endif
+#include "../gba_core.h"
 
-#include "./module_includes.h"
+namespace gba {
 
-// Rebuilt Objective-C++ module from reference implementation sources.
-// NOTE: Source bodies are embedded and adapted here (no direct include of reference files).
-#if defined(__cplusplus)
-extern "C" {
-#endif
+void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
+  // Shift by immediate (LSL/LSR/ASR)
+  // Thumb format 1 is 000xx (xx=00/01/10). Exclude 00011 (ADD/SUB format 2).
+  if ((opcode & 0xE000u) == 0x0000u && (opcode & 0x1800u) != 0x1800u) {
+    const uint16_t shift_type = (opcode >> 11) & 0x3u;
+    const uint16_t imm5 = (opcode >> 6) & 0x1Fu;
+    const uint16_t rs = (opcode >> 3) & 0x7u;
+    const uint16_t rd = opcode & 0x7u;
+    bool carry = GetFlagC();
+    const uint32_t result = ApplyShift(cpu_.regs[rs], shift_type, imm5, &carry);
+    cpu_.regs[rd] = result;
+    SetNZFlags(result);
+    SetFlagC(carry);
+    cpu_.regs[15] += 2;
+    return;
+  }
 
-// ---- BEGIN rewritten from reference implementation/software-private.c ----
-#ifdef NDEBUG
-#define VIDEO_CHECKS false
-#else
-#define VIDEO_CHECKS true
-#endif
-
-#define ENABLED_MAX 4
-
-void GBAVideoSoftwareRendererDrawBackgroundMode0(struct GBAVideoSoftwareRenderer* renderer,
-                                                 struct GBAVideoSoftwareBackground* background, int y);
-void GBAVideoSoftwareRendererDrawBackgroundMode2(struct GBAVideoSoftwareRenderer* renderer,
-                                                 struct GBAVideoSoftwareBackground* background, int y);
-void GBAVideoSoftwareRendererDrawBackgroundMode3(struct GBAVideoSoftwareRenderer* renderer,
-                                                 struct GBAVideoSoftwareBackground* background, int y);
-void GBAVideoSoftwareRendererDrawBackgroundMode4(struct GBAVideoSoftwareRenderer* renderer,
-                                                 struct GBAVideoSoftwareBackground* background, int y);
-void GBAVideoSoftwareRendererDrawBackgroundMode5(struct GBAVideoSoftwareRenderer* renderer,
-                                                 struct GBAVideoSoftwareBackground* background, int y);
-
-int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* renderer, struct GBAObj* sprite, int index, int y);
-void GBAVideoSoftwareRendererPostprocessSprite(struct GBAVideoSoftwareRenderer* renderer, unsigned priority);
-
-static inline unsigned _brighten(unsigned color, int y);
-static inline unsigned _darken(unsigned color, int y);
-
-// We stash the priority on the top bits so we can do a one-operator comparison
-// The lower the number, the higher the priority, and sprites take precedence over backgrounds
-// We want to do special processing if the color pixel is target 1, however
-
-static inline void _compositeBlendObjwin(struct GBAVideoSoftwareRenderer* renderer, uint32_t* pixel, uint32_t color, uint32_t current) {
-  if (color >= current) {
-    if (current & FLAG_TARGET_1 && color & FLAG_TARGET_2) {
-      color = mColorMix5Bit(renderer->blda, current, renderer->bldb, color);
+  // Add/sub register or immediate3
+  if ((opcode & 0xF800u) == 0x1800u) {
+    const bool immediate = (opcode & (1u << 10)) != 0;
+    const bool sub = (opcode & (1u << 9)) != 0;
+    const uint16_t rn_or_imm3 = (opcode >> 6) & 0x7u;
+    const uint16_t rs = (opcode >> 3) & 0x7u;
+    const uint16_t rd = opcode & 0x7u;
+    const uint32_t rhs = immediate ? rn_or_imm3 : cpu_.regs[rn_or_imm3];
+    uint64_t r64 = 0;
+    if (sub) {
+      r64 = static_cast<uint64_t>(cpu_.regs[rs]) - static_cast<uint64_t>(rhs);
+      cpu_.regs[rd] = static_cast<uint32_t>(r64);
+      SetSubFlags(cpu_.regs[rs], rhs, r64);
     } else {
-      color = current & (0x00FFFFFF | FLAG_REBLEND | FLAG_OBJWIN);
+      r64 = static_cast<uint64_t>(cpu_.regs[rs]) + static_cast<uint64_t>(rhs);
+      cpu_.regs[rd] = static_cast<uint32_t>(r64);
+      SetAddFlags(cpu_.regs[rs], rhs, r64);
     }
-  } else {
-    color = (color & ~FLAG_TARGET_2) | (current & FLAG_OBJWIN);
+    cpu_.regs[15] += 2;
+    return;
   }
-  *pixel = color;
-}
 
-static inline void _compositeBlendNoObjwin(struct GBAVideoSoftwareRenderer* renderer, uint32_t* pixel, uint32_t color, uint32_t current) {
-  if (color >= current) {
-    if (current & FLAG_TARGET_1 && color & FLAG_TARGET_2) {
-      color = mColorMix5Bit(renderer->blda, current, renderer->bldb, color);
+  // MOV/CMP/ADD/SUB immediate (001xx)
+  if ((opcode & 0xE000u) == 0x2000u) {
+    const uint16_t op = (opcode >> 11) & 0x3u;
+    const uint16_t rd = (opcode >> 8) & 0x7u;
+    const uint32_t imm8 = opcode & 0xFFu;
+    switch (op) {
+      case 0:  // MOV
+        cpu_.regs[rd] = imm8;
+        SetNZFlags(cpu_.regs[rd]);
+        break;
+      case 1: {  // CMP
+        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - static_cast<uint64_t>(imm8);
+        SetSubFlags(cpu_.regs[rd], imm8, r64);
+        break;
+      }
+      case 2: {  // ADD
+        const uint32_t lhs = cpu_.regs[rd];
+        const uint64_t r64 = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(imm8);
+        cpu_.regs[rd] = static_cast<uint32_t>(r64);
+        SetAddFlags(lhs, imm8, r64);
+        break;
+      }
+      case 3: {  // SUB
+        const uint32_t lhs = cpu_.regs[rd];
+        const uint64_t r64 = static_cast<uint64_t>(lhs) - static_cast<uint64_t>(imm8);
+        cpu_.regs[rd] = static_cast<uint32_t>(r64);
+        SetSubFlags(lhs, imm8, r64);
+        break;
+      }
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // ALU operations
+  if ((opcode & 0xFC00u) == 0x4000u) {
+    const uint16_t alu_op = (opcode >> 6) & 0xFu;
+    const uint16_t rs = (opcode >> 3) & 0x7u;
+    const uint16_t rd = opcode & 0x7u;
+    switch (alu_op) {
+      case 0x0: { cpu_.regs[rd] &= cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }           // AND
+      case 0x1: { cpu_.regs[rd] ^= cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }           // EOR
+      case 0x2: {  // LSL reg
+        bool c = GetFlagC();
+        const uint32_t amount = cpu_.regs[rs] & 0xFFu;
+        if (amount != 0u) cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 0, amount, &c);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(c);
+        break;
+      }
+      case 0x3: {  // LSR reg
+        bool c = GetFlagC();
+        const uint32_t amount = cpu_.regs[rs] & 0xFFu;
+        if (amount != 0u) cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 1, amount, &c);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(c);
+        break;
+      }
+      case 0x4: {  // ASR reg
+        bool c = GetFlagC();
+        const uint32_t amount = cpu_.regs[rs] & 0xFFu;
+        if (amount != 0u) cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 2, amount, &c);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(c);
+        break;
+      }
+      case 0x5: {  // ADC
+        const uint32_t lhs = cpu_.regs[rd];
+        const uint32_t rhs = cpu_.regs[rs];
+        const uint32_t carry = GetFlagC() ? 1u : 0u;
+        const uint64_t r64 = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(rhs) + carry;
+        cpu_.regs[rd] = static_cast<uint32_t>(r64);
+        SetAddFlags(lhs, rhs + carry, r64);
+        break;
+      }
+      case 0x6: {  // SBC
+        const uint32_t lhs = cpu_.regs[rd];
+        const uint32_t rhs = cpu_.regs[rs];
+        const uint32_t borrow = GetFlagC() ? 0u : 1u;
+        const uint64_t r64 = static_cast<uint64_t>(lhs) - static_cast<uint64_t>(rhs) - borrow;
+        cpu_.regs[rd] = static_cast<uint32_t>(r64);
+        SetSubFlags(lhs, rhs + borrow, r64);
+        break;
+      }
+      case 0x7: {  // ROR
+        bool c = GetFlagC();
+        const uint32_t amount = cpu_.regs[rs] & 0xFFu;
+        if (amount != 0u) cpu_.regs[rd] = ApplyShift(cpu_.regs[rd], 3, amount, &c);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(c);
+        break;
+      }
+      case 0x8: {  // TST
+        SetNZFlags(cpu_.regs[rd] & cpu_.regs[rs]);
+        break;
+      }
+      case 0x9: {  // NEG
+        const uint32_t rhs = cpu_.regs[rs];
+        const uint64_t r64 = static_cast<uint64_t>(0) - static_cast<uint64_t>(rhs);
+        cpu_.regs[rd] = static_cast<uint32_t>(r64);
+        SetSubFlags(0u, rhs, r64);
+        break;
+      }
+      case 0xA: {  // CMP
+        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - static_cast<uint64_t>(cpu_.regs[rs]);
+        SetSubFlags(cpu_.regs[rd], cpu_.regs[rs], r64);
+        break;
+      }
+      case 0xB: {  // CMN
+        const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) + static_cast<uint64_t>(cpu_.regs[rs]);
+        SetAddFlags(cpu_.regs[rd], cpu_.regs[rs], r64);
+        break;
+      }
+      case 0xC: { cpu_.regs[rd] |= cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }           // ORR
+      case 0xD: {  // MUL
+        cpu_.regs[rd] *= cpu_.regs[rs];
+        SetNZFlags(cpu_.regs[rd]);
+        break;
+      }
+      case 0xE: { cpu_.regs[rd] &= ~cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }           // BIC
+      case 0xF: { cpu_.regs[rd] = ~cpu_.regs[rs]; SetNZFlags(cpu_.regs[rd]); break; }            // MVN
+      default:
+        break;
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // High register operations / BX
+  if ((opcode & 0xFC00u) == 0x4400u) {
+    const uint16_t op = (opcode >> 8) & 0x3u;
+    const uint16_t h1 = (opcode >> 7) & 0x1u;
+    const uint16_t h2 = (opcode >> 6) & 0x1u;
+    const uint16_t rs = ((h2 << 3) | ((opcode >> 3) & 0x7u)) & 0xFu;
+    const uint16_t rd = ((h1 << 3) | (opcode & 0x7u)) & 0xFu;
+    const uint32_t rs_value = (rs == 15u) ? (cpu_.regs[15] + 4u) : cpu_.regs[rs];
+    if (op == 3) {  // BX
+      const uint32_t target = rs_value;
+      if (target & 1u) {
+        cpu_.cpsr |= (1u << 5);
+        cpu_.regs[15] = target & ~1u;
+      } else {
+        cpu_.cpsr &= ~(1u << 5);
+        cpu_.regs[15] = target & ~3u;
+      }
+      return;
+    }
+    if (op == 0) {  // ADD
+      cpu_.regs[rd] += rs_value;
+      if (rd == 15) {
+        cpu_.regs[15] &= ~1u;
+        return;
+      }
+    } else if (op == 1) {  // CMP
+      const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - static_cast<uint64_t>(rs_value);
+      SetSubFlags(cpu_.regs[rd], rs_value, r64);
+    } else if (op == 2) {  // MOV
+      cpu_.regs[rd] = rs_value;
+      if (rd == 15) {
+        cpu_.regs[15] &= ~1u;
+        return;
+      }
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // PC-relative load
+  if ((opcode & 0xF800u) == 0x4800u) {
+    const uint16_t rd = (opcode >> 8) & 0x7u;
+    const uint32_t imm = (opcode & 0xFFu) << 2u;
+    const uint32_t base = (cpu_.regs[15] + 4u) & ~3u;
+    cpu_.regs[rd] = Read32(base + imm);
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // Load/store with register offset
+  if ((opcode & 0xF200u) == 0x5000u) {
+    const bool load = (opcode & (1u << 11)) != 0;
+    const bool byte = (opcode & (1u << 10)) != 0;
+    const uint16_t ro = (opcode >> 6) & 0x7u;
+    const uint16_t rb = (opcode >> 3) & 0x7u;
+    const uint16_t rd = opcode & 0x7u;
+    const uint32_t addr = cpu_.regs[rb] + cpu_.regs[ro];
+    if (load) {
+      if (byte) {
+        cpu_.regs[rd] = Read8(addr);
+      } else {
+        const uint32_t aligned = addr & ~3u;
+        const uint32_t raw = Read32(aligned);
+        const uint32_t rot = (addr & 3u) * 8u;
+        cpu_.regs[rd] = (rot == 0) ? raw : RotateRight(raw, rot);
+      }
+    } else if (byte) {
+      Write8(addr, static_cast<uint8_t>(cpu_.regs[rd] & 0xFFu));
     } else {
-      color = current & (0x00FFFFFF | FLAG_REBLEND | FLAG_OBJWIN);
+      Write32(addr & ~3u, cpu_.regs[rd]);
     }
-  } else {
-    color = color & ~FLAG_TARGET_2;
+    cpu_.regs[15] += 2;
+    return;
   }
-  *pixel = color;
+
+  // Load/store sign-extended byte/halfword
+  if ((opcode & 0xF200u) == 0x5200u) {
+    const uint16_t op = (opcode >> 10) & 0x3u;
+    const uint16_t ro = (opcode >> 6) & 0x7u;
+    const uint16_t rb = (opcode >> 3) & 0x7u;
+    const uint16_t rd = opcode & 0x7u;
+    const uint32_t addr = cpu_.regs[rb] + cpu_.regs[ro];
+    switch (op) {
+      case 0x0: Write16(addr & ~1u, static_cast<uint16_t>(cpu_.regs[rd])); break;  // STRH
+      case 0x1: cpu_.regs[rd] = Read16(addr & ~1u); break;                          // LDRH
+      case 0x2: cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int8_t>(Read8(addr))); break;  // LDSB
+      case 0x3:
+        if (addr & 1u) {
+          cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int8_t>(Read8(addr)));
+        } else {
+          cpu_.regs[rd] = static_cast<uint32_t>(static_cast<int16_t>(Read16(addr)));
+        }
+        break; // LDSH
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // Load/store immediate offset
+  if ((opcode & 0xE000u) == 0x6000u) {
+    const bool load = (opcode & (1u << 11)) != 0;
+    const bool byte = (opcode & (1u << 12)) != 0;
+    const uint16_t imm5 = (opcode >> 6) & 0x1Fu;
+    const uint16_t rb = (opcode >> 3) & 0x7u;
+    const uint16_t rd = opcode & 0x7u;
+    const uint32_t offset = byte ? imm5 : (imm5 << 2u);
+    const uint32_t addr = cpu_.regs[rb] + offset;
+    if (load) {
+      if (byte) {
+        cpu_.regs[rd] = Read8(addr);
+      } else {
+        const uint32_t aligned = addr & ~3u;
+        const uint32_t raw = Read32(aligned);
+        const uint32_t rot = (addr & 3u) * 8u;
+        cpu_.regs[rd] = (rot == 0) ? raw : RotateRight(raw, rot);
+      }
+    } else if (byte) {
+      Write8(addr, static_cast<uint8_t>(cpu_.regs[rd]));
+    } else {
+      Write32(addr & ~3u, cpu_.regs[rd]);
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // Load/store halfword immediate
+  if ((opcode & 0xF000u) == 0x8000u) {
+    const bool load = (opcode & (1u << 11)) != 0;
+    const uint16_t imm5 = (opcode >> 6) & 0x1Fu;
+    const uint16_t rb = (opcode >> 3) & 0x7u;
+    const uint16_t rd = opcode & 0x7u;
+    const uint32_t addr = cpu_.regs[rb] + (imm5 << 1u);
+    if (load) {
+      cpu_.regs[rd] = Read16(addr & ~1u);
+    } else {
+      Write16(addr & ~1u, static_cast<uint16_t>(cpu_.regs[rd] & 0xFFFFu));
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // SP-relative load/store
+  if ((opcode & 0xF000u) == 0x9000u) {
+    const bool load = (opcode & (1u << 11)) != 0;
+    const uint16_t rd = (opcode >> 8) & 0x7u;
+    const uint32_t imm = (opcode & 0xFFu) << 2u;
+    const uint32_t addr = cpu_.regs[13] + imm;
+    if (load) {
+      cpu_.regs[rd] = Read32(addr & ~3u);
+    } else {
+      Write32(addr & ~3u, cpu_.regs[rd]);
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // ADD to PC/SP
+  if ((opcode & 0xF000u) == 0xA000u) {
+    const bool use_sp = (opcode & (1u << 11)) != 0;
+    const uint16_t rd = (opcode >> 8) & 0x7u;
+    const uint32_t imm = (opcode & 0xFFu) << 2u;
+    const uint32_t base = use_sp ? cpu_.regs[13] : ((cpu_.regs[15] + 4u) & ~3u);
+    cpu_.regs[rd] = base + imm;
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // ADD/SUB SP immediate
+  if ((opcode & 0xFF00u) == 0xB000u) {
+    const bool sub = (opcode & (1u << 7)) != 0;
+    const uint32_t imm = (opcode & 0x7Fu) << 2u;
+    cpu_.regs[13] = sub ? (cpu_.regs[13] - imm) : (cpu_.regs[13] + imm);
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // PUSH/POP
+  if ((opcode & 0xF600u) == 0xB400u) {
+    const bool load = (opcode & (1u << 11)) != 0;  // POP when set
+    const bool r = (opcode & (1u << 8)) != 0;      // LR/PC bit
+    const uint16_t reg_list = opcode & 0xFFu;
+    if (!load) {  // PUSH
+      if (r) {
+        cpu_.regs[13] -= 4u;
+        Write32(cpu_.regs[13], cpu_.regs[14]);
+      }
+      for (int i = 7; i >= 0; --i) {
+        if (reg_list & (1u << i)) {
+          cpu_.regs[13] -= 4u;
+          Write32(cpu_.regs[13], cpu_.regs[i]);
+        }
+      }
+    } else {      // POP
+      for (int i = 0; i < 8; ++i) {
+        if (reg_list & (1u << i)) {
+          cpu_.regs[i] = Read32(cpu_.regs[13]);
+          cpu_.regs[13] += 4u;
+        }
+      }
+      if (r) {
+        const uint32_t target = Read32(cpu_.regs[13]);
+        if (target & 1u) {
+          cpu_.cpsr |= (1u << 5);   // stay/enter Thumb
+          cpu_.regs[15] = target & ~1u;
+        } else {
+          cpu_.cpsr &= ~(1u << 5);  // switch to ARM
+          cpu_.regs[15] = target & ~3u;
+        }
+        cpu_.regs[13] += 4u;
+        return;
+      }
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // LDMIA/STMIA
+  if ((opcode & 0xF000u) == 0xC000u) {
+    const bool load = (opcode & (1u << 11)) != 0;
+    const uint16_t rb = (opcode >> 8) & 0x7u;
+    const uint16_t reg_list = opcode & 0xFFu;
+    const bool rb_in_list = (reg_list & (1u << rb)) != 0;
+    uint32_t addr = cpu_.regs[rb];
+    for (int i = 0; i < 8; ++i) {
+      if ((reg_list & (1u << i)) == 0) continue;
+      if (load) {
+        cpu_.regs[i] = Read32(addr);
+      } else {
+        Write32(addr, cpu_.regs[i]);
+      }
+      addr += 4u;
+    }
+    if (!(load && rb_in_list)) {
+      cpu_.regs[rb] = addr;
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // Thumb SWI
+  if ((opcode & 0xFF00u) == 0xDF00u) {
+    if (HandleSoftwareInterrupt(opcode & 0x00FFu, true)) return;
+    cpu_.regs[15] += 2u;  // LR_svc should point to the next Thumb instruction
+    EnterException(0x00000008u, 0x13u, true, true);  // SVC mode
+    return;
+  }
+
+  // Conditional branch
+  if ((opcode & 0xF000u) == 0xD000u) {
+    const uint32_t cond = (opcode >> 8) & 0xFu;
+    if (cond >= 0xEu) {
+      HandleUndefinedInstruction(true);
+      return;
+    }
+    int32_t offset = static_cast<int32_t>(opcode & 0xFFu);
+    if (offset & 0x80) offset |= ~0xFF;
+    offset <<= 1;
+    if (CheckCondition(cond)) {
+      cpu_.regs[15] = cpu_.regs[15] + 4u + static_cast<uint32_t>(offset);
+    } else {
+      cpu_.regs[15] += 2;
+    }
+    return;
+  }
+
+  // Long branch with link (Thumb BL pair, minimal handling)
+  if ((opcode & 0xF800u) == 0xF000u || (opcode & 0xF800u) == 0xF800u) {
+    const bool second = (opcode & 0x0800u) != 0;
+    const int32_t off11 = static_cast<int32_t>(opcode & 0x07FFu);
+    if (!second) {
+      int32_t hi = off11;
+      if (hi & 0x400) hi |= ~0x7FF;
+      cpu_.regs[14] = cpu_.regs[15] + 4u + static_cast<uint32_t>(hi << 12);
+      cpu_.regs[15] += 2;
+    } else {
+      const uint32_t target = cpu_.regs[14] + static_cast<uint32_t>(off11 << 1);
+      cpu_.regs[14] = (cpu_.regs[15] + 2u) | 1u;
+      cpu_.regs[15] = target & ~1u;
+    }
+    return;
+  }
+
+  // Unconditional branch (11100)
+  if ((opcode & 0xF800u) == 0xE000u) {
+    int32_t offset = static_cast<int32_t>(opcode & 0x07FFu);
+    if (offset & 0x400) offset |= ~0x7FF;
+    offset <<= 1;
+    cpu_.regs[15] = cpu_.regs[15] + 4u + static_cast<uint32_t>(offset);
+    return;
+  }
+
+  // Canonical Thumb NOP (MOV r8, r8)
+  if (opcode == 0x46C0u) {
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  HandleUndefinedInstruction(true);
 }
 
-static inline void _compositeNoBlendObjwin(struct GBAVideoSoftwareRenderer* renderer, uint32_t* pixel, uint32_t color,
-                                           uint32_t current) {
-  UNUSED(renderer);
-  if (color < current) {
-    color |= (current & FLAG_OBJWIN);
-  } else {
-    color = current & (0x00FFFFFF | FLAG_REBLEND | FLAG_OBJWIN);
+// =========================================================================
+// RunCpuSlice
+// FIXED: IntrWait 復帰時に IF をクリアしない。
+//
+// 旧コード: matched != 0 の時に WriteIO16(0x04000202, matched) で IF をクリア
+//   → ServiceInterruptIfNeeded が呼ばれた時点で pending=0 → IRQ ハンドラが走らない
+//   → ゲームの IRQ ハンドラが実行されないまま next_pc へ復帰
+//   → ゲームが期待するハンドラ内の状態更新がなく画面停止や描画不具合の原因に
+//
+// 修正: IF はそのまま保持し、ServiceInterruptIfNeeded に IRQ ハンドラの
+//       起動を任せる。EnterException の lr_adjust 修正により正しい戻りアドレスが
+//       LR_irq に設定されるため、ハンドラ復帰後も正常に動作する。
+// =========================================================================
+uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
+  // 1. HALT からの復帰チェック
+  const uint16_t ie     = ReadIO16(0x04000200u);
+  const uint16_t iflags = ReadIO16(0x04000202u);
+  if (cpu_.halted) {
+    if (swi_intrwait_active_) {
+      const uint16_t matched =
+          static_cast<uint16_t>(iflags & ie & swi_intrwait_mask_);
+      if (matched != 0u) {
+        // FIXED: IF をクリアせず ServiceInterruptIfNeeded に IRQ ハンドラ起動を委ねる。
+        // 旧コード: WriteIO16(0x04000202u, matched); ← 削除
+        swi_intrwait_active_ = false;
+        swi_intrwait_mask_   = 0;
+        cpu_.halted          = false;
+      }
+    } else if ((ie & iflags) != 0u) {
+      cpu_.halted = false;
+    }
   }
-  *pixel = color;
+
+  if (cpu_.halted) return cycles;
+
+  auto is_exec_addr_valid = [&](uint32_t addr) -> bool {
+    if (bios_loaded_ && addr < 0x00004000u) return true;
+    if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) return true;
+    if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) return true;
+    if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) return true;
+    return false;
+  };
+
+  uint32_t consumed = 0;
+  while (consumed < cycles && !cpu_.halted) {
+    ServiceInterruptIfNeeded();
+    if (cpu_.halted) break;
+
+    const bool thumb = (cpu_.cpsr & (1u << 5)) != 0;
+    cpu_.regs[15] &= thumb ? ~1u : ~3u;
+    const uint32_t pc = cpu_.regs[15];
+
+    if (!is_exec_addr_valid(pc)) {
+      // PC が無効アドレスの場合はスライスを消化して無限ループを回避
+      break;
+    }
+
+    const uint64_t wait_before = waitstates_accum_;
+    uint32_t core_cycles = 1u;
+    if (thumb) {
+      const uint16_t opcode = Read16(pc);
+      core_cycles = EstimateThumbCycles(opcode);
+      ExecuteThumbInstruction(opcode);
+    } else {
+      const uint32_t opcode = Read32(pc);
+      core_cycles = EstimateArmCycles(opcode);
+      ExecuteArmInstruction(opcode);
+    }
+    const uint64_t wait_after  = waitstates_accum_;
+    const uint64_t wait_delta64 = (wait_after >= wait_before)
+        ? (wait_after - wait_before) : 0u;
+    const uint32_t wait_cycles  = (wait_delta64 > 0xFFFFFFFFu)
+        ? 0xFFFFFFFFu
+        : static_cast<uint32_t>(wait_delta64);
+
+    // メモリウェイトはフェッチ/データバスペナルティを含む。
+    // コア推定値との大きい方を採用してダブルカウントを防ぐ。
+    const uint32_t step_cycles =
+        std::max<uint32_t>(1u, std::max(core_cycles, wait_cycles));
+    consumed += step_cycles;
+  }
+  return consumed;
 }
 
-static inline void _compositeNoBlendNoObjwin(struct GBAVideoSoftwareRenderer* renderer, uint32_t* pixel, uint32_t color,
-                                             uint32_t current) {
-  UNUSED(renderer);
-  if (color >= current) {
-    color = current & (0x00FFFFFF | FLAG_REBLEND | FLAG_OBJWIN);
+// =========================================================================
+// DebugStepCpuInstructions
+// FIXED: IntrWait 復帰時に IF をクリアしない (RunCpuSlice と同様)。
+// =========================================================================
+void GBACore::DebugStepCpuInstructions(uint32_t count) {
+  for (uint32_t i = 0; i < count; ++i) {
+    if (cpu_.halted) {
+      bool woke_from_intrwait = false;
+      if (swi_intrwait_active_) {
+        const uint16_t iflags = ReadIO16(0x04000202u);
+        const uint16_t ie_reg = ReadIO16(0x04000200u);
+        const uint16_t matched =
+            static_cast<uint16_t>(iflags & ie_reg & swi_intrwait_mask_);
+        if (matched != 0u) {
+          // FIXED: IF をクリアしない
+          // 旧コード: WriteIO16(0x04000202u, matched); ← 削除
+          swi_intrwait_active_ = false;
+          swi_intrwait_mask_   = 0;
+          cpu_.halted          = false;
+          woke_from_intrwait   = true;
+        }
+      }
+      if (!woke_from_intrwait) {
+        const uint16_t ie_reg  = ReadIO16(0x04000200u);
+        const uint16_t iflags  = ReadIO16(0x04000202u);
+        if ((ie_reg & iflags) == 0u) return;
+        cpu_.halted = false;
+      }
+    }
+    ServiceInterruptIfNeeded();
+    const bool thumb_state = (cpu_.cpsr & (1u << 5)) != 0;
+    cpu_.regs[15] &= thumb_state ? ~1u : ~3u;
+    if (thumb_state) {
+      const uint16_t opcode = Read16(cpu_.regs[15]);
+      ExecuteThumbInstruction(opcode);
+    } else {
+      const uint32_t opcode = Read32(cpu_.regs[15]);
+      ExecuteArmInstruction(opcode);
+    }
   }
-  *pixel = color;
 }
 
-#define COMPOSITE_16_OBJWIN(BLEND, IDX)  \
-  if (background->objwinForceEnable || (!(current & FLAG_OBJWIN)) == background->objwinOnly) { \
-    unsigned color; \
-    unsigned mergedFlags = flags; \
-    if (current & FLAG_OBJWIN) { \
-      mergedFlags = objwinFlags; \
-      color = objwinPalette[paletteData | pixelData]; \
-    } else if ((current & (FLAG_IS_BACKGROUND | FLAG_REBLEND)) == FLAG_REBLEND) { \
-      color = renderer->normalPalette[paletteData | pixelData]; \
-    } else { \
-      color = palette[paletteData | pixelData]; \
-    } \
-    _composite ## BLEND ## Objwin(renderer, &pixel[IDX], color | mergedFlags, current); \
-  }
+}  // namespace gba
 
-#define COMPOSITE_16_NO_OBJWIN(BLEND, IDX) \
-  { \
-    unsigned color; \
-    if ((current & (FLAG_IS_BACKGROUND | FLAG_REBLEND)) == FLAG_REBLEND) { \
-      color = renderer->normalPalette[paletteData | pixelData]; \
-    } else { \
-      color = palette[paletteData | pixelData]; \
-    } \
-    _composite ## BLEND ## NoObjwin(renderer, &pixel[IDX], color | flags, current); \
-  }
-
-#define COMPOSITE_256_OBJWIN(BLEND, IDX) \
-  if (background->objwinForceEnable || (!(current & FLAG_OBJWIN)) == background->objwinOnly) { \
-    unsigned color; \
-    unsigned mergedFlags = flags; \
-    if (current & FLAG_OBJWIN) { \
-      mergedFlags = objwinFlags; \
-      color = objwinPalette[pixelData]; \
-    } else if ((current & (FLAG_IS_BACKGROUND | FLAG_REBLEND)) == FLAG_REBLEND) { \
-      color = renderer->normalPalette[pixelData]; \
-    } else { \
-      color = palette[pixelData]; \
-    } \
-    _composite ## BLEND ## Objwin(renderer, &pixel[IDX], color | mergedFlags, current); \
-  }
-
-#define COMPOSITE_256_NO_OBJWIN(BLEND, IDX) \
-  { \
-    unsigned color; \
-    if ((current & (FLAG_IS_BACKGROUND | FLAG_REBLEND)) == FLAG_REBLEND) { \
-      color = renderer->normalPalette[pixelData]; \
-    } else { \
-      color = palette[pixelData]; \
-    } \
-    _composite ## BLEND ## NoObjwin(renderer, &pixel[IDX], color | flags, current); \
-  }
-
-#define BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, IDX) \
-  pixelData = tileData & 0xF; \
-  current = pixel[IDX]; \
-  if (pixelData && IS_WRITABLE(current)) { \
-    COMPOSITE_16_ ## OBJWIN (BLEND, IDX); \
-  } \
-  tileData >>= 4;
-
-#define BACKGROUND_DRAW_PIXEL_256(BLEND, OBJWIN, IDX) \
-  pixelData = tileData & 0xFF; \
-  current = pixel[IDX]; \
-  if (pixelData && IS_WRITABLE(current)) { \
-    COMPOSITE_256_ ## OBJWIN (BLEND, IDX); \
-  } \
-  tileData >>= 8;
-
-// TODO: Remove UNUSEDs after implementing OBJWIN for modes 3 - 5
-#define PREPARE_OBJWIN                                                                            \
-  int objwinSlowPath = GBARegisterDISPCNTIsObjwinEnable(renderer->dispcnt);                     \
-  mColor* objwinPalette = renderer->normalPalette;                                             \
-  if (renderer->d.highlightAmount && background->highlight) {                                   \
-    objwinPalette = renderer->highlightPalette;                                               \
-  }                                                                                             \
-  UNUSED(objwinPalette);                                                                        \
-  if (objwinSlowPath) {                                                                         \
-    if (background->target1 && GBAWindowControlIsBlendEnable(renderer->objwin.packed) &&      \
-        (renderer->blendEffect == BLEND_BRIGHTEN || renderer->blendEffect == BLEND_DARKEN)) { \
-      objwinPalette = renderer->variantPalette;                                             \
-      if (renderer->d.highlightAmount && background->highlight) {                           \
-        palette = renderer->highlightVariantPalette;                                      \
-      }                                                                                     \
-    }                                                                                         \
-  }
-
-#define BACKGROUND_BITMAP_INIT                                                                                        \
-  int32_t x = background->sx + (renderer->start - 1) * background->dx;                                              \
-  int32_t y = background->sy + (renderer->start - 1) * background->dy;                                              \
-  int mosaicH = 0;                                                                                                  \
-  int mosaicWait = 0;                                                                                               \
-  int32_t localX;                                                                                                   \
-  int32_t localY;                                                                                                   \
-  if (background->mosaic) {                                                                                         \
-    int mosaicV = GBAMosaicControlGetBgV(renderer->mosaic) + 1;                                                   \
-    mosaicH = GBAMosaicControlGetBgH(renderer->mosaic) + 1;                                                       \
-    mosaicWait = (mosaicH - renderer->start + GBA_VIDEO_HORIZONTAL_PIXELS * mosaicH) % mosaicH;                   \
-    int32_t startX = renderer->start - (renderer->start % mosaicH);                                               \
-    --mosaicH;                                                                                                    \
-    localX = -(inY % mosaicV) * background->dmx;                                                                  \
-    localY = -(inY % mosaicV) * background->dmy;                                                                  \
-    x += localX;                                                                                                  \
-    y += localY;                                                                                                  \
-    localX += background->sx + startX * background->dx;                                                           \
-    localY += background->sy + startX * background->dy;                                                           \
-  }                                                                                                                 \
-                                                                                                                      \
-  uint32_t flags = background->flags;                                                                               \
-  uint32_t objwinFlags = background->objwinFlags;                                                                   \
-  bool variant = background->variant;                                                                               \
-  mColor* palette = renderer->normalPalette;                                                                       \
-  if (renderer->d.highlightAmount && background->highlight) {                                                       \
-    palette = renderer->highlightPalette;                                                                         \
-  }                                                                                                                 \
-  if (variant) {                                                                                                    \
-    palette = renderer->variantPalette;                                                                           \
-    if (renderer->d.highlightAmount && background->highlight) {                                                   \
-      palette = renderer->highlightVariantPalette;                                                              \
-    }                                                                                                             \
-  }                                                                                                                 \
-  UNUSED(palette);                                                                                                  \
-  PREPARE_OBJWIN;
-
-#define TEST_LAYER_ENABLED(X) \
-  !softwareRenderer->d.disableBG[X] && \
-  (softwareRenderer->bg[X].enabled == ENABLED_MAX && \
-  (GBAWindowControlIsBg ## X ## Enable(softwareRenderer->currentWindow.packed) || \
-  (GBARegisterDISPCNTIsObjwinEnable(softwareRenderer->dispcnt) && GBAWindowControlIsBg ## X ## Enable (softwareRenderer->objwin.packed))) && \
-  softwareRenderer->bg[X].priority == priority)
-
-static inline unsigned _brighten(unsigned color, int y) {
-  unsigned c = 0;
-  unsigned a;
-#ifdef COLOR_16_BIT
-  a = color & 0x1F;
-  c |= (a + ((0x1F - a) * y) / 16) & 0x1F;
-
-#ifdef COLOR_5_6_5
-  a = color & 0x7C0;
-  c |= (a + ((0x7C0 - a) * y) / 16) & 0x7C0;
-
-  a = color & 0xF800;
-  c |= (a + ((0xF800 - a) * y) / 16) & 0xF800;
-#else
-  a = color & 0x3E0;
-  c |= (a + ((0x3E0 - a) * y) / 16) & 0x3E0;
-
-  a = color & 0x7C00;
-  c |= (a + ((0x7C00 - a) * y) / 16) & 0x7C00;
-#endif
-#else
-  a = color & 0xFF;
-  c |= (a + ((0xFF - a) * y) / 16) & 0xFF;
-
-  a = color & 0xFF00;
-  c |= (a + ((0xFF00 - a) * y) / 16) & 0xFF00;
-
-  a = color & 0xFF0000;
-  c |= (a + ((0xFF0000 - a) * y) / 16) & 0xFF0000;
-#endif
-  return c;
-}
-
-static inline unsigned _darken(unsigned color, int y) {
-  unsigned c = 0;
-  unsigned a;
-#ifdef COLOR_16_BIT
-  a = color & 0x1F;
-  c |= (a - (a * y) / 16) & 0x1F;
-
-#ifdef COLOR_5_6_5
-  a = color & 0x7C0;
-  c |= (a - (a * y) / 16) & 0x7C0;
-
-  a = color & 0xF800;
-  c |= (a - (a * y) / 16) & 0xF800;
-#else
-  a = color & 0x3E0;
-  c |= (a - (a * y) / 16) & 0x3E0;
-
-  a = color & 0x7C00;
-  c |= (a - (a * y) / 16) & 0x7C00;
-#endif
-#else
-  a = color & 0xFF;
-  c |= (a - (a * y) / 16) & 0xFF;
-
-  a = color & 0xFF00;
-  c |= (a - (a * y) / 16) & 0xFF00;
-
-  a = color & 0xFF0000;
-  c |= (a - (a * y) / 16) & 0xFF0000;
-#endif
-  return c;
-}
-
-#endif
-// ---- END rewritten from reference implementation/software-private.c ----
-#if defined(__cplusplus)
-}  // extern "C"
-#endif
+// ---- END gba_core_cpu.cpp ----

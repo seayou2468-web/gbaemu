@@ -1,442 +1,290 @@
-// iOS-focused translation-unit optimization hints (no behavior change).
-#if defined(__APPLE__) && defined(__clang__)
-#pragma clang optimize on
-#endif
+#ifndef GBA_CORE_PPU_COMMON_IMPL
+#define GBA_CORE_PPU_COMMON_IMPL
 
-#include "./module_includes.h"
+// ---- BEGIN gba_core_ppu.cpp ----
+#include "../gba_core.h"
 
-// Rebuilt Objective-C++ module from reference implementation sources.
-// NOTE: Source bodies are embedded and adapted here (no direct include of reference files).
-#if defined(__cplusplus)
-extern "C" {
-#endif
+#include <algorithm>
 
-// ---- BEGIN rewritten from reference implementation/software-obj.c ----
-#define SPRITE_NORMAL_LOOP(DEPTH, TYPE) \
-  SPRITE_YBASE_ ## DEPTH(inY); \
-  unsigned tileData; \
-  for (; outX < condition; ++outX, inX += xOffset) { \
-    SPRITE_XBASE_ ## DEPTH(inX); \
-    SPRITE_DRAW_PIXEL_ ## DEPTH ## _ ## TYPE(inX); \
-  }
+namespace gba {
+namespace {
+uint8_t ClampToByteLocal(int value) {
+  if (value < 0) return 0;
+  if (value > 255) return 255;
+  return static_cast<uint8_t>(value);
+}
 
-#define SPRITE_MOSAIC_LOOP(DEPTH, TYPE) \
-  SPRITE_YBASE_ ## DEPTH(inY); \
-  unsigned tileData; \
-  for (; outX < condition; ++outX, inX += xOffset) { \
-    int localX = inX - xOffset * (outX % mosaicH); \
-    if (localX < 0) { \
-      localX = 0; \
-    } else if (localX > width - 1) {\
-      localX = width - 1; \
-    } \
-    SPRITE_XBASE_ ## DEPTH(localX); \
-    SPRITE_DRAW_PIXEL_ ## DEPTH ## _ ## TYPE(localX); \
-  }
+constexpr int kBackdropPriority = 4;
+constexpr uint8_t kLayerBg0 = 0;
+constexpr uint8_t kLayerBg1 = 1;
+constexpr uint8_t kLayerBg2 = 2;
+constexpr uint8_t kLayerBg3 = 3;
+constexpr uint8_t kLayerBackdrop = 4;
 
-#define SPRITE_TRANSFORMED_LOOP(DEPTH, TYPE) \
-  unsigned tileData; \
-  unsigned widthMask = ~(width - 1); \
-  unsigned heightMask = ~(height - 1); \
-  for (; outX < condition; ++outX, ++inX) { \
-    xAccum += mat.a; \
-    yAccum += mat.c; \
-    int localX = xAccum >> 8; \
-    int localY = yAccum >> 8; \
-    \
-    if (localX & widthMask || localY & heightMask) { \
-      break; \
-    } \
-    \
-    SPRITE_YBASE_ ## DEPTH(localY); \
-    SPRITE_XBASE_ ## DEPTH(localX); \
-    SPRITE_DRAW_PIXEL_ ## DEPTH ## _ ## TYPE(localX); \
-  }
+// NOTE:
+// This file is text-included from multiple translation units. Function-local
+// statics here would create one buffer per TU, breaking compositor state
+// sharing between BG/OBJ/effects passes. Use C++17 inline variables so all TUs
+// share exactly one instance program-wide.
+inline std::vector<uint8_t> g_bg_priority_buffer;
+inline std::vector<uint8_t> g_obj_window_mask_buffer;
+inline std::vector<uint8_t> g_obj_drawn_mask_buffer;
+inline std::vector<uint8_t> g_obj_semitrans_mask_buffer;
+inline std::vector<uint8_t> g_bg_layer_buffer;
+inline std::vector<uint32_t> g_bg_base_color_buffer;
+inline std::vector<uint32_t> g_bg_second_color_buffer;
+inline std::vector<uint8_t> g_bg_second_layer_buffer;
+inline std::vector<uint8_t> g_bg_second_priority_buffer;
+inline std::vector<uint8_t> g_obj_priority_buffer;
+inline std::vector<uint8_t> g_obj_index_buffer;
+inline std::vector<uint8_t> g_obj_under_drawn_mask_buffer;
+inline std::vector<uint8_t> g_obj_under_priority_buffer;
+inline std::vector<uint8_t> g_obj_under_index_buffer;
+inline std::vector<uint32_t> g_obj_under_color_buffer;
 
-#define SPRITE_TRANSFORMED_MOSAIC_LOOP(DEPTH, TYPE) \
-  unsigned tileData; \
-  unsigned widthMask = ~(width - 1); \
-  unsigned heightMask = ~(height - 1); \
-  int localX = xAccum >> 8; \
-  int localY = yAccum >> 8; \
-  for (; outX < condition; ++outX, ++inX) { \
-    xAccum += mat.a; \
-    yAccum += mat.c; \
-    \
-    if (outX % mosaicH == 0) { \
-      localX = xAccum >> 8; \
-      localY = yAccum >> 8; \
-    } \
-    \
-    if (localX & widthMask || localY & heightMask) { \
-      continue; \
-    } \
-    \
-    SPRITE_YBASE_ ## DEPTH(localY); \
-    SPRITE_XBASE_ ## DEPTH(localX); \
-    SPRITE_DRAW_PIXEL_ ## DEPTH ## _ ## TYPE(localX); \
-  }
+std::vector<uint8_t>& BgPriorityBuffer() {
+  return g_bg_priority_buffer;
+}
 
-#define SPRITE_XBASE_16(localX) unsigned xBase = (localX & ~0x7) * 4 + ((localX >> 1) & 2);
-#define SPRITE_YBASE_16(localY) unsigned yBase = (localY & ~0x7) * stride + (localY & 0x7) * 4 + maskHi;
-
-#define SPRITE_DRAW_PIXEL_16_NORMAL(localX) \
-  LOAD_16(tileData, (yBase + ((xBase + charBase) & maskLo)) & 0x7FFE, vramBase); \
-  tileData = (tileData >> ((localX & 3) << 2)) & 0xF; \
-  current = renderer->spriteLayer[outX]; \
-  if ((current & FLAG_ORDER_MASK) > flags) { \
-    if (tileData) { \
-      renderer->spriteLayer[outX] = palette[tileData] | flags; \
-    } else if (current != FLAG_UNWRITTEN) { \
-      renderer->spriteLayer[outX] = (current & ~(FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)) | (flags & (FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)); \
-    } \
-  }
-
-#define SPRITE_DRAW_PIXEL_16_NORMAL_OBJWIN(localX) \
-  LOAD_16(tileData, (yBase + ((xBase + charBase) & maskLo)) & 0x7FFE, vramBase); \
-  tileData = (tileData >> ((localX & 3) << 2)) & 0xF; \
-  current = renderer->spriteLayer[outX]; \
-  if ((current & FLAG_ORDER_MASK) > flags) { \
-    if (tileData) { \
-      unsigned color = (renderer->row[outX] & FLAG_OBJWIN) ? objwinPalette[tileData] : palette[tileData]; \
-      renderer->spriteLayer[outX] = color | flags; \
-    } else if (current != FLAG_UNWRITTEN) { \
-      renderer->spriteLayer[outX] = (current & ~(FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)) | (flags & (FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)); \
-    } \
-  }
-
-#define SPRITE_DRAW_PIXEL_16_OBJWIN(localX) \
-  LOAD_16(tileData, (yBase + ((xBase + charBase) & maskLo)) & 0x7FFE, vramBase); \
-  tileData = (tileData >> ((localX & 3) << 2)) & 0xF; \
-  if (tileData) { \
-    renderer->row[outX] |= FLAG_OBJWIN; \
-  } else { \
-    current = renderer->spriteLayer[outX]; \
-    if (current != FLAG_UNWRITTEN && (current & FLAG_ORDER_MASK) > flags) { \
-      renderer->spriteLayer[outX] = (current & ~(FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)) | (flags & (FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)); \
-    } \
-  }
-
-#define SPRITE_XBASE_256(localX) unsigned xBase = (localX & ~0x7) * 8 + (localX & 6);
-#define SPRITE_YBASE_256(localY) unsigned yBase = (localY & ~0x7) * stride + (localY & 0x7) * 8 + maskHi;
-
-#define SPRITE_DRAW_PIXEL_256_NORMAL(localX) \
-  LOAD_16(tileData, (yBase + ((xBase + charBase) & maskLo)) & 0x7FFE, vramBase); \
-  tileData = (tileData >> ((localX & 1) << 3)) & 0xFF; \
-  current = renderer->spriteLayer[outX]; \
-  if ((current & FLAG_ORDER_MASK) > flags) { \
-    if (tileData) { \
-      renderer->spriteLayer[outX] = palette[tileData] | flags; \
-    } else if (current != FLAG_UNWRITTEN) { \
-      renderer->spriteLayer[outX] = (current & ~(FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)) | (flags & (FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)); \
-    } \
-  }
-
-#define SPRITE_DRAW_PIXEL_256_NORMAL_OBJWIN(localX) \
-  LOAD_16(tileData, (yBase + ((xBase + charBase) & maskLo)) & 0x7FFE, vramBase); \
-  tileData = (tileData >> ((localX & 1) << 3)) & 0xFF; \
-  current = renderer->spriteLayer[outX]; \
-  if ((current & FLAG_ORDER_MASK) > flags) { \
-    if (tileData) { \
-      unsigned color = (renderer->row[outX] & FLAG_OBJWIN) ? objwinPalette[tileData] : palette[tileData]; \
-      renderer->spriteLayer[outX] = color | flags; \
-    } else if (current != FLAG_UNWRITTEN) { \
-      renderer->spriteLayer[outX] = (current & ~(FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)) | (flags & (FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)); \
-    } \
-  }
-
-#define SPRITE_DRAW_PIXEL_256_OBJWIN(localX) \
-  LOAD_16(tileData, (yBase + ((xBase + charBase) & maskLo)) & 0x7FFE, vramBase); \
-  tileData = (tileData >> ((localX & 1) << 3)) & 0xFF; \
-  if (tileData) { \
-    renderer->row[outX] |= FLAG_OBJWIN; \
-  } else { \
-    current = renderer->spriteLayer[outX]; \
-    if (current != FLAG_UNWRITTEN && (current & FLAG_ORDER_MASK) > flags) { \
-      renderer->spriteLayer[outX] = (current & ~(FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)) | (flags & (FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1)); \
-    } \
-  }
-
-int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* renderer, struct GBAObj* sprite, int index, int y) {
-  int width = GBAVideoObjSizes[GBAObjAttributesAGetShape(sprite->a) * 4 + GBAObjAttributesBGetSize(sprite->b)][0];
-  int height = GBAVideoObjSizes[GBAObjAttributesAGetShape(sprite->a) * 4 + GBAObjAttributesBGetSize(sprite->b)][1];
-  int start = renderer->start;
-  int end = renderer->end;
-  uint32_t flags = GBAObjAttributesCGetPriority(sprite->c) << OFFSET_PRIORITY;
-  flags |= FLAG_TARGET_1 * ((GBAWindowControlIsBlendEnable(renderer->currentWindow.packed) && renderer->target1Obj && renderer->blendEffect == BLEND_ALPHA) || GBAObjAttributesAGetMode(sprite->a) == OBJ_MODE_SEMITRANSPARENT);
-  flags |= FLAG_OBJWIN * (GBAObjAttributesAGetMode(sprite->a) == OBJ_MODE_OBJWIN);
-  if ((flags & FLAG_OBJWIN) && (renderer->currentWindow.priority < renderer->objwin.priority || renderer->d.disableOBJWIN)) {
-    return 0;
-  }
-  int32_t x = (uint32_t) GBAObjAttributesBGetX(sprite->b) << 23;
-  x >>= 23;
-  x += renderer->objOffsetX;
-  uint16_t* vramBase = &renderer->d.vram[BASE_TILE >> 1];
-  unsigned align = GBAObjAttributesAIs256Color(sprite->a) && !GBARegisterDISPCNTIsObjCharacterMapping(renderer->dispcnt);
-  unsigned charBase = (GBAObjAttributesCGetTile(sprite->c) & ~align) * 0x20;
-  unsigned maskLo = GBARegisterDISPCNTIsObjCharacterMapping(renderer->dispcnt) ? 0x7FFE : 0x3FE;
-  unsigned maskHi = GBARegisterDISPCNTIsObjCharacterMapping(renderer->dispcnt) ? 0 : charBase & 0x7C00;
-  if (GBARegisterDISPCNTGetMode(renderer->dispcnt) >= 3 && GBAObjAttributesCGetTile(sprite->c) < 512) {
-    return 0;
-  }
-
-  int objwinSlowPath = GBARegisterDISPCNTIsObjwinEnable(renderer->dispcnt) && GBAWindowControlGetBlendEnable(renderer->objwin.packed) != GBAWindowControlIsBlendEnable(renderer->currentWindow.packed);
-  int variant = renderer->target1Obj &&
-                GBAWindowControlIsBlendEnable(renderer->currentWindow.packed) &&
-                (renderer->blendEffect == BLEND_BRIGHTEN || renderer->blendEffect == BLEND_DARKEN);
-  if (GBAObjAttributesAGetMode(sprite->a) == OBJ_MODE_SEMITRANSPARENT || (renderer->target1Obj && renderer->blendEffect == BLEND_ALPHA) || objwinSlowPath) {
-    int target2 = renderer->target2Bd;
-    target2 |= renderer->bg[0].target2 && renderer->bg[0].enabled;
-    target2 |= renderer->bg[1].target2 && renderer->bg[1].enabled;
-    target2 |= renderer->bg[2].target2 && renderer->bg[2].enabled;
-    target2 |= renderer->bg[3].target2 && renderer->bg[3].enabled;
-    if (target2) {
-      renderer->forceTarget1 = true;
-      flags |= FLAG_REBLEND;
-      variant = 0;
-    } else {
-      flags &= ~FLAG_TARGET_1;
-    }
-  }
-
-  mColor* palette = &renderer->normalPalette[0x100];
-  if (renderer->d.highlightAmount && renderer->d.highlightOBJ[index]) {
-    palette = &renderer->highlightPalette[0x100];
-  }
-  mColor* objwinPalette = palette;
-
-  if (variant) {
-    palette = &renderer->variantPalette[0x100];
-    if (renderer->d.highlightAmount && renderer->d.highlightOBJ[index]) {
-      palette = &renderer->highlightVariantPalette[0x100];
-    }
-    if (GBAWindowControlIsBlendEnable(renderer->objwin.packed)) {
-      objwinPalette = palette;
-    }
-  }
-
-  int inY = y - ((int) GBAObjAttributesAGetY(sprite->a) + renderer->objOffsetY);
-  int stride = GBARegisterDISPCNTIsObjCharacterMapping(renderer->dispcnt) ? (width >> !GBAObjAttributesAIs256Color(sprite->a)) : 0x80;
-
-  uint32_t current;
-  if (GBAObjAttributesAIsTransformed(sprite->a)) {
-    int totalWidth = width << GBAObjAttributesAGetDoubleSize(sprite->a);
-    int totalHeight = height << GBAObjAttributesAGetDoubleSize(sprite->a);
-    struct GBAOAMMatrix mat;
-    LOAD_16(mat.a, 0, &renderer->d.oam->mat[GBAObjAttributesBGetMatIndex(sprite->b)].a);
-    LOAD_16(mat.b, 0, &renderer->d.oam->mat[GBAObjAttributesBGetMatIndex(sprite->b)].b);
-    LOAD_16(mat.c, 0, &renderer->d.oam->mat[GBAObjAttributesBGetMatIndex(sprite->b)].c);
-    LOAD_16(mat.d, 0, &renderer->d.oam->mat[GBAObjAttributesBGetMatIndex(sprite->b)].d);
-
-    if (inY < 0) {
-      inY += 256;
-    }
-    int outX = x >= start ? x : start;
-    int condition = x + totalWidth;
-    int inX = outX - x;
-    if (end < condition) {
-      condition = end;
-    }
-    int mosaicH = 1;
-    if (GBAObjAttributesAIsMosaic(sprite->a)) {
-      mosaicH = GBAMosaicControlGetObjH(renderer->mosaic) + 1;
-      if (condition != end && condition % mosaicH) {
-        condition += mosaicH - (condition % mosaicH);
-      }
-    }
-
-    int xAccum = mat.a * (inX - 1 - (totalWidth >> 1)) + mat.b * (inY - (totalHeight >> 1)) + (width << 7);
-    int yAccum = mat.c * (inX - 1 - (totalWidth >> 1)) + mat.d * (inY - (totalHeight >> 1)) + (height << 7);
-
-    // Clip off early pixels
-    // TODO: Transform end coordinates too
-    if (mat.a) {
-      if ((xAccum >> 8) < 0) {
-        int32_t diffX = -xAccum - 1;
-        int32_t x = mat.a ? diffX / mat.a : 0;
-        xAccum += mat.a * x;
-        yAccum += mat.c * x;
-        outX += x;
-        inX += x;
-      } else if ((xAccum >> 8) >= width) {
-        int32_t diffX = (width << 8) - xAccum;
-        int32_t x = mat.a ? diffX / mat.a : 0;
-        xAccum += mat.a * x;
-        yAccum += mat.c * x;
-        outX += x;
-        inX += x;
-      }
-    }
-    if (mat.c) {
-      if ((yAccum >> 8) < 0) {
-        int32_t diffY = - yAccum - 1;
-        int32_t y = mat.c ? diffY / mat.c : 0;
-        xAccum += mat.a * y;
-        yAccum += mat.c * y;
-        outX += y;
-        inX += y;
-      } else if ((yAccum >> 8) >= height) {
-        int32_t diffY = (height << 8) - yAccum;
-        int32_t y = mat.c ? diffY / mat.c : 0;
-        xAccum += mat.a * y;
-        yAccum += mat.c * y;
-        outX += y;
-        inX += y;
-      }
-    }
-
-    if (outX < start || outX >= condition) {
-      return 0;
-    }
-
-    if (!GBAObjAttributesAIs256Color(sprite->a)) {
-      palette = &palette[GBAObjAttributesCGetPalette(sprite->c) << 4];
-      if (flags & FLAG_OBJWIN) {
-        SPRITE_TRANSFORMED_LOOP(16, OBJWIN);
-      } else if (mosaicH > 1) {
-        if (objwinSlowPath) {
-          objwinPalette = &objwinPalette[GBAObjAttributesCGetPalette(sprite->c) << 4];
-          SPRITE_TRANSFORMED_MOSAIC_LOOP(16, NORMAL_OBJWIN);
-        } else {
-          SPRITE_TRANSFORMED_MOSAIC_LOOP(16, NORMAL);
-        }
-      } else if (objwinSlowPath) {
-        objwinPalette = &objwinPalette[GBAObjAttributesCGetPalette(sprite->c) << 4];
-        SPRITE_TRANSFORMED_LOOP(16, NORMAL_OBJWIN);
-      } else {
-        SPRITE_TRANSFORMED_LOOP(16, NORMAL);
-      }
-    } else {
-      if (flags & FLAG_OBJWIN) {
-        SPRITE_TRANSFORMED_LOOP(256, OBJWIN);
-      } else if (mosaicH > 1) {
-        if (objwinSlowPath) {
-          SPRITE_TRANSFORMED_MOSAIC_LOOP(256, NORMAL_OBJWIN);
-        } else {
-          SPRITE_TRANSFORMED_MOSAIC_LOOP(256, NORMAL);
-        }
-      } else if (objwinSlowPath) {
-        SPRITE_TRANSFORMED_LOOP(256, NORMAL_OBJWIN);
-      } else {
-        SPRITE_TRANSFORMED_LOOP(256, NORMAL);
-      }
-    }
+void EnsureBgPriorityBufferSize() {
+  auto& buffer = BgPriorityBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, static_cast<uint8_t>(kBackdropPriority));
   } else {
-    int outX = x >= start ? x : start;
-    int condition = x + width;
-    int mosaicH = 1;
-    if (GBAObjAttributesAIsMosaic(sprite->a)) {
-      mosaicH = GBAMosaicControlGetObjH(renderer->mosaic) + 1;
-      if (condition % mosaicH) {
-        condition += mosaicH - (condition % mosaicH);
-      }
-    }
-    if ((int) GBAObjAttributesAGetY(sprite->a) + height - 256 >= 0) {
-      inY += 256;
-    }
-    if (GBAObjAttributesBIsVFlip(sprite->b)) {
-      inY = height - inY - 1;
-    }
-    if (end < condition) {
-      condition = end;
-    }
-    int inX = outX - x;
-    int xOffset = 1;
-    if (GBAObjAttributesBIsHFlip(sprite->b)) {
-      inX = width - inX - 1;
-      xOffset = -1;
-    }
-    if (!GBAObjAttributesAIs256Color(sprite->a)) {
-      palette = &palette[GBAObjAttributesCGetPalette(sprite->c) << 4];
-      if (flags & FLAG_OBJWIN) {
-        SPRITE_NORMAL_LOOP(16, OBJWIN);
-      } else if (mosaicH > 1) {
-        if (objwinSlowPath) {
-          objwinPalette = &objwinPalette[GBAObjAttributesCGetPalette(sprite->c) << 4];
-          SPRITE_MOSAIC_LOOP(16, NORMAL_OBJWIN);
-        } else {
-          SPRITE_MOSAIC_LOOP(16, NORMAL);
-        }
-      } else if (objwinSlowPath) {
-        objwinPalette = &objwinPalette[GBAObjAttributesCGetPalette(sprite->c) << 4];
-        SPRITE_NORMAL_LOOP(16, NORMAL_OBJWIN);
-      } else {
-        SPRITE_NORMAL_LOOP(16, NORMAL);
-      }
-    } else {
-      if (flags & FLAG_OBJWIN) {
-        SPRITE_NORMAL_LOOP(256, OBJWIN);
-      } else if (mosaicH > 1) {
-        if (objwinSlowPath) {
-          SPRITE_MOSAIC_LOOP(256, NORMAL_OBJWIN);
-        } else {
-          SPRITE_MOSAIC_LOOP(256, NORMAL);
-        }
-      } else if (objwinSlowPath) {
-        SPRITE_NORMAL_LOOP(256, NORMAL_OBJWIN);
-      } else {
-        SPRITE_NORMAL_LOOP(256, NORMAL);
-      }
-    }
-  }
-  return 1;
-}
-
-void GBAVideoSoftwareRendererPostprocessSprite(struct GBAVideoSoftwareRenderer* renderer, unsigned priority) {
-  int x;
-  uint32_t* pixel = &renderer->row[renderer->start];
-  uint32_t flags = FLAG_TARGET_2 * renderer->target2Obj;
-
-  int objwinSlowPath = GBARegisterDISPCNTIsObjwinEnable(renderer->dispcnt);
-  bool objwinDisable = false;
-  bool objwinOnly = false;
-  if (objwinSlowPath) {
-    objwinDisable = !GBAWindowControlIsObjEnable(renderer->objwin.packed);
-    objwinOnly = !objwinDisable && !GBAWindowControlIsObjEnable(renderer->currentWindow.packed);
-    if (objwinDisable && !GBAWindowControlIsObjEnable(renderer->currentWindow.packed)) {
-      return;
-    }
-
-    if (objwinDisable) {
-      for (x = renderer->start; x < renderer->end; ++x, ++pixel) {
-        uint32_t color = renderer->spriteLayer[x] & ~FLAG_OBJWIN;
-        uint32_t current = *pixel;
-        if ((color & FLAG_UNWRITTEN) != FLAG_UNWRITTEN && !(current & FLAG_OBJWIN) && (color & FLAG_PRIORITY) >> OFFSET_PRIORITY == priority) {
-          _compositeBlendObjwin(renderer, pixel, color | flags, current);
-        }
-      }
-      return;
-    } else if (objwinOnly) {
-      for (x = renderer->start; x < renderer->end; ++x, ++pixel) {
-        uint32_t color = renderer->spriteLayer[x] & ~FLAG_OBJWIN;
-        uint32_t current = *pixel;
-        if ((color & FLAG_UNWRITTEN) != FLAG_UNWRITTEN && (current & FLAG_OBJWIN) && (color & FLAG_PRIORITY) >> OFFSET_PRIORITY == priority) {
-          _compositeBlendObjwin(renderer, pixel, color | flags, current);
-        }
-      }
-      return;
-    } else {
-      for (x = renderer->start; x < renderer->end; ++x, ++pixel) {
-        uint32_t color = renderer->spriteLayer[x] & ~FLAG_OBJWIN;
-        uint32_t current = *pixel;
-        if ((color & FLAG_UNWRITTEN) != FLAG_UNWRITTEN && (color & FLAG_PRIORITY) >> OFFSET_PRIORITY == priority) {
-          _compositeBlendObjwin(renderer, pixel, color | flags, current);
-        }
-      }
-      return;
-    }
-  } else if (!GBAWindowControlIsObjEnable(renderer->currentWindow.packed)) {
-    return;
-  }
-  for (x = renderer->start; x < renderer->end; ++x, ++pixel) {
-    uint32_t color = renderer->spriteLayer[x] & ~FLAG_OBJWIN;
-    uint32_t current = *pixel;
-    if ((color & FLAG_UNWRITTEN) != FLAG_UNWRITTEN && (color & FLAG_PRIORITY) >> OFFSET_PRIORITY == priority) {
-      _compositeBlendNoObjwin(renderer, pixel, color | flags, current);
-    }
+    std::fill(buffer.begin(), buffer.end(), static_cast<uint8_t>(kBackdropPriority));
   }
 }
-// ---- END rewritten from reference implementation/software-obj.c ----
-#if defined(__cplusplus)
-}  // extern "C"
-#endif
+
+std::vector<uint8_t>& ObjWindowMaskBuffer() {
+  return g_obj_window_mask_buffer;
+}
+
+std::vector<uint8_t>& ObjDrawnMaskBuffer() {
+  return g_obj_drawn_mask_buffer;
+}
+
+std::vector<uint8_t>& ObjSemiTransMaskBuffer() {
+  return g_obj_semitrans_mask_buffer;
+}
+
+std::vector<uint8_t>& BgLayerBuffer() {
+  return g_bg_layer_buffer;
+}
+
+std::vector<uint32_t>& BgBaseColorBuffer() {
+  return g_bg_base_color_buffer;
+}
+
+std::vector<uint32_t>& BgSecondColorBuffer() {
+  return g_bg_second_color_buffer;
+}
+
+std::vector<uint8_t>& ObjPriorityBuffer() { return g_obj_priority_buffer; }
+std::vector<uint8_t>& ObjIndexBuffer() { return g_obj_index_buffer; }
+std::vector<uint8_t>& ObjUnderDrawnMaskBuffer() { return g_obj_under_drawn_mask_buffer; }
+std::vector<uint8_t>& ObjUnderPriorityBuffer() { return g_obj_under_priority_buffer; }
+std::vector<uint8_t>& ObjUnderIndexBuffer() { return g_obj_under_index_buffer; }
+std::vector<uint32_t>& ObjUnderColorBuffer() { return g_obj_under_color_buffer; }
+
+void EnsureObjPriorityBuffersSize() {
+  const size_t req = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (g_obj_priority_buffer.size() != req) g_obj_priority_buffer.assign(req, 4u);
+  else std::fill(g_obj_priority_buffer.begin(), g_obj_priority_buffer.end(), 4u);
+  if (g_obj_index_buffer.size() != req) g_obj_index_buffer.assign(req, 255u);
+  else std::fill(g_obj_index_buffer.begin(), g_obj_index_buffer.end(), 255u);
+  if (g_obj_under_drawn_mask_buffer.size() != req) g_obj_under_drawn_mask_buffer.assign(req, 0u);
+  else std::fill(g_obj_under_drawn_mask_buffer.begin(), g_obj_under_drawn_mask_buffer.end(), 0u);
+  if (g_obj_under_priority_buffer.size() != req) g_obj_under_priority_buffer.assign(req, 4u);
+  else std::fill(g_obj_under_priority_buffer.begin(), g_obj_under_priority_buffer.end(), 4u);
+  if (g_obj_under_index_buffer.size() != req) g_obj_under_index_buffer.assign(req, 255u);
+  else std::fill(g_obj_under_index_buffer.begin(), g_obj_under_index_buffer.end(), 255u);
+  if (g_obj_under_color_buffer.size() != req) g_obj_under_color_buffer.assign(req, 0xFF000000u);
+  else std::fill(g_obj_under_color_buffer.begin(), g_obj_under_color_buffer.end(), 0xFF000000u);
+}
+
+std::vector<uint8_t>& BgSecondLayerBuffer() {
+  return g_bg_second_layer_buffer;
+}
+std::vector<uint8_t>& BgSecondPriorityBuffer() { return g_bg_second_priority_buffer; }
+
+void EnsureBgLayerBufferSize() {
+  auto& buffer = BgLayerBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, kLayerBackdrop);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), kLayerBackdrop);
+  }
+}
+
+void EnsureBgBaseColorBufferSize() {
+  auto& buffer = BgBaseColorBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0xFF000000u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0xFF000000u);
+  }
+}
+
+void EnsureBgSecondBuffersSize() {
+  auto& color = BgSecondColorBuffer();
+  auto& layer = BgSecondLayerBuffer();
+  auto& prio = BgSecondPriorityBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (color.size() != required) {
+    color.assign(required, 0xFF000000u);
+  } else {
+    std::fill(color.begin(), color.end(), 0xFF000000u);
+  }
+  if (layer.size() != required) {
+    layer.assign(required, kLayerBackdrop);
+  } else {
+    std::fill(layer.begin(), layer.end(), kLayerBackdrop);
+  }
+  if (prio.size() != required) {
+    prio.assign(required, static_cast<uint8_t>(kBackdropPriority));
+  } else {
+    std::fill(prio.begin(), prio.end(), static_cast<uint8_t>(kBackdropPriority));
+  }
+}
+
+void EnsureObjDrawnMaskBufferSize() {
+  auto& buffer = ObjDrawnMaskBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0u);
+  }
+}
+
+void EnsureObjSemiTransMaskBufferSize() {
+  auto& buffer = ObjSemiTransMaskBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0u);
+  }
+}
+
+void EnsureObjWindowMaskBufferSize() {
+  auto& buffer = ObjWindowMaskBuffer();
+  const size_t required = static_cast<size_t>(GBACore::kScreenWidth) * GBACore::kScreenHeight;
+  if (buffer.size() != required) {
+    buffer.assign(required, 0u);
+  } else {
+    std::fill(buffer.begin(), buffer.end(), 0u);
+  }
+}
+
+uint32_t Bgr555ToRgba8888(uint16_t bgr) {
+  const uint8_t r5 = static_cast<uint8_t>((bgr >> 0) & 0x1F);
+  const uint8_t g5 = static_cast<uint8_t>((bgr >> 5) & 0x1F);
+  const uint8_t b5 = static_cast<uint8_t>((bgr >> 10) & 0x1F);
+  const uint8_t r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+  const uint8_t g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
+  const uint8_t b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
+  return 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+         (static_cast<uint32_t>(g) << 8) | b;
+}
+
+uint16_t ReadBackdropBgr(const std::array<uint8_t, 1024>& palette_ram) {
+  return static_cast<uint16_t>(palette_ram[0]) |
+         static_cast<uint16_t>(palette_ram[1] << 8);
+}
+
+bool IsWithinWindowAxis(int p, int start, int end, int axis_max) {
+  const int s = std::clamp(start, 0, axis_max);
+  const int e = std::clamp(end, 0, axis_max);
+  // GBATEK: X1=X2=0 (or Y1=Y2=0) disables that axis.
+  // If X1>X2 (or Y1>Y2), window range wraps around:
+  // [X1..max) U [0..X2).
+  if (s == 0 && e == 0) return false;
+  if (s < e) return p >= s && p < e;
+  if (s > e) return p >= s || p < e;
+  // s==e (non-zero): full-axis window (common HW behavior with wrap semantics).
+  return true;
+}
+
+uint8_t ResolveWindowControl(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                         uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                         const std::vector<uint8_t>& obj_window_mask,
+                         int x, int y) {
+  if (x < 0 || x >= GBACore::kScreenWidth || y < 0 || y >= GBACore::kScreenHeight) {
+    return static_cast<uint8_t>(winout & 0xFFu);
+  }
+  const bool win0_enabled = (dispcnt & (1u << 13)) != 0;
+  const bool win1_enabled = (dispcnt & (1u << 14)) != 0;
+  const bool objwin_enabled = (dispcnt & (1u << 15)) != 0;
+  if (!win0_enabled && !win1_enabled && !objwin_enabled) return 0x3Fu;
+
+  const int win0_l = std::min<int>(240, (win0h >> 8) & 0xFFu);
+  const int win0_r = std::min<int>(240, win0h & 0xFFu);
+  const int win0_t = std::min<int>(160, (win0v >> 8) & 0xFFu);
+  const int win0_b = std::min<int>(160, win0v & 0xFFu);
+  const int win1_l = std::min<int>(240, (win1h >> 8) & 0xFFu);
+  const int win1_r = std::min<int>(240, win1h & 0xFFu);
+  const int win1_t = std::min<int>(160, (win1v >> 8) & 0xFFu);
+  const int win1_b = std::min<int>(160, win1v & 0xFFu);
+
+  const bool in_win0 = win0_enabled && IsWithinWindowAxis(x, win0_l, win0_r, 240) &&
+                       IsWithinWindowAxis(y, win0_t, win0_b, 160);
+  const bool in_win1 = win1_enabled && IsWithinWindowAxis(x, win1_l, win1_r, 240) &&
+                       IsWithinWindowAxis(y, win1_t, win1_b, 160);
+
+  uint8_t control = static_cast<uint8_t>(winout & 0xFFu);  // outside window
+  if (in_win0) control = static_cast<uint8_t>(winin & 0xFFu);
+  else if (in_win1) control = static_cast<uint8_t>((winin >> 8) & 0xFFu);
+  else if (objwin_enabled) {
+    const size_t off = static_cast<size_t>(y) * GBACore::kScreenWidth + x;
+    if (off < obj_window_mask.size() && obj_window_mask[off] != 0) {
+      control = static_cast<uint8_t>((winout >> 8) & 0x3Fu);
+    }
+  }
+  return control;
+}
+
+bool IsBgVisibleByWindow(uint8_t control, int bg) {
+  return (control & (1u << bg)) != 0;
+}
+
+bool IsBgVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                         uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                         int bg, int x, int y) {
+  const uint8_t control =
+      ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v, ObjWindowMaskBuffer(), x, y);
+  return IsBgVisibleByWindow(control, bg);
+}
+
+bool IsObjVisibleByWindow(uint16_t dispcnt, uint16_t winin, uint16_t winout,
+                          uint16_t win0h, uint16_t win0v, uint16_t win1h, uint16_t win1v,
+                          int x, int y) {
+  const uint8_t control = ResolveWindowControl(dispcnt, winin, winout, win0h, win0v, win1h, win1v,
+                                               ObjWindowMaskBuffer(), x, y);
+  return (control & (1u << 4)) != 0;
+}
+
+uint32_t AlphaBlendLocal(uint32_t top, uint32_t bot, uint16_t bldalpha) {
+  const uint32_t eva = std::min<uint32_t>(16u, bldalpha & 0x1Fu);
+  const uint32_t evb = std::min<uint32_t>(16u, (bldalpha >> 8) & 0x1Fu);
+  const int tr = (top >> 16) & 0xFF, tg = (top >> 8) & 0xFF, tb = top & 0xFF;
+  const int br = (bot >> 16) & 0xFF, bg = (bot >> 8) & 0xFF, bb = bot & 0xFF;
+  const uint8_t r = static_cast<uint8_t>(std::min(255, (tr * (int)eva + br * (int)evb) >> 4));
+  const uint8_t g = static_cast<uint8_t>(std::min(255, (tg * (int)eva + bg * (int)evb) >> 4));
+  const uint8_t b = static_cast<uint8_t>(std::min(255, (tb * (int)eva + bb * (int)evb) >> 4));
+  return 0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b;
+}
+
+uint16_t LayerToBlendMask(uint8_t layer, bool top_is_obj) {
+  if (top_is_obj) return static_cast<uint16_t>(1u << 4);   // OBJ
+  if (layer <= kLayerBg3) return static_cast<uint16_t>(1u << layer);  // BG0..BG3
+  return static_cast<uint16_t>(1u << 5);  // Backdrop
+}
+}  // namespace
+
+}  // namespace gba
+
+#endif  // GBA_CORE_PPU_COMMON_IMPL
