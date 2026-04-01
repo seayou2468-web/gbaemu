@@ -22,6 +22,7 @@
 @property (nonatomic, assign) NSInteger startupSuppressFrames;
 @property (nonatomic, assign) NSInteger startupStableFrames;
 @property (nonatomic, assign) BOOL startupSettled;
+@property (nonatomic, assign) CGColorSpaceRef frameColorSpace;
 @end
 
 @implementation ViewController
@@ -40,6 +41,10 @@
 }
 
 - (void)dealloc {
+    if (self.frameColorSpace != NULL) {
+        CGColorSpaceRelease(self.frameColorSpace);
+        self.frameColorSpace = NULL;
+    }
     [self stopPlayback];
 }
 
@@ -261,10 +266,10 @@
 
 - (void)handleDisplayLink:(CADisplayLink *)link {
     (void)link;
-    [self.engine stepFrame];
+    const uint32_t *pixels = NULL;
     size_t pixelCount = 0;
-    const uint32_t *pixels = [self.engine currentFramePointerWithPixelCount:&pixelCount];
-    if (pixels == NULL || pixelCount == 0) {
+    if (![self.engine stepFrameAndGetPointer:&pixels pixelCount:&pixelCount] ||
+        pixels == NULL || pixelCount == 0) {
         return;
     }
     [self presentFramePixels:pixels pixelCount:pixelCount];
@@ -309,14 +314,15 @@
         return;
     }
     const size_t bytesPerRow = width * 4;
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    if (colorSpace == NULL) {
+    if (self.frameColorSpace == NULL) {
+        self.frameColorSpace = CGColorSpaceCreateDeviceRGB();
+    }
+    if (self.frameColorSpace == NULL) {
         return;
     }
 
     CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pixels, width * height * sizeof(uint32_t), NULL);
     if (provider == NULL) {
-        CGColorSpaceRelease(colorSpace);
         return;
     }
 
@@ -325,7 +331,7 @@
                                         8,
                                         32,
                                         bytesPerRow,
-                                        colorSpace,
+                                        self.frameColorSpace,
                                         static_cast<CGBitmapInfo>(kCGBitmapByteOrder32Little |
                                                                   static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedFirst)),
                                         provider,
@@ -338,7 +344,6 @@
     }
 
     CGDataProviderRelease(provider);
-    CGColorSpaceRelease(colorSpace);
 }
 
 @end

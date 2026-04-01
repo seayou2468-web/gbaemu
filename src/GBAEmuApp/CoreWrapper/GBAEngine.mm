@@ -107,6 +107,27 @@
     }
 }
 
+- (BOOL)stepFrameAndGetPointer:(const uint32_t * _Nullable * _Nonnull)pixels
+                    pixelCount:(size_t * _Nullable)pixelCount {
+    if (pixels == NULL) {
+        return NO;
+    }
+    *pixels = NULL;
+    if (_handle == NULL) {
+        if (pixelCount != NULL) {
+            *pixelCount = 0;
+        }
+        return NO;
+    }
+    GBA_StepFrame(_handle);
+    const uint32_t *frame = GBA_GetFrameBufferRGBA(_handle, pixelCount);
+    if (frame == NULL) {
+        return NO;
+    }
+    *pixels = frame;
+    return YES;
+}
+
 - (NSData * _Nullable)copyCurrentFrameData {
     if (_handle == NULL) {
         return nil;
