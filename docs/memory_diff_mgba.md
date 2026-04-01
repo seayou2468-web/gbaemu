@@ -16,6 +16,7 @@
 - IOの`Write8`を `WriteIO16` 経由に統一し、WAITCNT/IF/Timer/DMA 等の副作用経路を1箇所へ集約。
 - IOの主要レジスタ書き込み制約を追加（`VCOUNT/KEYINPUT` read-only, `DISPSTAT` status bit保持, `IE/WAITCNT/IME` マスク）。
 - 追加のPPU/ブレンド/タイマ制約を反映（`DISPCNT` bit3固定, `WININ/WINOUT`, `BLDCNT/BLDALPHA/BLDY`, `TMxCNT_H` マスク）。
+- BG2/BG3 参照座標レジスタ高位half (`BG2X/Y`, `BG3X/Y` の +2側) を 12-bit 断片としてマスクし、無効上位bitを抑止。
 - 追加で `BG0/1CNT`, `MOSAIC`, `KEYCNT`, `DMAxCNT_H` の有効bitマスクを反映し、無効bit書込みを抑制。
 - `WriteIO8` を独立化し、`IF` byte単位W1C / `IME` 上位byte無視 / `IE`・`WAITCNT` 上位byteマスク / `DISPSTAT` 下位status保持 を個別処理。
 - さらに `SOUNDBIAS`, `NR52(SOUNDCNT_X)`, `RCNT` のマスク/読取専用bit保持を追加。

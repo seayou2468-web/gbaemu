@@ -152,6 +152,8 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (o == 0x04C) value &= 0x0F0Fu;
   // WININ/WINOUT: each window nibble uses lower 6 bits.
   if (o == 0x048 || o == 0x04A) value &= 0x3F3Fu;
+  // BG2/BG3 reference point high halves are 12-bit signed fragments.
+  if (o == 0x02A || o == 0x02E || o == 0x03A || o == 0x03E) value &= 0x0FFFu;
   // BLDCNT: bits14-15 unused.
   if (o == 0x050) value &= 0x3FFFu;
   // BLDALPHA: EVA/EVB are 5-bit each.
