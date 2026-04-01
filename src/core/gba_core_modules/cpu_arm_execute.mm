@@ -341,7 +341,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const bool load = (opcode & (1u << 20)) != 0;
     const uint32_t rn = ArmRegIndex(opcode, 16);
     uint32_t rlist = opcode & 0xFFFFu;
-    uint32_t addr = cpu_.regs[rn];
+    uint32_t addr = (rn == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
     const bool user_register_transfer = s && ((rlist & (1u << 15)) == 0);
     if (rlist == 0) {
       // ARM7TDMI quirk: empty list transfers PC and applies +0x40 writeback.

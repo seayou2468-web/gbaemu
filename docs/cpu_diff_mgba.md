@@ -26,6 +26,7 @@
 - `LDMIA` で base register が rlist に含まれる場合の writeback 例外を反映。
 
 ### ARM
+- ARM block transfer で `Rn=PC` のベースアドレス評価を `PC+8` に補正。
 - ARM register-specified shift で `shift amount=0` のとき carry保持/値不変となるセマンティクスを補正。
 - ARM transfer命令で `Rn=PC` かつ writeback/post-index が絡む UNPREDICTABLE ケースを安全側で抑止（PC破壊回避）。
 - ARM `BX/SWP/LDR/STR` で `Rn/Rm=PC` ベース参照値を `PC+8` に補正。
