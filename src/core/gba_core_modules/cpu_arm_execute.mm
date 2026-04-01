@@ -529,16 +529,21 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
     if (cpu_.halted) break;
 
     const bool thumb = (cpu_.cpsr & (1u << 5)) != 0;
+    const uint64_t ws_before = waitstates_accum_;
     if (thumb) {
       const uint16_t op = Read16(cpu_.regs[15]);
       ExecuteThumbInstruction(op);
-      const uint32_t spent = EstimateThumbCycles(op);
+      const uint32_t base_spent = EstimateThumbCycles(op);
+      const uint64_t ws_delta = waitstates_accum_ - ws_before;
+      const uint32_t spent = base_spent + static_cast<uint32_t>(ws_delta);
       cycles = (spent >= cycles) ? 0 : (cycles - spent);
       executed_cycles_ += spent;
     } else {
       const uint32_t op = Read32(cpu_.regs[15]);
       ExecuteArmInstruction(op);
-      const uint32_t spent = EstimateArmCycles(op);
+      const uint32_t base_spent = EstimateArmCycles(op);
+      const uint64_t ws_delta = waitstates_accum_ - ws_before;
+      const uint32_t spent = base_spent + static_cast<uint32_t>(ws_delta);
       cycles = (spent >= cycles) ? 0 : (cycles - spent);
       executed_cycles_ += spent;
     }

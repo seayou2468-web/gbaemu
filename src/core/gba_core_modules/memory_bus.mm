@@ -29,8 +29,13 @@ void GBACore::AddWaitstates(uint32_t addr, int size, bool is_write) const {
   const bool seq = last_access_valid_ && (((last_access_addr_ + static_cast<uint32_t>(last_access_size_)) & ~1u) == (addr & ~1u));
   if (region >= 0x8u && region <= 0xDu) {
     const size_t ws = (region - 0x8u) >> 1u;
-    if (size == 4) waitstates_accum_ += seq ? ws_seq_32_[ws] : ws_nonseq_32_[ws];
-    else waitstates_accum_ += seq ? ws_seq_16_[ws] : ws_nonseq_16_[ws];
+    uint32_t cost = size == 4 ? (seq ? ws_seq_32_[ws] : ws_nonseq_32_[ws])
+                              : (seq ? ws_seq_16_[ws] : ws_nonseq_16_[ws]);
+    if (!is_write && gamepak_prefetch_enabled_ && seq && cost > 1u) {
+      // 簡易近似: prefetch有効時の連続読み出しは1サイクル短縮
+      --cost;
+    }
+    waitstates_accum_ += cost;
     return;
   }
   if (size == 4) {
