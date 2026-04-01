@@ -70,6 +70,10 @@ uint32_t GBACore::EstimateArmCycles(uint32_t opcode) const {
 
 void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   const uint32_t cond = opcode >> 28;
+  if (cond == 0xFu) {
+    HandleUndefinedInstruction(false);
+    return;
+  }
   if (!CheckCondition(cond)) {
     cpu_.regs[15] += 4;
     return;
@@ -188,14 +192,15 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   if ((opcode & 0x0DB0F000u) == 0x0120F000u) {  // MSR CPSR/SPSR_flg, Rm
     const bool spsr = (opcode & (1u << 22)) != 0;
     const uint32_t rm = opcode & 0xFu;
+    const uint32_t rm_value = (rm == 15) ? (cpu_.regs[15] + 12u) : cpu_.regs[rm];
     uint32_t mask = ArmPsrWriteMask(opcode);
     if (!IsPrivilegedMode(GetCpuMode())) mask &= 0xF0000000u;
     if (spsr && HasSpsr(GetCpuMode())) {
       auto& psr = cpu_.spsr[GetCpuMode() & 0x1Fu];
-      psr = (psr & ~mask) | (cpu_.regs[rm] & mask);
+      psr = (psr & ~mask) | (rm_value & mask);
     } else if (!spsr) {
       const uint32_t old_mode = GetCpuMode();
-      cpu_.cpsr = (cpu_.cpsr & ~mask) | (cpu_.regs[rm] & mask);
+      cpu_.cpsr = (cpu_.cpsr & ~mask) | (rm_value & mask);
       if ((mask & 0x1Fu) && GetCpuMode() != old_mode) {
         SwitchCpuMode(GetCpuMode());
       }
@@ -425,7 +430,10 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const bool set_flags = (opcode & (1u << 20)) != 0;
     const uint32_t rn = ArmRegIndex(opcode, 16);
     const uint32_t rd = ArmRegIndex(opcode, 12);
-    const uint32_t lhs = (rn == 15) ? (cpu_.regs[15] + 8) : cpu_.regs[rn];
+    const bool operand2_reg_shift_by_reg = !immediate && ((opcode & (1u << 4)) != 0);
+    const uint32_t lhs = (rn == 15)
+                             ? (cpu_.regs[15] + (operand2_reg_shift_by_reg ? 12u : 8u))
+                             : cpu_.regs[rn];
 
     bool carry = GetFlagC();
     uint32_t rhs = 0;

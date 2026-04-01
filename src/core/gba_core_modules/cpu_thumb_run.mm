@@ -135,6 +135,10 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
   // conditional branch
   if ((opcode & 0xF000u) == 0xD000u && (opcode & 0x0F00u) != 0x0F00u) {
     const uint32_t cond = (opcode >> 8) & 0xFu;
+    if (cond == 0xEu) {
+      HandleUndefinedInstruction(true);
+      return;
+    }
     const int32_t off = static_cast<int8_t>(opcode & 0xFFu) << 1;
     if (CheckCondition(cond)) {
       cpu_.regs[15] = cpu_.regs[15] + 4 + static_cast<uint32_t>(off);
