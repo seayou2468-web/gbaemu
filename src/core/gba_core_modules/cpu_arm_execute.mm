@@ -4,6 +4,9 @@ namespace gba {
 
 namespace {
 inline uint32_t ArmRegIndex(uint32_t op, uint32_t shift) { return (op >> shift) & 0xFu; }
+inline uint32_t ArmReadBasicOperandReg(const std::array<uint32_t, 16>& regs, uint32_t r) {
+  return (r == 15u) ? (regs[15] + 8u) : regs[r];
+}
 inline uint32_t ArmApplyRegisterShift(uint32_t value, uint32_t type, uint32_t amount, bool carry_in, bool* carry_out) {
   if ((amount & 0xFFu) == 0) {
     if (carry_out) *carry_out = carry_in;
@@ -133,8 +136,8 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     const uint32_t rs = ArmRegIndex(opcode, 8);
     const uint32_t rm = ArmRegIndex(opcode, 0);
     if (rd != 15u) {
-      uint32_t result = cpu_.regs[rm] * cpu_.regs[rs];
-      if (accumulate) result += cpu_.regs[rn];
+      uint32_t result = ArmReadBasicOperandReg(cpu_.regs, rm) * ArmReadBasicOperandReg(cpu_.regs, rs);
+      if (accumulate) result += ArmReadBasicOperandReg(cpu_.regs, rn);
       cpu_.regs[rd] = result;
       if (set_flags) SetNZFlags(result);
     }
@@ -154,10 +157,10 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     if (rd_hi != 15u && rd_lo != 15u) {
       uint64_t product = 0;
       if (signed_mul) {
-        product = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rm])) *
-                                        static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rs])));
+        product = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(ArmReadBasicOperandReg(cpu_.regs, rm))) *
+                                        static_cast<int64_t>(static_cast<int32_t>(ArmReadBasicOperandReg(cpu_.regs, rs))));
       } else {
-        product = static_cast<uint64_t>(cpu_.regs[rm]) * static_cast<uint64_t>(cpu_.regs[rs]);
+        product = static_cast<uint64_t>(ArmReadBasicOperandReg(cpu_.regs, rm)) * static_cast<uint64_t>(ArmReadBasicOperandReg(cpu_.regs, rs));
       }
       if (accumulate) {
         const uint64_t old = (static_cast<uint64_t>(cpu_.regs[rd_hi]) << 32) | cpu_.regs[rd_lo];
@@ -588,7 +591,7 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
       if (cpu_.regs[15] != pc_before + 4u) {
         // 分岐/例外でパイプラインがフラッシュされるため次アクセスは非連続扱い。
         last_access_valid_ = false;
-        pipeline_refill = 1;
+        pipeline_refill = 2;
       }
       const uint32_t base_spent = mul_spent_override ? mul_spent_override : EstimateArmCycles(op);
       const uint64_t ws_delta = waitstates_accum_ - ws_before;
