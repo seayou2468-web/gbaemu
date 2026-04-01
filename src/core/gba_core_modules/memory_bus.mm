@@ -104,6 +104,16 @@ void GBACore::WriteIO8(uint32_t addr, uint8_t value) {
     return;
   }
 
+  // Direct Sound FIFO byte writes.
+  if (o >= 0x0A0 && o <= 0x0A7) {
+    const bool fifo_a = o < 0x0A4;
+    auto& fifo = fifo_a ? fifo_a_ : fifo_b_;
+    fifo.push_back(value);
+    while (fifo.size() > mgba_compat::kAudioFifoCapacityBytes) fifo.pop_front();
+    io_regs_[o] = value;
+    return;
+  }
+
   // Byte masks for partially writable upper bytes.
   if (o == 0x201) value &= 0x3Fu;  // IE high: IRQ bits 8..13
   if (o == 0x205) value &= 0x7Fu;  // WAITCNT high: bit15 unused
