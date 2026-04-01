@@ -451,15 +451,16 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
 
     uint64_t r64 = 0;
     uint32_t result = 0;
+    const uint32_t carry_in = GetFlagC() ? 1u : 0u;
     switch (op) {
       case 0x0: result = lhs & rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // AND
       case 0x1: result = lhs ^ rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // EOR
       case 0x2: r64 = static_cast<uint64_t>(lhs) - rhs; result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(lhs, rhs, r64); break; // SUB
       case 0x3: r64 = static_cast<uint64_t>(rhs) - lhs; result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(rhs, lhs, r64); break; // RSB
       case 0x4: r64 = static_cast<uint64_t>(lhs) + rhs; result = static_cast<uint32_t>(r64); if (set_flags) SetAddFlags(lhs, rhs, r64); break; // ADD
-      case 0x5: r64 = static_cast<uint64_t>(lhs) + rhs + (GetFlagC() ? 1u : 0u); result = static_cast<uint32_t>(r64); if (set_flags) SetAddFlags(lhs, rhs + (GetFlagC() ? 1u : 0u), r64); break; // ADC
-      case 0x6: r64 = static_cast<uint64_t>(lhs) - rhs - (GetFlagC() ? 0u : 1u); result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(lhs, rhs + (GetFlagC() ? 0u : 1u), r64); break; // SBC
-      case 0x7: r64 = static_cast<uint64_t>(rhs) - lhs - (GetFlagC() ? 0u : 1u); result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(rhs, lhs + (GetFlagC() ? 0u : 1u), r64); break; // RSC
+      case 0x5: r64 = static_cast<uint64_t>(lhs) + rhs + carry_in; result = static_cast<uint32_t>(r64); if (set_flags) SetAddFlags(lhs, rhs + carry_in, r64); break; // ADC
+      case 0x6: r64 = static_cast<uint64_t>(lhs) - rhs - (1u - carry_in); result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(lhs, rhs + (1u - carry_in), r64); break; // SBC
+      case 0x7: r64 = static_cast<uint64_t>(rhs) - lhs - (1u - carry_in); result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(rhs, lhs + (1u - carry_in), r64); break; // RSC
       case 0x8: result = lhs & rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // TST
       case 0x9: result = lhs ^ rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // TEQ
       case 0xA: r64 = static_cast<uint64_t>(lhs) - rhs; if (set_flags) SetSubFlags(lhs, rhs, r64); break; // CMP

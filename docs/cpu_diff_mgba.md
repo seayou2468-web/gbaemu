@@ -13,6 +13,7 @@
 
 ## 今回詰めた差分（拡張版）
 
+- ボトルネック改善: ADC/SBC/RSC（ARM/Thumb）で Carry入力の重複読取りを排除し、1回取得で一貫適用。
 ### Thumb
 - Thumb high-register `CMP` で `Rd=PC` の左オペランドを `PC+4` に補正。
 - Thumb ALU register-shift（`LSL/LSR/ASR/ROR`）で `amount=0` 時に値不変・carry保持となる register-shift semantics を補正。

@@ -191,6 +191,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint32_t s = cpu_.regs[rs];
     const uint32_t d = cpu_.regs[rd];
     uint64_t r64 = 0;
+    const uint32_t carry_in = GetFlagC() ? 1u : 0u;
     switch (op) {
       case 0x0: cpu_.regs[rd] = d & s; SetNZFlags(cpu_.regs[rd]); break;
       case 0x1: cpu_.regs[rd] = d ^ s; SetNZFlags(cpu_.regs[rd]); break;
@@ -215,8 +216,8 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
         SetFlagC(carry);
         break;
       }
-      case 0x5: r64 = static_cast<uint64_t>(d) + s + (GetFlagC() ? 1u : 0u); cpu_.regs[rd] = static_cast<uint32_t>(r64); SetAddFlags(d, s + (GetFlagC() ? 1u : 0u), r64); break;
-      case 0x6: r64 = static_cast<uint64_t>(d) - s - (GetFlagC() ? 0u : 1u); cpu_.regs[rd] = static_cast<uint32_t>(r64); SetSubFlags(d, s + (GetFlagC() ? 0u : 1u), r64); break;
+      case 0x5: r64 = static_cast<uint64_t>(d) + s + carry_in; cpu_.regs[rd] = static_cast<uint32_t>(r64); SetAddFlags(d, s + carry_in, r64); break;
+      case 0x6: r64 = static_cast<uint64_t>(d) - s - (1u - carry_in); cpu_.regs[rd] = static_cast<uint32_t>(r64); SetSubFlags(d, s + (1u - carry_in), r64); break;
       case 0x7: {
         bool carry = GetFlagC();
         cpu_.regs[rd] = ThumbApplyRegisterShift(d, 3, s & 0xFFu, GetFlagC(), &carry);
