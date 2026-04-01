@@ -1,4 +1,4 @@
-#include "gba_core_c_api.h"
+#include "./gba_core_c_api.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "gba_core.h"
+#include "./gba_core.h"
 
 namespace {
 

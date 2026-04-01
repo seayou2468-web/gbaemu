@@ -1,4 +1,4 @@
-#import "./GBAEngine.h"
+#import "GBAEngine.h"
 
 #include <cstdint>
 

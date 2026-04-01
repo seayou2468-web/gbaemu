@@ -5,7 +5,7 @@
 #include <vector>
 #include <stdint.h>
 
-#include "gba_core_c_api.h"
+#include "./gba_core_c_api.h"
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 160
