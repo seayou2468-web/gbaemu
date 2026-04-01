@@ -38,8 +38,11 @@ void GBACore::SwitchCpuMode(uint32_t new_mode) {
   new_mode = NormalizeSpLrBankMode(new_mode);
   const uint32_t old_mode = NormalizeSpLrBankMode(cpu_.active_mode);
 
+  // R8-R12 have separate FIQ bank. All non-FIQ modes share the same bank.
   if (old_mode == 0x11u) {
     for (size_t i = 0; i < 5; ++i) cpu_.banked_fiq_r8_r12[i] = cpu_.regs[8 + i];
+  } else {
+    for (size_t i = 0; i < 5; ++i) cpu_.banked_usr_r8_r12[i] = cpu_.regs[8 + i];
   }
   if (!IsUserLikeMode(old_mode)) {
     cpu_.banked_sp[old_mode] = cpu_.regs[13];
@@ -48,6 +51,8 @@ void GBACore::SwitchCpuMode(uint32_t new_mode) {
 
   if (new_mode == 0x11u) {
     for (size_t i = 0; i < 5; ++i) cpu_.regs[8 + i] = cpu_.banked_fiq_r8_r12[i];
+  } else {
+    for (size_t i = 0; i < 5; ++i) cpu_.regs[8 + i] = cpu_.banked_usr_r8_r12[i];
   }
 
   if (!IsUserLikeMode(new_mode)) {

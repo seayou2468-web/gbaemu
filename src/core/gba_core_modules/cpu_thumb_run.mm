@@ -2,6 +2,55 @@
 
 namespace gba {
 
+namespace {
+inline uint32_t ThumbApplyRegisterShift(uint32_t value, uint32_t type, uint32_t amount, bool carry_in, bool* carry_out) {
+  if ((amount & 0xFFu) == 0) {
+    if (carry_out) *carry_out = carry_in;
+    return value;
+  }
+  switch (type & 3u) {
+    case 0:  // LSL
+      if (amount < 32) {
+        if (carry_out) *carry_out = ((value >> (32 - amount)) & 1u) != 0;
+        return value << amount;
+      }
+      if (amount == 32) {
+        if (carry_out) *carry_out = (value & 1u) != 0;
+        return 0;
+      }
+      if (carry_out) *carry_out = false;
+      return 0;
+    case 1:  // LSR
+      if (amount < 32) {
+        if (carry_out) *carry_out = ((value >> (amount - 1)) & 1u) != 0;
+        return value >> amount;
+      }
+      if (amount == 32) {
+        if (carry_out) *carry_out = ((value >> 31) & 1u) != 0;
+        return 0;
+      }
+      if (carry_out) *carry_out = false;
+      return 0;
+    case 2:  // ASR
+      if (amount < 32) {
+        if (carry_out) *carry_out = ((value >> (amount - 1)) & 1u) != 0;
+        return static_cast<uint32_t>(static_cast<int32_t>(value) >> amount);
+      }
+      if (carry_out) *carry_out = ((value >> 31) & 1u) != 0;
+      return (value & 0x80000000u) ? 0xFFFFFFFFu : 0u;
+    default: {  // ROR
+      const uint32_t rot = amount & 31u;
+      if (rot == 0) {
+        if (carry_out) *carry_out = ((value >> 31) & 1u) != 0;
+        return value;
+      }
+      if (carry_out) *carry_out = ((value >> (rot - 1)) & 1u) != 0;
+      return (value >> rot) | (value << (32u - rot));
+    }
+  }
+}
+}
+
 uint32_t GBACore::EstimateThumbCycles(uint16_t opcode) const {
   if ((opcode & 0xF000u) == 0xD000u || (opcode & 0xF800u) == 0xE000u) return 3;
   if ((opcode & 0xF800u) == 0xF000u || (opcode & 0xF800u) == 0xF800u) return 3;
@@ -10,6 +59,45 @@ uint32_t GBACore::EstimateThumbCycles(uint16_t opcode) const {
 }
 
 void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
+  // ADD/SUB register/immediate (Thumb format 2)
+  if ((opcode & 0xF800u) == 0x1800u) {
+    const bool is_sub = (opcode & 0x0200u) != 0;
+    const bool is_imm = (opcode & 0x0400u) != 0;
+    const uint32_t rn = (opcode >> 3) & 0x7u;
+    const uint32_t rd = opcode & 0x7u;
+    const uint32_t op2 = is_imm ? ((opcode >> 6) & 0x7u) : cpu_.regs[(opcode >> 6) & 0x7u];
+    const uint32_t lhs = cpu_.regs[rn];
+    uint64_t r64 = 0;
+    if (is_sub) {
+      r64 = static_cast<uint64_t>(lhs) - op2;
+      cpu_.regs[rd] = static_cast<uint32_t>(r64);
+      SetSubFlags(lhs, op2, r64);
+    } else {
+      r64 = static_cast<uint64_t>(lhs) + op2;
+      cpu_.regs[rd] = static_cast<uint32_t>(r64);
+      SetAddFlags(lhs, op2, r64);
+    }
+    cpu_.regs[15] += 2;
+    return;
+  }
+
+  // move shifted register (LSL/LSR/ASR immediate, Thumb format 1)
+  if ((opcode & 0xF800u) <= 0x1000u) {
+    const uint32_t shift_type = (opcode >> 11) & 0x3u;
+    const uint32_t imm5 = (opcode >> 6) & 0x1Fu;
+    const uint32_t rs = (opcode >> 3) & 0x7u;
+    const uint32_t rd = opcode & 0x7u;
+    uint32_t shift_amount = imm5;
+    if (shift_type == 1u && shift_amount == 0) shift_amount = 32;  // LSR #0 => LSR #32
+    if (shift_type == 2u && shift_amount == 0) shift_amount = 32;  // ASR #0 => ASR #32
+    bool carry = GetFlagC();
+    cpu_.regs[rd] = ApplyShift(cpu_.regs[rs], shift_type, shift_amount, &carry);
+    SetNZFlags(cpu_.regs[rd]);
+    SetFlagC(carry);
+    cpu_.regs[15] += 2;
+    return;
+  }
+
   // BL prefix (H=10) / suffix (H=11)
   if ((opcode & 0xF800u) == 0xF000u) {
     const int32_t off = static_cast<int16_t>((opcode & 0x07FFu) << 5) << 7;
@@ -63,17 +151,25 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint32_t h2 = (opcode >> 6) & 1u;
     const uint32_t rd = (opcode & 0x7u) | (h1 << 3);
     const uint32_t rm = ((opcode >> 3) & 0x7u) | (h2 << 3);
+    const uint32_t rm_value = (rm == 15) ? (cpu_.regs[15] + 4u) : cpu_.regs[rm];
     if (op == 0) {
-      cpu_.regs[rd] += cpu_.regs[rm];
-      if (rd == 15) cpu_.regs[15] &= ~1u;
+      cpu_.regs[rd] += rm_value;
+      if (rd == 15) {
+        cpu_.regs[15] &= ~1u;
+        return;
+      }
     } else if (op == 1) {
-      const uint64_t r64 = static_cast<uint64_t>(cpu_.regs[rd]) - cpu_.regs[rm];
-      SetSubFlags(cpu_.regs[rd], cpu_.regs[rm], r64);
+      const uint32_t lhs = (rd == 15) ? (cpu_.regs[15] + 4u) : cpu_.regs[rd];
+      const uint64_t r64 = static_cast<uint64_t>(lhs) - rm_value;
+      SetSubFlags(lhs, rm_value, r64);
     } else if (op == 2) {
-      cpu_.regs[rd] = cpu_.regs[rm];
-      if (rd == 15) cpu_.regs[15] &= ~1u;
+      cpu_.regs[rd] = rm_value;
+      if (rd == 15) {
+        cpu_.regs[15] &= ~1u;
+        return;
+      }
     } else {
-      const uint32_t target = cpu_.regs[rm];
+      const uint32_t target = rm_value;
       if (target & 1u) {
         cpu_.cpsr |= (1u << 5);
         cpu_.regs[15] = target & ~1u;
@@ -98,12 +194,36 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     switch (op) {
       case 0x0: cpu_.regs[rd] = d & s; SetNZFlags(cpu_.regs[rd]); break;
       case 0x1: cpu_.regs[rd] = d ^ s; SetNZFlags(cpu_.regs[rd]); break;
-      case 0x2: cpu_.regs[rd] = ApplyShift(d, 0, s & 0xFFu, nullptr); SetNZFlags(cpu_.regs[rd]); break;
-      case 0x3: cpu_.regs[rd] = ApplyShift(d, 1, s & 0xFFu, nullptr); SetNZFlags(cpu_.regs[rd]); break;
-      case 0x4: cpu_.regs[rd] = ApplyShift(d, 2, s & 0xFFu, nullptr); SetNZFlags(cpu_.regs[rd]); break;
+      case 0x2: {
+        bool carry = GetFlagC();
+        cpu_.regs[rd] = ThumbApplyRegisterShift(d, 0, s & 0xFFu, carry, &carry);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(carry);
+        break;
+      }
+      case 0x3: {
+        bool carry = GetFlagC();
+        cpu_.regs[rd] = ThumbApplyRegisterShift(d, 1, s & 0xFFu, carry, &carry);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(carry);
+        break;
+      }
+      case 0x4: {
+        bool carry = GetFlagC();
+        cpu_.regs[rd] = ThumbApplyRegisterShift(d, 2, s & 0xFFu, carry, &carry);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(carry);
+        break;
+      }
       case 0x5: r64 = static_cast<uint64_t>(d) + s + (GetFlagC() ? 1u : 0u); cpu_.regs[rd] = static_cast<uint32_t>(r64); SetAddFlags(d, s + (GetFlagC() ? 1u : 0u), r64); break;
       case 0x6: r64 = static_cast<uint64_t>(d) - s - (GetFlagC() ? 0u : 1u); cpu_.regs[rd] = static_cast<uint32_t>(r64); SetSubFlags(d, s + (GetFlagC() ? 0u : 1u), r64); break;
-      case 0x7: cpu_.regs[rd] = ApplyShift(d, 3, s & 0xFFu, nullptr); SetNZFlags(cpu_.regs[rd]); break;
+      case 0x7: {
+        bool carry = GetFlagC();
+        cpu_.regs[rd] = ThumbApplyRegisterShift(d, 3, s & 0xFFu, carry, &carry);
+        SetNZFlags(cpu_.regs[rd]);
+        SetFlagC(carry);
+        break;
+      }
       case 0x8: SetNZFlags(d & s); break;
       case 0x9: r64 = static_cast<uint64_t>(0) - s; cpu_.regs[rd] = static_cast<uint32_t>(r64); SetSubFlags(0, s, r64); break;
       case 0xA: r64 = static_cast<uint64_t>(d) - s; SetSubFlags(d, s, r64); break;
@@ -163,10 +283,15 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
       case 1: Write16(addr, static_cast<uint16_t>(cpu_.regs[rd])); break;                  // STRH
       case 2: Write8(addr, static_cast<uint8_t>(cpu_.regs[rd])); break;                    // STRB
       case 3: cpu_.regs[rd] = static_cast<int32_t>(static_cast<int8_t>(Read8(addr))); break;  // LDSB
-      case 4: cpu_.regs[rd] = Read32(addr); break;                                          // LDR
+      case 4: cpu_.regs[rd] = (addr & 3u) ? RotateRight(Read32(addr & ~3u), (addr & 3u) * 8u) : Read32(addr); break;  // LDR
       case 5: cpu_.regs[rd] = Read16(addr); break;                                          // LDRH
       case 6: cpu_.regs[rd] = Read8(addr); break;                                           // LDRB
-      case 7: cpu_.regs[rd] = static_cast<int32_t>(static_cast<int16_t>(Read16(addr))); break; // LDSH
+      case 7: {
+        // ARM7TDMI: odd address on LDRSH behaves like signed byte load.
+        cpu_.regs[rd] = (addr & 1u) ? static_cast<int32_t>(static_cast<int8_t>(Read8(addr)))
+                                    : static_cast<int32_t>(static_cast<int16_t>(Read16(addr)));
+        break;
+      }
     }
     cpu_.regs[15] += 2;
     return;
@@ -180,7 +305,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint32_t rd = opcode & 0x7u;
     const uint32_t addr = cpu_.regs[rb] + (imm5 << 2);
     if (is_load) {
-      cpu_.regs[rd] = Read32(addr);
+      cpu_.regs[rd] = (addr & 3u) ? RotateRight(Read32(addr & ~3u), (addr & 3u) * 8u) : Read32(addr);
     } else {
       Write32(addr, cpu_.regs[rd]);
     }
@@ -220,7 +345,7 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint32_t rd = (opcode >> 8) & 0x7u;
     const uint32_t imm = (opcode & 0xFFu) << 2;
     const uint32_t addr = cpu_.regs[13] + imm;
-    if (is_load) cpu_.regs[rd] = Read32(addr);
+    if (is_load) cpu_.regs[rd] = (addr & 3u) ? RotateRight(Read32(addr & ~3u), (addr & 3u) * 8u) : Read32(addr);
     else Write32(addr, cpu_.regs[rd]);
     cpu_.regs[15] += 2;
     return;
@@ -253,7 +378,10 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const bool is_pop = (opcode & 0x0800u) != 0;
     if (is_pop) {
       for (uint32_t r = 0; r < 16; ++r) if (rlist & (1u << r)) { cpu_.regs[r] = Read32(cpu_.regs[13]); cpu_.regs[13] += 4; }
-      if (rlist & (1u << 15)) cpu_.regs[15] &= ~1u;
+      if (rlist & (1u << 15)) {
+        cpu_.regs[15] &= ~1u;
+        return;
+      }
     } else {
       for (int r = 15; r >= 0; --r) if (rlist & (1u << r)) { cpu_.regs[13] -= 4; Write32(cpu_.regs[13], cpu_.regs[r]); }
     }
@@ -267,34 +395,27 @@ void GBACore::ExecuteThumbInstruction(uint16_t opcode) {
     const uint32_t rn = (opcode >> 8) & 0x7u;
     const uint32_t rlist = opcode & 0xFFu;
     uint32_t addr = cpu_.regs[rn];
+    if (rlist == 0) {
+      // ARM7TDMI quirk: empty list behaves as transferring PC and writeback by +0x40.
+      if (is_load) {
+        cpu_.regs[15] = Read32(addr) & ~1u;
+        cpu_.regs[rn] += 0x40u;
+        return;
+      } else {
+        Write32(addr, cpu_.regs[15] + 2u);
+      }
+      cpu_.regs[rn] += 0x40u;
+      cpu_.regs[15] += 2;
+      return;
+    }
     for (uint32_t r = 0; r < 8; ++r) {
       if ((rlist & (1u << r)) == 0) continue;
-      if (is_load) cpu_.regs[r] = Read32(addr);
+      if (is_load) cpu_.regs[r] = (addr & 3u) ? RotateRight(Read32(addr & ~3u), (addr & 3u) * 8u) : Read32(addr);
       else Write32(addr, cpu_.regs[r]);
       addr += 4;
     }
-    cpu_.regs[rn] = addr;
-    cpu_.regs[15] += 2;
-    return;
-  }
-
-  // ADD/SUB register
-  if ((opcode & 0xF800u) == 0x1800u) {
-    const bool is_sub = (opcode & 0x0200u) != 0;
-    const bool is_imm = (opcode & 0x0400u) != 0;
-    const uint32_t rn = (opcode >> 3) & 0x7u;
-    const uint32_t rd = opcode & 0x7u;
-    const uint32_t op2 = is_imm ? ((opcode >> 6) & 0x7u) : cpu_.regs[(opcode >> 6) & 0x7u];
-    const uint32_t lhs = cpu_.regs[rn];
-    uint64_t r64 = 0;
-    if (is_sub) {
-      r64 = static_cast<uint64_t>(lhs) - op2;
-      cpu_.regs[rd] = static_cast<uint32_t>(r64);
-      SetSubFlags(lhs, op2, r64);
-    } else {
-      r64 = static_cast<uint64_t>(lhs) + op2;
-      cpu_.regs[rd] = static_cast<uint32_t>(r64);
-      SetAddFlags(lhs, op2, r64);
+    if (!is_load || ((rlist & (1u << rn)) == 0)) {
+      cpu_.regs[rn] = addr;
     }
     cpu_.regs[15] += 2;
     return;
