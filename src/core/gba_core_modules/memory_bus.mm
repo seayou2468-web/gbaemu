@@ -217,6 +217,11 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
   if (o == 0x082) {
     if (value & (1u << 11)) fifo_a_.clear();
     if (value & (1u << 15)) fifo_b_.clear();
+    // FIFO reset bits are strobe-like; they do not stay latched.
+    uint16_t cur = static_cast<uint16_t>(io_regs_[0x82] | (io_regs_[0x83] << 8));
+    cur = static_cast<uint16_t>(cur & ~((1u << 11) | (1u << 15)));
+    io_regs_[0x82] = static_cast<uint8_t>(cur & 0xFFu);
+    io_regs_[0x83] = static_cast<uint8_t>(cur >> 8);
   }
 
   // DMA source/destination address register masks.
