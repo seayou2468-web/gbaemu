@@ -51,10 +51,10 @@ inline uint32_t ArmApplyRegisterShift(uint32_t value, uint32_t type, uint32_t am
   }
 }
 inline uint32_t ArmPsrWriteMask(uint32_t opcode) {
+  // ARM7TDMI (ARMv4T) supports only control and flags fields in MSR.
+  // x/s field masks are ARMv5+ and should be ignored on GBA.
   uint32_t mask = 0;
   if (opcode & (1u << 16)) mask |= 0x000000FFu;  // c
-  if (opcode & (1u << 17)) mask |= 0x0000FF00u;  // x
-  if (opcode & (1u << 18)) mask |= 0x00FF0000u;  // s
   if (opcode & (1u << 19)) mask |= 0xFF000000u;  // f
   return mask;
 }
