@@ -134,6 +134,20 @@ size_t GBA_GetFrameBufferSize(const GBACoreHandle* handle) {
   return handle->core.GetFrameBuffer().size();
 }
 
+const uint32_t* GBA_GetFrameBufferRGBA(const GBACoreHandle* handle, size_t* out_pixel_count) {
+  if (handle == nullptr) {
+    if (out_pixel_count) {
+      *out_pixel_count = 0;
+    }
+    return nullptr;
+  }
+  const std::vector<uint32_t>& frame = handle->core.GetFrameBuffer();
+  if (out_pixel_count) {
+    *out_pixel_count = frame.size();
+  }
+  return frame.empty() ? nullptr : frame.data();
+}
+
 bool GBA_CopyFrameBufferRGBA(const GBACoreHandle* handle, uint32_t* out_pixels, size_t pixel_count) {
   if (handle == nullptr || out_pixels == nullptr) {
     return false;

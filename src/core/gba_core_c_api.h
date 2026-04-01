@@ -21,6 +21,7 @@ void GBA_Reset(GBACoreHandle* handle);
 void GBA_StepFrame(GBACoreHandle* handle);
 void GBA_SetKeys(GBACoreHandle* handle, uint16_t keys_pressed_mask);
 size_t GBA_GetFrameBufferSize(const GBACoreHandle* handle);
+const uint32_t* GBA_GetFrameBufferRGBA(const GBACoreHandle* handle, size_t* out_pixel_count);
 bool GBA_CopyFrameBufferRGBA(const GBACoreHandle* handle, uint32_t* out_pixels, size_t pixel_count);
 
 const char* GBA_GetLastError(const GBACoreHandle* handle);

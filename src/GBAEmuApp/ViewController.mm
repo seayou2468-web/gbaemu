@@ -16,7 +16,6 @@
 @property (nonatomic, strong) UITextView *logView;
 @property (nonatomic, strong) GBAEngine *engine;
 @property (nonatomic, strong, nullable) CADisplayLink *displayLink;
-@property (nonatomic, strong) NSData *lastFrameData;
 @property (nonatomic, strong) NSMutableString *logBuffer;
 @property (nonatomic, assign) BOOL romLoaded;
 @property (nonatomic, assign) BOOL selectingBIOS;
@@ -263,11 +262,12 @@
 - (void)handleDisplayLink:(CADisplayLink *)link {
     (void)link;
     [self.engine stepFrame];
-    NSData *frameData = [self.engine copyCurrentFrameData];
-    if (frameData.length == 0) {
+    size_t pixelCount = 0;
+    const uint32_t *pixels = [self.engine currentFramePointerWithPixelCount:&pixelCount];
+    if (pixels == NULL || pixelCount == 0) {
         return;
     }
-    [self presentFrameData:frameData];
+    [self presentFramePixels:pixels pixelCount:pixelCount];
 }
 
 - (void)stopPlayback {
@@ -287,32 +287,34 @@
 }
 
 - (void)renderCurrentFrame {
-    NSData *frameData = [self.engine copyCurrentFrameData];
-    if (frameData.length == 0) {
+    size_t pixelCount = 0;
+    const uint32_t *pixels = [self.engine currentFramePointerWithPixelCount:&pixelCount];
+    if (pixels == NULL || pixelCount == 0) {
         // Retry once after advancing one frame to avoid startup black screen.
         [self.engine stepFrame];
-        frameData = [self.engine copyCurrentFrameData];
-        if (frameData.length == 0) {
+        pixels = [self.engine currentFramePointerWithPixelCount:&pixelCount];
+        if (pixels == NULL || pixelCount == 0) {
             self.statusLabel.text = @"フレーム取得に失敗しました（ROM/BIOS状態を確認）";
             [self appendLog:[NSString stringWithFormat:@"frame copy fail: %@", [self.engine lastErrorMessage]]];
             return;
         }
     }
-    [self presentFrameData:frameData];
+    [self presentFramePixels:pixels pixelCount:pixelCount];
 }
 
-- (void)presentFrameData:(NSData *)frameData {
-    self.lastFrameData = frameData;
-
+- (void)presentFramePixels:(const uint32_t *)pixels pixelCount:(size_t)pixelCount {
     const size_t width = (size_t)GBAEngine.screenWidth;
     const size_t height = (size_t)GBAEngine.screenHeight;
+    if (pixelCount < width * height) {
+        return;
+    }
     const size_t bytesPerRow = width * 4;
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
     if (colorSpace == NULL) {
         return;
     }
 
-    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, self.lastFrameData.bytes, self.lastFrameData.length, NULL);
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pixels, width * height * sizeof(uint32_t), NULL);
     if (provider == NULL) {
         CGColorSpaceRelease(colorSpace);
         return;

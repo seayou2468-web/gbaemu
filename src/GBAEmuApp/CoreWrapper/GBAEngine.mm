@@ -125,6 +125,16 @@
     return data;
 }
 
+- (const uint32_t * _Nullable)currentFramePointerWithPixelCount:(size_t * _Nullable)pixelCount {
+    if (_handle == NULL) {
+        if (pixelCount != NULL) {
+            *pixelCount = 0;
+        }
+        return NULL;
+    }
+    return GBA_GetFrameBufferRGBA(_handle, pixelCount);
+}
+
 - (NSString *)lastErrorMessage {
     if (_handle == NULL) {
         return @"core handle is null";

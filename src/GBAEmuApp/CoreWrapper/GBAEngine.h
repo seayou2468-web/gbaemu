@@ -12,6 +12,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)reset;
 - (void)stepFrame;
 - (void)setKeysPressedMask:(uint16_t)keysPressedMask;
+- (const uint32_t * _Nullable)currentFramePointerWithPixelCount:(size_t * _Nullable)pixelCount;
 - (NSData * _Nullable)copyCurrentFrameData;
 - (NSString *)lastErrorMessage;
 @end
