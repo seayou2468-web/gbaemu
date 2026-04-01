@@ -214,14 +214,18 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   }
   if ((opcode & 0x0DB0F000u) == 0x0120F000u) {  // MSR CPSR/SPSR_flg, Rm
     const bool spsr = (opcode & (1u << 22)) != 0;
+    if (spsr && !HasSpsr(GetCpuMode())) {
+      HandleUndefinedInstruction(false);
+      return;
+    }
     const uint32_t rm = opcode & 0xFu;
     const uint32_t rm_value = (rm == 15) ? (cpu_.regs[15] + 12u) : cpu_.regs[rm];
     uint32_t mask = ArmPsrWriteMask(opcode);
     if (!IsPrivilegedMode(GetCpuMode())) mask &= 0xF0000000u;
-    if (spsr && HasSpsr(GetCpuMode())) {
+    if (spsr) {
       auto& psr = cpu_.spsr[GetCpuMode() & 0x1Fu];
       psr = (psr & ~mask) | (rm_value & mask);
-    } else if (!spsr) {
+    } else {
       const uint32_t old_mode = GetCpuMode();
       cpu_.cpsr = (cpu_.cpsr & ~mask) | (rm_value & mask);
       if ((mask & 0x1Fu) && GetCpuMode() != old_mode) {
@@ -233,13 +237,17 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
   }
   if ((opcode & 0x0DB0F000u) == 0x0320F000u) {  // MSR CPSR/SPSR_flg, #imm
     const bool spsr = (opcode & (1u << 22)) != 0;
+    if (spsr && !HasSpsr(GetCpuMode())) {
+      HandleUndefinedInstruction(false);
+      return;
+    }
     const uint32_t imm = ExpandArmImmediate(opcode & 0xFFFu);
     uint32_t mask = ArmPsrWriteMask(opcode);
     if (!IsPrivilegedMode(GetCpuMode())) mask &= 0xF0000000u;
-    if (spsr && HasSpsr(GetCpuMode())) {
+    if (spsr) {
       auto& psr = cpu_.spsr[GetCpuMode() & 0x1Fu];
       psr = (psr & ~mask) | (imm & mask);
-    } else if (!spsr) {
+    } else {
       const uint32_t old_mode = GetCpuMode();
       cpu_.cpsr = (cpu_.cpsr & ~mask) | (imm & mask);
       if ((mask & 0x1Fu) && GetCpuMode() != old_mode) {
@@ -524,6 +532,14 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
 }
 
 uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
+  auto mul_internal_cycles = [&](uint32_t value) -> uint32_t {
+    // ARM7TDMI 乗算の内部Iサイクル近似（値依存 1..4）
+    if ((value & 0xFFFFFF00u) == 0u || (value & 0xFFFFFF00u) == 0xFFFFFF00u) return 1;
+    if ((value & 0xFFFF0000u) == 0u || (value & 0xFFFF0000u) == 0xFFFF0000u) return 2;
+    if ((value & 0xFF000000u) == 0u || (value & 0xFF000000u) == 0xFF000000u) return 3;
+    return 4;
+  };
+
   while (cycles > 0) {
     ServiceInterruptIfNeeded();
     if (cpu_.halted) break;
@@ -545,12 +561,26 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
       executed_cycles_ += spent;
     } else {
       const uint32_t op = Read32(cpu_.regs[15]);
+      uint32_t mul_spent_override = 0;
+      if ((op & 0x0FC000F0u) == 0x00000090u) {
+        const uint32_t rs = ArmRegIndex(op, 8);
+        const uint32_t rs_value = (rs == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rs];
+        const uint32_t i_cycles = mul_internal_cycles(rs_value);
+        const bool accumulate = (op & (1u << 21)) != 0;
+        mul_spent_override = 1u + i_cycles + (accumulate ? 1u : 0u);
+      } else if ((op & 0x0F8000F0u) == 0x00800090u) {
+        const uint32_t rs = ArmRegIndex(op, 8);
+        const uint32_t rs_value = (rs == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rs];
+        const uint32_t i_cycles = mul_internal_cycles(rs_value);
+        const bool accumulate = (op & (1u << 21)) != 0;
+        mul_spent_override = 2u + i_cycles + (accumulate ? 1u : 0u);
+      }
       ExecuteArmInstruction(op);
       if (cpu_.regs[15] != pc_before + 4u) {
         // 分岐/例外でパイプラインがフラッシュされるため次アクセスは非連続扱い。
         last_access_valid_ = false;
       }
-      const uint32_t base_spent = EstimateArmCycles(op);
+      const uint32_t base_spent = mul_spent_override ? mul_spent_override : EstimateArmCycles(op);
       const uint64_t ws_delta = waitstates_accum_ - ws_before;
       const uint32_t spent = base_spent + static_cast<uint32_t>(ws_delta);
       cycles = (spent >= cycles) ? 0 : (cycles - spent);
