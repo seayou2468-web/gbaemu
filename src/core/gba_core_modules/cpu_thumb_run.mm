@@ -52,9 +52,24 @@ inline uint32_t ThumbApplyRegisterShift(uint32_t value, uint32_t type, uint32_t 
 }
 
 uint32_t GBACore::EstimateThumbCycles(uint16_t opcode) const {
-  if ((opcode & 0xF000u) == 0xD000u || (opcode & 0xF800u) == 0xE000u) return 3;
-  if ((opcode & 0xF800u) == 0xF000u || (opcode & 0xF800u) == 0xF800u) return 3;
-  if ((opcode & 0xF000u) == 0x5000u || (opcode & 0xF000u) == 0x6000u) return 2;
+  if ((opcode & 0xFF00u) == 0xDF00u) return 3;  // SWI
+  if ((opcode & 0xF000u) == 0xD000u || (opcode & 0xF800u) == 0xE000u) return 3;  // B<cond>/B
+  if ((opcode & 0xF800u) == 0xF000u || (opcode & 0xF800u) == 0xF800u) return 3;  // BL
+  if ((opcode & 0xFC00u) == 0x4700u) return 3;  // BX
+  if ((opcode & 0xFC00u) == 0x4000u && ((opcode >> 6) & 0xFu) == 0xDu) return 3;  // MUL
+  if ((opcode & 0xF600u) == 0xB400u) {  // PUSH/POP
+    uint32_t count = static_cast<uint32_t>(__builtin_popcount(opcode & 0xFFu));
+    if (opcode & 0x0100u) ++count;
+    return 1u + count;
+  }
+  if ((opcode & 0xF000u) == 0xC000u) {  // STMIA/LDMIA
+    const uint32_t count = static_cast<uint32_t>(__builtin_popcount(opcode & 0xFFu));
+    return 1u + (count ? count : 1u);
+  }
+  if ((opcode & 0xF000u) == 0x5000u || (opcode & 0xE000u) == 0x6000u || (opcode & 0xF000u) == 0x8000u ||
+      (opcode & 0xF800u) == 0x4800u || (opcode & 0xF000u) == 0x9000u) {
+    return 2;  // メモリアクセス系
+  }
   return 1;
 }
 

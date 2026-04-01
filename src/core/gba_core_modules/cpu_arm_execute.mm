@@ -61,10 +61,25 @@ inline uint32_t ArmPsrWriteMask(uint32_t opcode) {
 }
 
 uint32_t GBACore::EstimateArmCycles(uint32_t opcode) const {
-  // メモリアクセス命令と乗算だけ重めに見積もる（mGBAの待機モデルに寄せる）
-  if ((opcode & 0x0C000000u) == 0x04000000u) return 3;
-  if ((opcode & 0x0FC000F0u) == 0x00000090u) return 3;
-  if ((opcode & 0x0E000000u) == 0x0A000000u) return 3;
+  // ARM7TDMI近似: 基本1S + 命令種別ごとのI/N/Sを加算して概算する。
+  if ((opcode & 0x0F000000u) == 0x0F000000u) return 3;  // SWI
+  if ((opcode & 0x0FFFFFF0u) == 0x012FFF10u) return 3;  // BX
+  if ((opcode & 0x0E000000u) == 0x0A000000u) return 3;  // B/BL
+  if ((opcode & 0x0E000000u) == 0x08000000u) {          // LDM/STM
+    const uint32_t rlist = opcode & 0xFFFFu;
+    const uint32_t count = rlist ? static_cast<uint32_t>(__builtin_popcount(rlist)) : 1u;
+    return 1u + count;
+  }
+  if ((opcode & 0x0C000000u) == 0x04000000u) return 3;  // LDR/STR
+  if ((opcode & 0x0E000090u) == 0x00000090u && (opcode & 0x0F000000u) != 0x0F000000u) return 3;  // mode3
+  if ((opcode & 0x0FC000F0u) == 0x00000090u) {          // MUL/MLA
+    return (opcode & (1u << 21)) ? 3u : 2u;
+  }
+  if ((opcode & 0x0F8000F0u) == 0x00800090u) return 4;  // MULL/MLAL
+  if ((opcode & 0x0FB00FF0u) == 0x01000090u) return 4;  // SWP/SWPB
+  if ((opcode & 0x0C000000u) == 0x00000000u && (opcode & (1u << 4)) && !(opcode & (1u << 25))) {
+    return 2;  // データ処理 + レジスタ指定シフトは1Iを追加
+  }
   return 1;
 }
 
