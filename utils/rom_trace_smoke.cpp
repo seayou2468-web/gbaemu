@@ -15,13 +15,6 @@ std::vector<uint8_t> LoadFile(const std::string& path) {
                               std::istreambuf_iterator<char>());
 }
 
-size_t CountVramNonZero(const gba::GBACore& core) {
-  size_t n = 0;
-  for (uint32_t addr = 0x06000000u; addr < 0x06018000u; ++addr) {
-    if (core.DebugRead8(addr) != 0) ++n;
-  }
-  return n;
-}
 }  // namespace
 
 int main() {
@@ -53,18 +46,14 @@ int main() {
     }
 
     for (int i = 0; i < 60; ++i) core.StepFrame();
-    core.DebugWrite16(0x06000000u, 0x1357u);
-    core.DebugWrite16(0x06018000u, 0x2468u);
-    const uint16_t vram_0000 = core.DebugRead16(0x06000000u);
-    const uint16_t vram_10000 = core.DebugRead16(0x06010000u);
-    const uint16_t vram_18000 = core.DebugRead16(0x06018000u);
-    const bool vram_mirror_ok = (vram_0000 == 0x1357u) && (vram_10000 == 0x2468u) && (vram_18000 == 0x2468u);
-    const uint16_t dispcnt = core.DebugRead16(0x04000000u);
-    const size_t vram_nonzero = CountVramNonZero(core);
+    const auto& fb = core.GetFrameBuffer();
+    size_t nonBlackPixels = 0;
+    for (uint32_t px : fb) {
+      if (px != 0xFF000000u) ++nonBlackPixels;
+    }
     const auto hash = static_cast<unsigned long long>(core.ComputeFrameHash());
-    std::printf("%s: pc=%08X cpsr=%08X mode=%u dispcnt=%04X vram_nonzero=%zu hash=%llu vram_mirror=%s warning=%s\n",
-                path.c_str(), core.DebugGetPC(), core.DebugGetCPSR(), dispcnt & 0x7u, dispcnt,
-                vram_nonzero, hash, vram_mirror_ok ? "ok" : "ng", warning.c_str());
+    std::printf("%s: non_black=%zu hash=%llu warning=%s\n",
+                path.c_str(), nonBlackPixels, hash, warning.c_str());
   }
 
   return 0;

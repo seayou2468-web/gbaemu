@@ -50,13 +50,13 @@ int main(int argc, char** argv) {
     for (int i = 0; i < frames; ++i) {
         core.StepFrame();
         if ((i + 1) % 50 == 0) {
-           std::printf("Step frame %d... PC=%08X\n", i + 1, core.DebugGetPC());
+           std::printf("Step frame %d...\n", i + 1);
         }
     }
 
     const std::vector<uint32_t>& fb = core.GetFrameBuffer();
     stbi_write_png(output_path.c_str(), gba::GBACore::kScreenWidth, gba::GBACore::kScreenHeight, 4, fb.data(), gba::GBACore::kScreenWidth * 4);
-    std::printf("Saved frame %d to %s. PC=%08X CPSR=%08X\n", frames, output_path.c_str(), core.DebugGetPC(), core.DebugGetCPSR());
+    std::printf("Saved frame %d to %s.\n", frames, output_path.c_str());
 
     return 0;
 }

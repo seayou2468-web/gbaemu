@@ -95,17 +95,39 @@ static inline uint32_t _rgba(uint8_t r, uint8_t g, uint8_t b) {
     return 0xFF000000u | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
 }
 
+static inline uint32_t _bgr555ToRgba(uint16_t color) {
+    uint8_t r = (uint8_t) ((color & 0x1F) << 3);
+    uint8_t g = (uint8_t) (((color >> 5) & 0x1F) << 3);
+    uint8_t b = (uint8_t) (((color >> 10) & 0x1F) << 3);
+    return _rgba(r, g, b);
+}
+
 static void _renderDummyFrame(GBACoreHandle* h) {
-    uint8_t phase = (uint8_t) (h->frameCounter & 0xFF);
+    if (!h->rom.data || h->rom.size < 2) {
+        memset(h->frame, 0, sizeof(h->frame));
+        return;
+    }
+    size_t srcWords = h->rom.size / 2;
+    size_t phase = (size_t) (h->frameCounter * 257u) % srcWords;
+    int xScroll = (h->keys & 0x0020) ? 2 : (h->keys & 0x0010) ? -2 : 0;
+    int yScroll = (h->keys & 0x0040) ? 2 : (h->keys & 0x0080) ? -2 : 0;
     for (size_t y = 0; y < GBA_SCREEN_HEIGHT; ++y) {
         for (size_t x = 0; x < GBA_SCREEN_WIDTH; ++x) {
-            uint8_t r = (uint8_t) ((x + phase) & 0xFF);
-            uint8_t g = (uint8_t) ((y + (phase >> 1)) & 0xFF);
-            uint8_t b = (uint8_t) ((x ^ y ^ phase) & 0xFF);
+            int sx = (int) x + xScroll;
+            int sy = (int) y + yScroll;
+            if (sx < 0) sx += GBA_SCREEN_WIDTH;
+            if (sy < 0) sy += GBA_SCREEN_HEIGHT;
+            sx %= GBA_SCREEN_WIDTH;
+            sy %= GBA_SCREEN_HEIGHT;
+            size_t srcIndex = (phase + (size_t) sy * GBA_SCREEN_WIDTH + (size_t) sx) % srcWords;
+            uint16_t color = (uint16_t) h->rom.data[srcIndex * 2] |
+                             (uint16_t) (h->rom.data[srcIndex * 2 + 1] << 8);
+            uint8_t tint = (uint8_t) ((h->frameCounter + x + y) & 0x7);
+            color ^= (uint16_t) (tint << 10);
             if (h->keys & 0x0001) {
-                r = (uint8_t) (255 - r);
+                color ^= 0x7FFF;
             }
-            h->frame[y * GBA_SCREEN_WIDTH + x] = _rgba(r, g, b);
+            h->frame[y * GBA_SCREEN_WIDTH + x] = _bgr555ToRgba(color);
         }
     }
 }

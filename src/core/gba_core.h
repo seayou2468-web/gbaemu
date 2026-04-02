@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace gba {
@@ -19,7 +18,7 @@ public:
     static constexpr std::size_t kPixelCount = static_cast<std::size_t>(kScreenWidth) * static_cast<std::size_t>(kScreenHeight);
 
     GBACore()
-        : handle_(GBA_Create()), framebuffer_(kPixelCount, 0xFF000000u), pc_(0), cpsr_(0x0000001Fu) {}
+        : handle_(GBA_Create()), framebuffer_(kPixelCount, 0xFF000000u) {}
 
     ~GBACore() {
         if (handle_ != nullptr) {
@@ -32,8 +31,7 @@ public:
     GBACore& operator=(const GBACore&) = delete;
 
     GBACore(GBACore&& other) noexcept
-        : handle_(other.handle_), framebuffer_(std::move(other.framebuffer_)),
-          debugMem16_(std::move(other.debugMem16_)), pc_(other.pc_), cpsr_(other.cpsr_) {
+        : handle_(other.handle_), framebuffer_(std::move(other.framebuffer_)) {
         other.handle_ = nullptr;
     }
 
@@ -46,9 +44,6 @@ public:
         }
         handle_ = other.handle_;
         framebuffer_ = std::move(other.framebuffer_);
-        debugMem16_ = std::move(other.debugMem16_);
-        pc_ = other.pc_;
-        cpsr_ = other.cpsr_;
         other.handle_ = nullptr;
         return *this;
     }
@@ -83,9 +78,6 @@ public:
         }
         if (warning) warning->clear();
         GBA_Reset(handle_);
-        pc_ = 0;
-        cpsr_ = 0x0000001Fu;
-        debugMem16_.clear();
         return true;
     }
 
@@ -98,35 +90,10 @@ public:
         if (px != nullptr) {
             framebuffer_.assign(px, px + kPixelCount);
         }
-        pc_ += 4;
     }
 
     const std::vector<uint32_t>& GetFrameBuffer() const {
         return framebuffer_;
-    }
-
-    uint32_t DebugGetPC() const { return pc_; }
-    uint32_t DebugGetCPSR() const { return cpsr_; }
-
-    void DebugWrite16(uint32_t addr, uint16_t value) {
-        debugMem16_[addr] = value;
-    }
-
-    uint16_t DebugRead16(uint32_t addr) const {
-        const auto it = debugMem16_.find(addr);
-        if (it != debugMem16_.end()) {
-            return it->second;
-        }
-        if (addr == 0x04000000u) {
-            return static_cast<uint16_t>(3u);
-        }
-        return 0;
-    }
-
-    uint8_t DebugRead8(uint32_t addr) const {
-        uint32_t base = addr & ~1u;
-        uint16_t v = DebugRead16(base);
-        return (addr & 1u) ? static_cast<uint8_t>(v >> 8) : static_cast<uint8_t>(v & 0xFFu);
     }
 
     uint64_t ComputeFrameHash() const {
@@ -141,9 +108,6 @@ public:
 private:
     GBACoreHandle* handle_;
     std::vector<uint32_t> framebuffer_;
-    std::unordered_map<uint32_t, uint16_t> debugMem16_;
-    uint32_t pc_;
-    uint32_t cpsr_;
 };
 
 }  // namespace gba
