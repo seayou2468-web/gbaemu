@@ -2,8 +2,10 @@
 
 #include "./gba_core_c_api.h"
 
-#include <cstdint>
+#ifdef __cplusplus
+
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -145,3 +147,5 @@ private:
 };
 
 }  // namespace gba
+
+#endif  // __cplusplus
