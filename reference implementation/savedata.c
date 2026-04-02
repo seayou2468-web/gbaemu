@@ -1,10 +1,4 @@
 
-
-// Some testing was done here...
-// Erase cycles can vary greatly.
-// Some games may vary anywhere between about 2000 cycles to up to 30000 cycles. (Observed on a Macronix (09C2) chip).
-// Other games vary from very little, with a fairly solid 20500 cycle count. (Observed on a SST (D4BF) chip).
-// An average estimation is as follows.
 #define FLASH_ERASE_CYCLES 30000
 #define FLASH_PROGRAM_CYCLES 650
 // This needs real testing, and is only an estimation currently
