@@ -14,7 +14,9 @@ GBACoreHandle* GBA_Create(void);
 void GBA_Destroy(GBACoreHandle* handle);
 
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path);
+bool GBA_LoadROMFromBuffer(GBACoreHandle* handle, const uint8_t* data, size_t size);
 bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path);
+bool GBA_LoadBIOSFromBuffer(GBACoreHandle* handle, const uint8_t* data, size_t size);
 void GBA_LoadBuiltInBIOS(GBACoreHandle* handle);
 
 void GBA_Reset(GBACoreHandle* handle);

@@ -124,6 +124,23 @@ void GBA_Destroy(GBACoreHandle* handle) {
     free(handle);
 }
 
+static bool _loadBlobFromMemory(GBABlob* out, const uint8_t* data, size_t size, char* err, size_t errSize) {
+    if (!data || size == 0) {
+        snprintf(err, errSize, "buffer is empty");
+        return false;
+    }
+    uint8_t* buf = (uint8_t*) malloc(size);
+    if (!buf) {
+        snprintf(err, errSize, "out of memory");
+        return false;
+    }
+    memcpy(buf, data, size);
+    _freeBlob(out);
+    out->data = buf;
+    out->size = size;
+    return true;
+}
+
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     if (!handle) {
         return false;
@@ -139,12 +156,42 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     return true;
 }
 
+bool GBA_LoadROMFromBuffer(GBACoreHandle* handle, const uint8_t* data, size_t size) {
+    if (!handle) {
+        return false;
+    }
+    char err[256] = {0};
+    if (!_loadBlobFromMemory(&handle->rom, data, size, err, sizeof(err))) {
+        _setError(handle, err);
+        handle->hasRom = false;
+        return false;
+    }
+    handle->hasRom = true;
+    _setError(handle, NULL);
+    return true;
+}
+
 bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
     if (!handle) {
         return false;
     }
     char err[256] = {0};
     if (!_loadFile(path, &handle->bios, err, sizeof(err))) {
+        _setError(handle, err);
+        handle->hasBios = false;
+        return false;
+    }
+    handle->hasBios = true;
+    _setError(handle, NULL);
+    return true;
+}
+
+bool GBA_LoadBIOSFromBuffer(GBACoreHandle* handle, const uint8_t* data, size_t size) {
+    if (!handle) {
+        return false;
+    }
+    char err[256] = {0};
+    if (!_loadBlobFromMemory(&handle->bios, data, size, err, sizeof(err))) {
         _setError(handle, err);
         handle->hasBios = false;
         return false;
