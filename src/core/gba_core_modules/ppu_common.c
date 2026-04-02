@@ -1845,8 +1845,6 @@ static inline unsigned _darken(unsigned color, int y) {
 	return c;
 }
 
-#endif
-
 /* ===== Imported from reference implementation/common.c ===== */
 int GBAVideoRendererCleanOAM(struct GBAObj* oam, struct GBAVideoRendererSprite* sprites, int offsetY) {
 	int i;

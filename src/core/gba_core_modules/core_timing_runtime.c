@@ -13,29 +13,8 @@
 #define UNLIKELY(x) (x)
 #endif
 
-struct mTiming;
-typedef void (*mTimingCallback)(struct mTiming* timing, void* context, uint32_t cyclesLate);
-
-struct mTimingEvent {
-	const char* name;
-	uint32_t priority;
-	int32_t when;
-	void* context;
-	mTimingCallback callback;
-	struct mTimingEvent* next;
-};
-
 int32_t mTimingCurrentTime(const struct mTiming* timing);
 int32_t mTimingNextEvent(const struct mTiming* timing);
-
-struct mTiming {
-	struct mTimingEvent* root;
-	struct mTimingEvent* reroot;
-	int32_t globalCycles;
-	int32_t masterCycles;
-	int32_t* relativeCycles;
-	int32_t* nextEvent;
-};
 
 void mTimingInit(struct mTiming* timing, int32_t* relativeCycles, int32_t* nextEvent) {
 	timing->root = NULL;

@@ -1,21 +1,13 @@
-
 #if defined(GBA_CORE_USE_AGGREGATED_MODULES)
 #define GBA_CORE_MODULE_COMPILED_FROM_AGGREGATE 1
 #include "./gba_core_modules/core_input_runtime.c"
-#include "./gba_core_modules/core_sio_runtime.c"
-#include "./gba_core_modules/core_dolphin_runtime.c"
-#include "./gba_core_modules/core_gbp_runtime.c"
 #include "./gba_core_modules/core_overrides_runtime.c"
-#include "./gba_core_modules/core_lockstep_runtime.c"
 #include "./gba_core_modules/core_bootstrap.c"
 #include "./gba_core_modules/core_io_runtime.c"
 #include "./gba_core_modules/core_reset_state.c"
 #include "./gba_core_modules/core_timing_runtime.c"
 #include "./gba_core_modules/core_sync_runtime.c"
-#if GBAEMU_ENABLE_DEBUG_FEATURES
-#include "./gba_core_modules/core_save_debug.c"
-#include "./gba_core_modules/render_debug.c"
-#else
+#if !GBAEMU_ENABLE_DEBUG_FEATURES
 #include "./gba_core_modules/core_save_runtime_stub.c"
 #endif
 #include "./gba_core_modules/core_backup_runtime.c"

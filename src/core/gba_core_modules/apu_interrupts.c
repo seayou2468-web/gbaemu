@@ -2,6 +2,22 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#if !GBA_CORE_ENABLE_FULL_SIO_RUNTIME
+
+void GBASIOInit(struct GBASIO* sio) { if (sio) { sio->driver = NULL; sio->rcnt = RCNT_INITIAL; sio->siocnt = 0; sio->mode = (enum GBASIOMode) -1; } }
+void GBASIODeinit(struct GBASIO* sio) { UNUSED(sio); }
+void GBASIOReset(struct GBASIO* sio) { if (sio) { sio->rcnt = RCNT_INITIAL; sio->siocnt = 0; sio->mode = (enum GBASIOMode) -1; } }
+void GBASIOSetDriver(struct GBASIO* sio, struct GBASIODriver* driver) { if (sio) { sio->driver = driver; } }
+void GBASIOWriteRCNT(struct GBASIO* sio, uint16_t value) { if (sio) { sio->rcnt = value; } }
+void GBASIOWriteSIOCNT(struct GBASIO* sio, uint16_t value) { if (sio) { sio->siocnt = value; } }
+uint16_t GBASIOWriteRegister(struct GBASIO* sio, uint32_t address, uint16_t value) { UNUSED(sio); UNUSED(address); return value; }
+void GBASIOMultiplayerFinishTransfer(struct GBASIO* sio, uint16_t data[4], uint32_t cyclesLate) { UNUSED(sio); UNUSED(data); UNUSED(cyclesLate); }
+void GBASIONormal8FinishTransfer(struct GBASIO* sio, uint8_t data, uint32_t cyclesLate) { UNUSED(sio); UNUSED(data); UNUSED(cyclesLate); }
+void GBASIONormal32FinishTransfer(struct GBASIO* sio, uint32_t data, uint32_t cyclesLate) { UNUSED(sio); UNUSED(data); UNUSED(cyclesLate); }
+int GBASIOJOYSendCommand(struct GBASIODriver* sio, enum GBASIOJOYCommand command, uint8_t* data) { UNUSED(sio); UNUSED(command); UNUSED(data); return -1; }
+
+#else
+
 /* ===== Imported from reference implementation/sio.c ===== */
 mLOG_DEFINE_CATEGORY(GBA_SIO, "GBA Serial I/O", "gba.sio");
 
@@ -417,3 +433,6 @@ int GBASIOJOYSendCommand(struct GBASIODriver* sio, enum GBASIOJOYCommand command
 	UNUSED(data);
 	return -1;
 }
+
+#endif
+

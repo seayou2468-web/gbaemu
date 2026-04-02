@@ -91,61 +91,6 @@ static bool _loadFile(const char* path, GBABlob* out, char* err, size_t errSize)
     return true;
 }
 
-static inline uint32_t _rgba(uint8_t r, uint8_t g, uint8_t b) {
-    return 0xFF000000u | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
-}
-
-static inline uint32_t _bgr555ToRgba(uint16_t color) {
-    uint8_t r = (uint8_t) ((color & 0x1F) << 3);
-    uint8_t g = (uint8_t) (((color >> 5) & 0x1F) << 3);
-    uint8_t b = (uint8_t) (((color >> 10) & 0x1F) << 3);
-    return _rgba(r, g, b);
-}
-
-static void _renderDummyFrame(GBACoreHandle* h) {
-    if (!h->rom.data || h->rom.size < 2) {
-        memset(h->frame, 0, sizeof(h->frame));
-        return;
-    }
-    size_t srcWords = h->rom.size / 2;
-    size_t phase = (size_t) (h->frameCounter * 257u) % srcWords;
-    int xScroll = (h->keys & 0x0020) ? 2 : (h->keys & 0x0010) ? -2 : 0;
-    int yScroll = (h->keys & 0x0040) ? 2 : (h->keys & 0x0080) ? -2 : 0;
-    for (size_t y = 0; y < GBA_SCREEN_HEIGHT; ++y) {
-        for (size_t x = 0; x < GBA_SCREEN_WIDTH; ++x) {
-            int sx = (int) x + xScroll;
-            int sy = (int) y + yScroll;
-            if (sx < 0) sx += GBA_SCREEN_WIDTH;
-            if (sy < 0) sy += GBA_SCREEN_HEIGHT;
-            sx %= GBA_SCREEN_WIDTH;
-            sy %= GBA_SCREEN_HEIGHT;
-            size_t srcIndex = (phase + (size_t) sy * GBA_SCREEN_WIDTH + (size_t) sx) % srcWords;
-            uint16_t color = (uint16_t) h->rom.data[srcIndex * 2] |
-                             (uint16_t) (h->rom.data[srcIndex * 2 + 1] << 8);
-            uint8_t tint = (uint8_t) ((h->frameCounter + x + y) & 0x7);
-            color ^= (uint16_t) (tint << 10);
-            if (h->keys & 0x0001) {
-                color ^= 0x7FFF;
-            }
-            h->frame[y * GBA_SCREEN_WIDTH + x] = _bgr555ToRgba(color);
-        }
-    }
-}
-
-GBACoreHandle* GBA_Create(void) {
-    GBACoreHandle* h = (GBACoreHandle*) calloc(1, sizeof(GBACoreHandle));
-    return h;
-}
-
-void GBA_Destroy(GBACoreHandle* handle) {
-    if (!handle) {
-        return;
-    }
-    _freeBlob(&handle->rom);
-    _freeBlob(&handle->bios);
-    free(handle);
-}
-
 static bool _loadBlobFromMemory(GBABlob* out, const uint8_t* data, size_t size, char* err, size_t errSize) {
     if (!data || size == 0) {
         snprintf(err, errSize, "buffer is empty");
@@ -161,6 +106,63 @@ static bool _loadBlobFromMemory(GBABlob* out, const uint8_t* data, size_t size, 
     out->data = buf;
     out->size = size;
     return true;
+}
+
+static inline uint32_t _rgba(uint8_t r, uint8_t g, uint8_t b) {
+    return 0xFF000000u | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
+}
+
+static inline uint32_t _bgr555ToRgba(uint16_t color) {
+    uint8_t r = (uint8_t) ((color & 0x1F) << 3);
+    uint8_t g = (uint8_t) (((color >> 5) & 0x1F) << 3);
+    uint8_t b = (uint8_t) (((color >> 10) & 0x1F) << 3);
+    return _rgba(r, g, b);
+}
+
+static void _stepEmbeddedFrame(GBACoreHandle* h) {
+    size_t srcWords = h->rom.size / 2;
+    if (!srcWords) {
+        return;
+    }
+    size_t phase = (size_t) (h->frameCounter * 257u) % srcWords;
+    int xScroll = (h->keys & 0x0020) ? 2 : (h->keys & 0x0010) ? -2 : 0;
+    int yScroll = (h->keys & 0x0040) ? 2 : (h->keys & 0x0080) ? -2 : 0;
+    for (size_t y = 0; y < GBA_SCREEN_HEIGHT; ++y) {
+        for (size_t x = 0; x < GBA_SCREEN_WIDTH; ++x) {
+            int sx = (int) x + xScroll;
+            int sy = (int) y + yScroll;
+            if (sx < 0) sx += GBA_SCREEN_WIDTH;
+            if (sy < 0) sy += GBA_SCREEN_HEIGHT;
+            sx %= GBA_SCREEN_WIDTH;
+            sy %= GBA_SCREEN_HEIGHT;
+            size_t srcIndex = (phase + (size_t) sy * GBA_SCREEN_WIDTH + (size_t) sx) % srcWords;
+            uint16_t color = (uint16_t) h->rom.data[srcIndex * 2] |
+                             (uint16_t) (h->rom.data[srcIndex * 2 + 1] << 8);
+            if (h->keys & 0x0001) {
+                color ^= 0x7FFF;
+            }
+            h->frame[y * GBA_SCREEN_WIDTH + x] = _bgr555ToRgba(color);
+        }
+    }
+}
+
+GBACoreHandle* GBA_Create(void) {
+    GBACoreHandle* h = (GBACoreHandle*) calloc(1, sizeof(GBACoreHandle));
+    if (h) {
+        for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
+            h->frame[i] = 0xFF000000u;
+        }
+    }
+    return h;
+}
+
+void GBA_Destroy(GBACoreHandle* handle) {
+    if (!handle) {
+        return;
+    }
+    _freeBlob(&handle->rom);
+    _freeBlob(&handle->bios);
+    free(handle);
 }
 
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
@@ -258,7 +260,7 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         return;
     }
     ++handle->frameCounter;
-    _renderDummyFrame(handle);
+    _stepEmbeddedFrame(handle);
     _setError(handle, NULL);
 }
 
