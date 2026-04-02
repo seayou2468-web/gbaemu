@@ -81,6 +81,10 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
     d.seq_access = false;
     d.last_value = 0;
   }
+  if (!d.seq_access) {
+    // First DMA beat should start as non-sequential on the memory bus.
+    last_access_valid_ = false;
+  }
 
   const bool is_32 = (cnt_h & (1u << 10)) != 0;
   const uint32_t width = is_32 ? 4u : 2u;
@@ -92,6 +96,7 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
     return false;
   }
 
+  const uint64_t ws_before = waitstates_accum_;
   if (is_32) {
     d.last_value = Read32(src);
     Write32(dst, d.last_value);
@@ -111,7 +116,8 @@ bool GBACore::ServiceDmaChannelUnit(int ch, uint16_t cnt_h) {
   }
 
   if (d.count > 0) --d.count;
-  d.wait_cycles += 2;
+  const uint32_t ws_spent = static_cast<uint32_t>(waitstates_accum_ - ws_before);
+  d.wait_cycles += ws_spent ? ws_spent : 2u;
   d.seq_access = true;
   return d.count != 0;
 }
@@ -147,28 +153,69 @@ void GBACore::ExecuteDmaTransfer(int ch, uint16_t cnt_h) {
   d.in_progress = false;
 }
 
-void GBACore::StepDma() {
+void GBACore::StepDma(uint32_t cycles) {
+  auto finalize_channel = [&](int i, uint16_t cnt_h) {
+    auto& d = dma_shadows_[i];
+    const bool repeat = (cnt_h & (1u << 9)) != 0;
+    const bool now_timing = (((cnt_h >> 12) & 0x3u) == 0);
+    if (!repeat || now_timing) {
+      cnt_h = static_cast<uint16_t>(cnt_h & ~0x8000u);
+      const uint32_t reg = 0xBAu + static_cast<uint32_t>(i) * 12u;
+      io_regs_[reg] = static_cast<uint8_t>(cnt_h & 0xFFu);
+      io_regs_[reg + 1] = static_cast<uint8_t>(cnt_h >> 8);
+    } else {
+      d.count = d.initial_count;
+      if (((cnt_h >> 5) & 0x3u) == 3u) d.dad = d.initial_dad;
+    }
+    if (cnt_h & (1u << 14)) RaiseInterrupt(static_cast<uint16_t>(1u << (8 + i)));
+    d.pending = false;
+    d.active = false;
+    d.in_progress = false;
+    d.wait_cycles = 0;
+  };
+
   for (int i = 0; i < 4; ++i) {
     auto& d = dma_shadows_[i];
     if (!d.pending) continue;
+    uint32_t budget = cycles ? cycles : 1u;
 
-    if (d.startup_delay > 0) {
-      --d.startup_delay;
-      continue;
-    }
+    while (budget > 0 && d.pending) {
+      if (d.startup_delay > 0) {
+        const uint32_t dec = d.startup_delay > budget ? budget : d.startup_delay;
+        d.startup_delay -= dec;
+        budget -= dec;
+        if (d.startup_delay > 0) break;
+      }
 
-    const uint32_t reg = 0xBAu + static_cast<uint32_t>(i) * 12u;
-    const uint16_t cnt_h = static_cast<uint16_t>(io_regs_[reg] | (io_regs_[reg + 1] << 8));
-    if ((cnt_h & 0x8000u) == 0) {
-      d.pending = false;
-      d.active = false;
-      continue;
+      if (d.wait_cycles > 0) {
+        const uint32_t dec = d.wait_cycles > budget ? budget : d.wait_cycles;
+        d.wait_cycles -= dec;
+        budget -= dec;
+        if (d.wait_cycles > 0) break;
+      }
+
+      const uint32_t reg = 0xBAu + static_cast<uint32_t>(i) * 12u;
+      const uint16_t cnt_h = static_cast<uint16_t>(io_regs_[reg] | (io_regs_[reg + 1] << 8));
+      if ((cnt_h & 0x8000u) == 0) {
+        d.pending = false;
+        d.active = false;
+        d.in_progress = false;
+        d.wait_cycles = 0;
+        break;
+      }
+
+      if (d.count == 0) {
+        d.count = d.initial_count ? d.initial_count : (i == 3 ? 0x10000u : 0x4000u);
+      }
+      const bool cont = ServiceDmaChannelUnit(i, cnt_h);
+      if (!cont) {
+        finalize_channel(i, cnt_h);
+      }
     }
-    ExecuteDmaTransfer(i, cnt_h);
   }
 }
 
-void GBACore::StepDmaVBlank() {
+void GBACore::StepDmaVBlank(uint32_t cycles) {
   for (int i = 0; i < 4; ++i) {
     const uint32_t reg = 0xBAu + static_cast<uint32_t>(i) * 12u;
     const uint16_t cnt_h = static_cast<uint16_t>(io_regs_[reg] | (io_regs_[reg + 1] << 8));
@@ -176,10 +223,10 @@ void GBACore::StepDmaVBlank() {
       ScheduleDmaStart(i, cnt_h, 3u);
     }
   }
-  StepDma();
+  StepDma(cycles);
 }
 
-void GBACore::StepDmaHBlank() {
+void GBACore::StepDmaHBlank(uint32_t cycles) {
   for (int i = 0; i < 4; ++i) {
     const uint32_t reg = 0xBAu + static_cast<uint32_t>(i) * 12u;
     const uint16_t cnt_h = static_cast<uint16_t>(io_regs_[reg] | (io_regs_[reg + 1] << 8));
@@ -187,7 +234,7 @@ void GBACore::StepDmaHBlank() {
       ScheduleDmaStart(i, cnt_h, 3u);
     }
   }
-  StepDma();
+  StepDma(cycles);
 }
 
 void GBACore::StepSio(uint32_t cycles) {

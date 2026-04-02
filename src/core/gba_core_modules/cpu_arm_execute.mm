@@ -211,6 +211,11 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       return;
     }
     const uint32_t rd = ArmRegIndex(opcode, 12);
+    if (rd == 15u) {
+      // ARMv4T: MRS with Rd=PC is UNPREDICTABLE. Suppress side effects safely.
+      cpu_.regs[15] += 4;
+      return;
+    }
     cpu_.regs[rd] = spsr ? cpu_.spsr[GetCpuMode() & 0x1Fu] : cpu_.cpsr;
     cpu_.regs[15] += 4;
     return;
@@ -295,7 +300,13 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     }
 
     if (!pre) addr = up ? (addr + off) : (addr - off);
-    if (rn != 15 && (writeback || !pre)) cpu_.regs[rn] = addr;
+    if (rn != 15 && (writeback || !pre)) {
+      // ARMv4T: load + writeback with Rd==Rn is UNPREDICTABLE.
+      // Keep destination load result and suppress writeback on this hazard.
+      if (!(load && rd == rn)) {
+        cpu_.regs[rn] = addr;
+      }
+    }
     if (load && rd == 15) {
       cpu_.regs[15] &= ~3u;
       return;
@@ -360,7 +371,11 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       addr = up ? (addr + off) : (addr - off);
     }
     if (rn != 15 && (writeback || !pre)) {
-      cpu_.regs[rn] = addr;
+      // ARMv4T: load + writeback with Rd==Rn is UNPREDICTABLE.
+      // Keep destination load result and suppress writeback on this hazard.
+      if (!(load && rd == rn)) {
+        cpu_.regs[rn] = addr;
+      }
     }
 
     if (rd == 15 && load) {
@@ -456,7 +471,12 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     if (load && (rlist & (1u << 15))) {
       cpu_.regs[15] &= ~3u;
       if (s && HasSpsr(GetCpuMode())) {
-        cpu_.cpsr = cpu_.spsr[GetCpuMode() & 0x1Fu];
+        const uint32_t old_mode = GetCpuMode();
+        cpu_.cpsr = cpu_.spsr[old_mode & 0x1Fu];
+        const uint32_t new_mode = GetCpuMode();
+        if (new_mode != old_mode) {
+          SwitchCpuMode(new_mode);
+        }
       }
       return;
     }
@@ -528,7 +548,12 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       if (rd == 15) {
         cpu_.regs[15] &= ~3u;
         if (set_flags && HasSpsr(GetCpuMode())) {
-          cpu_.cpsr = cpu_.spsr[GetCpuMode() & 0x1Fu];
+          const uint32_t old_mode = GetCpuMode();
+          cpu_.cpsr = cpu_.spsr[old_mode & 0x1Fu];
+          const uint32_t new_mode = GetCpuMode();
+          if (new_mode != old_mode) {
+            SwitchCpuMode(new_mode);
+          }
         }
         return;
       }
@@ -556,6 +581,13 @@ uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
 
     const bool thumb = (cpu_.cpsr & (1u << 5)) != 0;
     const uint32_t pc_before = cpu_.regs[15];
+    if (pc_before < 0x4000u) {
+      const uint32_t a = pc_before & ~3u;
+      bios_fetch_latch_ = static_cast<uint32_t>(bios_[a & 0x3FFFu]) |
+                          (static_cast<uint32_t>(bios_[(a + 1) & 0x3FFFu]) << 8) |
+                          (static_cast<uint32_t>(bios_[(a + 2) & 0x3FFFu]) << 16) |
+                          (static_cast<uint32_t>(bios_[(a + 3) & 0x3FFFu]) << 24);
+    }
     const uint64_t ws_before = waitstates_accum_;
     const uint32_t pending_refill = pipeline_refill_pending_;
     pipeline_refill_pending_ = 0;

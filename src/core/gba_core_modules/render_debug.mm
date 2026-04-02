@@ -38,7 +38,7 @@ void GBACore::RunCycles(uint32_t cycles) {
   if (!loaded_) return;
   RunCpuSlice(cycles);
   StepTimers(cycles);
-  StepDma();
+  StepDma(cycles);
   StepApu(cycles);
   StepSio(cycles);
   StepPpu(cycles);
@@ -50,7 +50,6 @@ void GBACore::StepFrame() {
   if (!loaded_) return;
   UpdateGameplayFromInput();
   RunCycles(kCyclesPerFrame);
-  ++frame_count_;
 }
 
 }  // namespace gba

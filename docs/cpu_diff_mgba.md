@@ -39,12 +39,15 @@
 - ARM store系で `Rd/Rm=PC` の書き込み値を `PC+12` に補正（`STR/STM/SWP`）。
 - ARM `SWP` の `Rd=PC` で分岐扱いとなるよう逐次 `PC+=4` を抑止。
 - ARM data processing で `Rd=PC` のとき不要な逐次 `PC+=4` を抑止し、PC書き込み後に即時遷移。
+- ARM `LDM^` + `PC` load / ARM data processing `S + Rd=PC` で `SPSR -> CPSR` 復帰後に `SwitchCpuMode` を適用し、モード変化時の banked register を同期。
 - ARM data processing の register-specified shift で `Rm=PC` のオペランド値を `PC+12` 扱いに補正。
 - ARM single data transfer（register offset / register-specified shift）で `Rm=PC` の評価を `PC+12` に補正。
+- ARM single/halfword transfer で `load + writeback + Rd==Rn`（UNPREDICTABLE）を安全側で抑止し、load結果を優先。
 - ARM block transfer writeback を `STM` と `LDM` で分離（`STM` は `Rn` が rlist に含まれても writeback、`LDM` は `Rn` ロード時writeback抑止）。
 - `MSR` のフィールドマスク（c/x/s/f）を実装。
 - 非特権モード時に `MSR CPSR_*` で制御領域を書き換えない制約を実装。
 - `MSR CPSR_c` でモード変更時にバンク切替 (`SwitchCpuMode`) を反映。
+- `MRS Rd, CPSR/SPSR` の `Rd=PC`（UNPREDICTABLE）を安全側で抑止。
 - `LDRSH` の odd address を signed byte 扱いに補正。
 - `LDM/STM` の empty register list (`rlist==0`) を PC 転送 + `±0x40` writeback 挙動に補正。
 - PC 書き込み系命令（Thumb高位レジスタADD/MOV, POP{PC}, ARM/Thumbの空rlist load, ARM LDMでPC読込）で不要な `PC += 2/4` を抑止し、分岐後のPC更新を正規化。
@@ -56,4 +59,3 @@
 - ARM single/block data transfer の writeback corner case（`Rn` が転送リストに含まれる場合）の精密化。
 - ARM data processing における `R15` operand 時パイプライン値の厳密化。
 - 例外遷移時のパイプライン flush / サイクルモデルの更なる一致化。
-

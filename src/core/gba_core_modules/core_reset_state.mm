@@ -47,7 +47,9 @@ void GBACore::Reset() {
   last_access_addr_ = 0;
   last_access_size_ = 0;
   open_bus_latch_ = 0;
+  bios_fetch_latch_ = 0;
   bios_data_latch_ = 0;
+  gamepak_prefetch_credit_ = 0;
   pipeline_refill_pending_ = 0;
   RebuildGamePakWaitstateTables(0);
   debug_last_exception_vector_ = 0;

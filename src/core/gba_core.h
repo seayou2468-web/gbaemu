@@ -138,9 +138,9 @@ class GBACore {
   void ApplyColorEffects();
   void StepPpu(uint32_t cycles);
   void StepTimers(uint32_t cycles);
-  void StepDma();
-  void StepDmaVBlank();
-  void StepDmaHBlank();
+  void StepDma(uint32_t cycles);
+  void StepDmaVBlank(uint32_t cycles);
+  void StepDmaHBlank(uint32_t cycles);
   void ScheduleDmaStart(int ch, uint16_t cnt_h, uint32_t delay_cycles_override = 0xFFFFFFFFu);
   bool IsDmaAddressValid(int ch, uint32_t src, uint32_t dst, bool fifo_dma) const;
   uint32_t EstimateDmaStartupDelay(int ch, uint16_t cnt_h) const;
@@ -171,6 +171,7 @@ class GBACore {
   void Write16(uint32_t addr, uint16_t value);
   void Write8(uint32_t addr, uint8_t value);
   uint16_t ReadIO16(uint32_t addr) const;
+  void WriteIO8(uint32_t addr, uint8_t value);
   void WriteIO16(uint32_t addr, uint16_t value);
   uint32_t RotateRight(uint32_t value, unsigned bits) const;
   uint32_t ApplyShift(uint32_t value, uint32_t shift_type, uint32_t shift_amount, bool* carry_out) const;
@@ -235,6 +236,7 @@ class GBACore {
   std::array<uint8_t, 3> ws_nonseq_32_{6, 6, 10};
   std::array<uint8_t, 3> ws_seq_32_{4, 8, 16};
   bool gamepak_prefetch_enabled_ = false;
+  mutable uint8_t gamepak_prefetch_credit_ = 0;
   uint32_t pipeline_refill_pending_ = 0;
   bool bios_loaded_ = false;
   bool bios_is_builtin_ = false;

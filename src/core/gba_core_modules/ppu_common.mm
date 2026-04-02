@@ -6,14 +6,24 @@ void GBACore::BuildObjWindowMask() {}
 void GBACore::RenderSprites() {}
 void GBACore::ApplyColorEffects() {}
 
+namespace {
+constexpr uint32_t kVideoHBlankCycles =
+    mgba_compat::kVideoScanlineCycles - mgba_compat::kVideoHDrawCycles;
+}  // namespace
+
 void GBACore::StepPpu(uint32_t cycles) {
   ppu_cycle_accum_ += cycles;
 
-  while (ppu_cycle_accum_ >= mgba_compat::kVideoHDrawCycles) {
-    ppu_cycle_accum_ -= mgba_compat::kVideoHDrawCycles;
-
+  while (true) {
     uint16_t dispstat = ReadIO16(0x04000004u);
-    if ((dispstat & 0x2u) == 0) {
+    const bool in_hblank = (dispstat & 0x2u) != 0;
+    const uint32_t phase_cycles = in_hblank ? kVideoHBlankCycles : mgba_compat::kVideoHDrawCycles;
+    if (ppu_cycle_accum_ < phase_cycles) {
+      break;
+    }
+    ppu_cycle_accum_ -= phase_cycles;
+
+    if (!in_hblank) {
       // HBlank開始
       dispstat = static_cast<uint16_t>(dispstat | 0x2u);
       WriteIO16(0x04000004u, dispstat);
@@ -21,7 +31,7 @@ void GBACore::StepPpu(uint32_t cycles) {
 
       const uint16_t vcount = ReadIO16(0x04000006u);
       if (vcount < mgba_compat::kVideoVisibleLines) {
-        StepDmaHBlank();
+        StepDmaHBlank(kVideoHBlankCycles);
       }
       continue;
     }
@@ -33,7 +43,7 @@ void GBACore::StepPpu(uint32_t cycles) {
 
     if (vcount == mgba_compat::kVideoVisibleLines) {
       dispstat = static_cast<uint16_t>(dispstat | 0x1u);
-      StepDmaVBlank();
+      StepDmaVBlank(mgba_compat::kVideoHDrawCycles);
       if (dispstat & (1u << 3)) RaiseInterrupt(1u << 0);  // VBlank IRQ
       const uint16_t dispcnt = ReadIO16(0x04000000u);
       switch (dispcnt & 0x7u) {
