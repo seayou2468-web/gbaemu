@@ -22,6 +22,10 @@
 #define mLOG(...)
 #endif
 
+#ifndef GBAEMU_ENABLE_DEBUG_FEATURES
+#define GBAEMU_ENABLE_DEBUG_FEATURES 0
+#endif
+
 #ifdef __cplusplus
 
 #include <cstddef>

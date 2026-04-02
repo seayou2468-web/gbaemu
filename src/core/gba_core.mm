@@ -12,7 +12,12 @@
 #include "./gba_core_modules/core_reset_state.c"
 #include "./gba_core_modules/core_timing_runtime.c"
 #include "./gba_core_modules/core_sync_runtime.c"
+#if GBAEMU_ENABLE_DEBUG_FEATURES
 #include "./gba_core_modules/core_save_debug.c"
+#include "./gba_core_modules/render_debug.c"
+#else
+#include "./gba_core_modules/core_save_runtime_stub.c"
+#endif
 #include "./gba_core_modules/core_backup_runtime.c"
 #include "./gba_core_modules/cpu_helpers.c"
 #include "./gba_core_modules/cpu_swi.c"
@@ -24,6 +29,5 @@
 #include "./gba_core_modules/ppu_tile_modes.c"
 #include "./gba_core_modules/timing_dma.c"
 #include "./gba_core_modules/apu_interrupts.c"
-#include "./gba_core_modules/render_debug.c"
 #undef GBA_CORE_MODULE_COMPILED_FROM_AGGREGATE
 #endif

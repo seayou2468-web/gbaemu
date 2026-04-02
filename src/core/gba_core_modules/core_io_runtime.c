@@ -545,6 +545,7 @@ void GBAIOWrite(struct GBA* gba, uint32_t address, uint16_t value) {
 		value &= 0xFF00;
 		GBAAdjustEWRAMWaitstates(gba, value);
 		break;
+#if GBAEMU_ENABLE_DEBUG_FEATURES
 	case GBA_REG_DEBUG_ENABLE:
 		gba->debug = value == 0xC0DE;
 		return;
@@ -560,6 +561,7 @@ void GBAIOWrite(struct GBA* gba, uint32_t address, uint16_t value) {
 			STORE_16LE(value, address - GBA_REG_DEBUG_STRING, gba->debugString);
 			return;
 		}
+#endif
 		mLOG(GBA_IO, STUB, "Stub I/O register write: %03X", address);
 		if (address >= GBA_REG_MAX) {
 			mLOG(GBA_IO, GAME_ERROR, "Write to unused I/O register: %03X", address);
@@ -571,10 +573,12 @@ void GBAIOWrite(struct GBA* gba, uint32_t address, uint16_t value) {
 }
 
 void GBAIOWrite8(struct GBA* gba, uint32_t address, uint8_t value) {
+#if GBAEMU_ENABLE_DEBUG_FEATURES
 	if (address >= GBA_REG_DEBUG_STRING && address - GBA_REG_DEBUG_STRING < sizeof(gba->debugString)) {
 		gba->debugString[address - GBA_REG_DEBUG_STRING] = value;
 		return;
 	}
+#endif
 	if (address > GBA_SIZE_IO) {
 		return;
 	}
@@ -716,10 +720,12 @@ void GBAIOWrite32(struct GBA* gba, uint32_t address, uint32_t value) {
 		value = GBADMAWriteDAD(gba, 3, value);
 		break;
 	default:
+#if GBAEMU_ENABLE_DEBUG_FEATURES
 		if (address >= GBA_REG_DEBUG_STRING && address - GBA_REG_DEBUG_STRING < sizeof(gba->debugString)) {
 			STORE_32LE(value, address - GBA_REG_DEBUG_STRING, gba->debugString);
 			return;
 		}
+#endif
 		GBAIOWrite(gba, address, value & 0xFFFF);
 		GBAIOWrite(gba, address | 2, value >> 16);
 		return;
@@ -984,11 +990,13 @@ uint16_t GBAIORead(struct GBA* gba, uint32_t address) {
 	case GBA_REG_EXWAITCNT_HI:
 		address += GBA_REG_INTERNAL_EXWAITCNT_LO - GBA_REG_EXWAITCNT_LO;
 		break;
+#if GBAEMU_ENABLE_DEBUG_FEATURES
 	case GBA_REG_DEBUG_ENABLE:
 		if (gba->debug) {
 			return 0x1DEA;
 		}
 		// Fall through
+#endif
 	default:
 		mLOG(GBA_IO, GAME_ERROR, "Read from unused I/O register: %03X", address);
 		return GBALoadBad(gba->cpu);
