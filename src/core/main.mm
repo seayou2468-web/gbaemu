@@ -1,5 +1,11 @@
 // main.mm (SDL2 + GBAコア表示)
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if !defined(__APPLE__) || !TARGET_OS_IOS
+
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <vector>
@@ -131,3 +137,5 @@ int main(int argc, char** argv) {
     GBA_Destroy(core);
     return 0;
 }
+
+#endif  // !defined(__APPLE__) || !TARGET_OS_IOS
