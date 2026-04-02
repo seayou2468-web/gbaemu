@@ -2,6 +2,7 @@
 #if defined(GBA_CORE_USE_AGGREGATED_MODULES)
 #define GBA_CORE_MODULE_COMPILED_FROM_AGGREGATE 1
 #include "./gba_core_modules/core_input_runtime.c"
+#include "./gba_core_modules/core_gbp_runtime.c"
 #include "./gba_core_modules/core_overrides_runtime.c"
 #include "./gba_core_modules/core_bootstrap.c"
 #include "./gba_core_modules/core_reset_state.c"
