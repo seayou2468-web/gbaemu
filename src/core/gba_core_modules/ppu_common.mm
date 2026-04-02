@@ -1,3 +1,7 @@
+#if defined(GBA_CORE_USE_AGGREGATED_MODULES) && !defined(GBA_CORE_MODULE_COMPILED_FROM_AGGREGATE)
+// Aggregated build is enabled; this standalone TU is intentionally empty to avoid duplicate symbols.
+#else
+
 // ppu_common.mm
 // GBA PPU: scanline timing, window setup, and final compositing.
 // All rendering follows GBA hardware behaviour exactly (per-scanline, priority/blend/window correct).
@@ -493,3 +497,4 @@ void GBACore::StepFrame() {
 }
 
 }  // namespace gba
+#endif

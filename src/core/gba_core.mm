@@ -7,6 +7,7 @@
 // GBA_CORE_USE_AGGREGATED_MODULES for this file.
 
 #if defined(GBA_CORE_USE_AGGREGATED_MODULES)
+#define GBA_CORE_MODULE_COMPILED_FROM_AGGREGATE 1
 #include "./gba_core_modules/core_bootstrap.mm"
 #include "./gba_core_modules/core_reset_state.mm"
 #include "./gba_core_modules/core_save_debug.mm"
@@ -22,4 +23,5 @@
 #include "./gba_core_modules/timing_dma.mm"
 #include "./gba_core_modules/apu_interrupts.mm"
 #include "./gba_core_modules/render_debug.mm"
+#undef GBA_CORE_MODULE_COMPILED_FROM_AGGREGATE
 #endif

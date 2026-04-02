@@ -1,3 +1,7 @@
+#if defined(GBA_CORE_USE_AGGREGATED_MODULES) && !defined(GBA_CORE_MODULE_COMPILED_FROM_AGGREGATE)
+// Aggregated build is enabled; this standalone TU is intentionally empty to avoid duplicate symbols.
+#else
+
 // core_reset_state.mm
 // GBA core hardware reset – initialises CPU, PPU scanline buffers, and all state.
 
@@ -103,3 +107,4 @@ void GBACore::HandleRegisterRamReset(uint8_t flags) {
 
 
 }  // namespace gba
+#endif
