@@ -431,6 +431,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       }
     }
 
+    const bool defer_flags_to_spsr = set_flags && rd == 15u && HasSpsr(GetCpuMode());
     auto set_logic_flags = [&](uint32_t value) {
       SetNZFlags(value);
       SetFlagC(shifter_carry);
@@ -438,7 +439,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     auto do_add = [&](uint32_t lhs, uint32_t rhs, uint32_t carry_in, uint32_t* out) {
       const uint64_t r64 = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(rhs) + carry_in;
       *out = static_cast<uint32_t>(r64);
-      if (set_flags) {
+      if (set_flags && !defer_flags_to_spsr) {
         SetNZFlags(*out);
         const bool carry = (r64 >> 32) != 0;
         const int64_t sres = static_cast<int64_t>(static_cast<int32_t>(lhs)) +
@@ -455,7 +456,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     auto do_sub = [&](uint32_t lhs, uint32_t rhs, uint32_t borrow, uint32_t* out) {
       const uint64_t r64 = static_cast<uint64_t>(lhs) - static_cast<uint64_t>(rhs) - borrow;
       *out = static_cast<uint32_t>(r64);
-      if (set_flags) {
+      if (set_flags && !defer_flags_to_spsr) {
         SetNZFlags(*out);
         const uint64_t subtrahend = static_cast<uint64_t>(rhs) + static_cast<uint64_t>(borrow);
         const bool carry = static_cast<uint64_t>(lhs) >= subtrahend;  // no borrow
@@ -476,12 +477,12 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     switch (op) {
       case 0x0: { // AND
         result_value = arm_reg_value(rn) & operand2;
-        if (set_flags) set_logic_flags(result_value);
+        if (set_flags && !defer_flags_to_spsr) set_logic_flags(result_value);
         break;
       }
       case 0x1: { // EOR
         result_value = arm_reg_value(rn) ^ operand2;
-        if (set_flags) set_logic_flags(result_value);
+        if (set_flags && !defer_flags_to_spsr) set_logic_flags(result_value);
         break;
       }
       case 0x2: { // SUB
@@ -537,22 +538,22 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       }
       case 0xC: { // ORR
         result_value = arm_reg_value(rn) | operand2;
-        if (set_flags) set_logic_flags(result_value);
+        if (set_flags && !defer_flags_to_spsr) set_logic_flags(result_value);
         break;
       }
       case 0xD: { // MOV
         result_value = operand2;
-        if (set_flags) set_logic_flags(result_value);
+        if (set_flags && !defer_flags_to_spsr) set_logic_flags(result_value);
         break;
       }
       case 0xE: { // BIC
         result_value = arm_reg_value(rn) & ~operand2;
-        if (set_flags) set_logic_flags(result_value);
+        if (set_flags && !defer_flags_to_spsr) set_logic_flags(result_value);
         break;
       }
       case 0xF: { // MVN
         result_value = ~operand2;
-        if (set_flags) set_logic_flags(result_value);
+        if (set_flags && !defer_flags_to_spsr) set_logic_flags(result_value);
         break;
       }
       default:
