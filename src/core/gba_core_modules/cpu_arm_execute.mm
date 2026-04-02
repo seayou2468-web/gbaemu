@@ -1,637 +1,716 @@
+// cpu_arm_execute.mm
+//
+// GBA ARM7TDMI CPU – ARM命令実行エンジン (完全実装版)
+//
+// ARM7TDMI パイプラインモデル:
+//   cpu_.regs[15] = 現在実行中命令のアドレス (execute_addr)
+//   命令がオペランドとして r15 を読む場合: execute_addr + 8 を返す (ARM)
+//   命令がレジスタシフトで r15 を読む場合: execute_addr + 12 を返す
+//   分岐後: cpu_.regs[15] = 分岐先アドレス (FlushPipeline で追加サイクル)
+//   通常終了: cpu_.regs[15] += 4
+//
+// 参考: arm.c / isa-arm.c (C実装からの完全移植)
+
 #include "../gba_core.h"
 
 namespace gba {
 
 namespace {
-inline uint32_t ArmRegIndex(uint32_t op, uint32_t shift) { return (op >> shift) & 0xFu; }
-inline uint32_t ArmReadBasicOperandReg(const std::array<uint32_t, 16>& regs, uint32_t r) {
-  return (r == 15u) ? (regs[15] + 8u) : regs[r];
+
+// ─── ヘルパー ────────────────────────────────────────────────────────────────
+
+__attribute__((always_inline)) static inline uint32_t ArmReg(uint32_t op, uint32_t shift) {
+    return (op >> shift) & 0xFu;
 }
-inline uint32_t ArmApplyRegisterShift(uint32_t value, uint32_t type, uint32_t amount, bool carry_in, bool* carry_out) {
-  if ((amount & 0xFFu) == 0) {
-    if (carry_out) *carry_out = carry_in;
-    return value;
-  }
-  switch (type & 3u) {
-    case 0:  // LSL
-      if (amount < 32) {
-        if (carry_out) *carry_out = ((value >> (32 - amount)) & 1u) != 0;
-        return value << amount;
-      }
-      if (amount == 32) {
-        if (carry_out) *carry_out = (value & 1u) != 0;
-        return 0;
-      }
-      if (carry_out) *carry_out = false;
-      return 0;
-    case 1:  // LSR
-      if (amount < 32) {
-        if (carry_out) *carry_out = ((value >> (amount - 1)) & 1u) != 0;
-        return value >> amount;
-      }
-      if (amount == 32) {
-        if (carry_out) *carry_out = ((value >> 31) & 1u) != 0;
-        return 0;
-      }
-      if (carry_out) *carry_out = false;
-      return 0;
-    case 2:  // ASR
-      if (amount < 32) {
-        if (carry_out) *carry_out = ((value >> (amount - 1)) & 1u) != 0;
-        return static_cast<uint32_t>(static_cast<int32_t>(value) >> amount);
-      }
-      if (carry_out) *carry_out = ((value >> 31) & 1u) != 0;
-      return (value & 0x80000000u) ? 0xFFFFFFFFu : 0u;
-    default: {  // ROR
-      const uint32_t rot = amount & 31u;
-      if (rot == 0) {
-        if (carry_out) *carry_out = ((value >> 31) & 1u) != 0;
+
+// r15 を execute_addr + 8 として返す (即値シフト用)
+__attribute__((always_inline)) static inline uint32_t ArmReadReg(const std::array<uint32_t, 16>& r, uint32_t idx) {
+    return (idx == 15u) ? (r[15] + 8u) : r[idx];
+}
+
+// r15 を execute_addr + 12 として返す (レジスタシフト用: extra Iサイクル分 +4)
+__attribute__((always_inline)) static inline uint32_t ArmReadRegRS(const std::array<uint32_t, 16>& r, uint32_t idx) {
+    return (idx == 15u) ? (r[15] + 12u) : r[idx];
+}
+
+// レジスタシフト量でシフト (Rsの低8ビットを使用)
+__attribute__((always_inline)) static inline uint32_t ArmRegShift(uint32_t value, uint32_t type,
+                                   uint32_t amount, bool carry_in,
+                                   bool* carry_out) {
+    const uint32_t amt = amount & 0xFFu;
+    if (amt == 0u) {
+        if (carry_out) *carry_out = carry_in;
         return value;
-      }
-      if (carry_out) *carry_out = ((value >> (rot - 1)) & 1u) != 0;
-      return (value >> rot) | (value << (32u - rot));
     }
-  }
+    switch (type & 3u) {
+        case 0u: // LSL
+            if (amt < 32u) {
+                if (carry_out) *carry_out = ((value >> (32u - amt)) & 1u) != 0u;
+                return value << amt;
+            }
+            if (carry_out) *carry_out = (amt == 32u) ? ((value & 1u) != 0u) : false;
+            return 0u;
+        case 1u: // LSR
+            if (amt < 32u) {
+                if (carry_out) *carry_out = ((value >> (amt - 1u)) & 1u) != 0u;
+                return value >> amt;
+            }
+            if (carry_out) *carry_out = (amt == 32u) ? ((value >> 31u) & 1u) != 0u : false;
+            return 0u;
+        case 2u: // ASR
+            if (amt < 32u) {
+                if (carry_out) *carry_out = ((value >> (amt - 1u)) & 1u) != 0u;
+                return static_cast<uint32_t>(static_cast<int32_t>(value) >> amt);
+            }
+            if (carry_out) *carry_out = ((value >> 31u) & 1u) != 0u;
+            return (value & 0x80000000u) ? 0xFFFFFFFFu : 0u;
+        default: { // ROR
+            const uint32_t rot = amt & 31u;
+            if (rot == 0u) {
+                if (carry_out) *carry_out = ((value >> 31u) & 1u) != 0u;
+                return value;
+            }
+            if (carry_out) *carry_out = ((value >> (rot - 1u)) & 1u) != 0u;
+            return (value >> rot) | (value << (32u - rot));
+        }
+    }
 }
-inline uint32_t ArmPsrWriteMask(uint32_t opcode) {
-  // ARM7TDMI (ARMv4T) supports only control and flags fields in MSR.
-  // x/s field masks are ARMv5+ and should be ignored on GBA.
-  uint32_t mask = 0;
-  if (opcode & (1u << 16)) mask |= 0x000000FFu;  // c
-  if (opcode & (1u << 19)) mask |= 0xFF000000u;  // f
-  return mask;
+
+// MSR フィールドマスク (ARMv4T: c=bit16, f=bit19 のみ有効)
+__attribute__((always_inline)) static inline uint32_t ArmMsrMask(uint32_t opcode) {
+    uint32_t mask = 0u;
+    if (opcode & (1u << 16u)) mask |= 0x000000FFu; // c
+    if (opcode & (1u << 19u)) mask |= 0xFF000000u; // f
+    return mask;
 }
+
+// 乗算内部サイクル (値依存 1..4)
+__attribute__((always_inline)) static inline uint32_t MulInternalCycles(uint32_t rs_val) {
+    if ((rs_val & 0xFFFFFF00u) == 0u || (rs_val & 0xFFFFFF00u) == 0xFFFFFF00u) return 1u;
+    if ((rs_val & 0xFFFF0000u) == 0u || (rs_val & 0xFFFF0000u) == 0xFFFF0000u) return 2u;
+    if ((rs_val & 0xFF000000u) == 0u || (rs_val & 0xFF000000u) == 0xFF000000u) return 3u;
+    return 4u;
 }
+
+} // namespace
+
+// ─── サイクル見積もり ─────────────────────────────────────────────────────────
 
 uint32_t GBACore::EstimateArmCycles(uint32_t opcode) const {
-  // ARM7TDMI近似: 基本1S + 命令種別ごとのI/N/Sを加算して概算する。
-  if ((opcode & 0x0F000000u) == 0x0F000000u) return 3;  // SWI
-  if ((opcode & 0x0FFFFFF0u) == 0x012FFF10u) return 3;  // BX
-  if ((opcode & 0x0E000000u) == 0x0A000000u) return 3;  // B/BL
-  if ((opcode & 0x0E000000u) == 0x08000000u) {          // LDM/STM
-    const uint32_t rlist = opcode & 0xFFFFu;
-    const uint32_t count = rlist ? static_cast<uint32_t>(__builtin_popcount(rlist)) : 1u;
-    return 1u + count;
-  }
-  if ((opcode & 0x0C000000u) == 0x04000000u) return 3;  // LDR/STR
-  if ((opcode & 0x0E000090u) == 0x00000090u && (opcode & 0x0F000000u) != 0x0F000000u) return 3;  // mode3
-  if ((opcode & 0x0FC000F0u) == 0x00000090u) {          // MUL/MLA
-    return (opcode & (1u << 21)) ? 3u : 2u;
-  }
-  if ((opcode & 0x0F8000F0u) == 0x00800090u) return 4;  // MULL/MLAL
-  if ((opcode & 0x0FB00FF0u) == 0x01000090u) return 4;  // SWP/SWPB
-  if ((opcode & 0x0C000000u) == 0x00000000u && (opcode & (1u << 4)) && !(opcode & (1u << 25))) {
-    return 2;  // データ処理 + レジスタ指定シフトは1Iを追加
-  }
-  return 1;
+    // SWI
+    if ((opcode & 0x0F000000u) == 0x0F000000u) return 3u;
+    // BX
+    if ((opcode & 0x0FFFFFF0u) == 0x012FFF10u) return 3u;
+    // B / BL
+    if ((opcode & 0x0E000000u) == 0x0A000000u) return 3u;
+    // LDM / STM
+    if ((opcode & 0x0E000000u) == 0x08000000u) {
+        const uint32_t n = static_cast<uint32_t>(__builtin_popcount(opcode & 0xFFFFu));
+        return 1u + (n ? n : 1u);
+    }
+    // LDR / STR / LDRH 等
+    if ((opcode & 0x0C000000u) == 0x04000000u) return 3u;
+    if ((opcode & 0x0E000090u) == 0x00000090u) return 3u;
+    // MUL / MLA
+    if ((opcode & 0x0FC000F0u) == 0x00000090u)
+        return (opcode & (1u << 21u)) ? 3u : 2u;
+    // MULL / MLAL
+    if ((opcode & 0x0F8000F0u) == 0x00800090u) return 4u;
+    // SWP / SWPB
+    if ((opcode & 0x0FB00FF0u) == 0x01000090u) return 4u;
+    // データ処理 (レジスタシフト: +1I)
+    if ((opcode & 0x0C000000u) == 0x00000000u &&
+        (opcode & (1u << 4u)) && !(opcode & (1u << 25u))) return 2u;
+    return 1u;
 }
+
+// ─── ARM命令実行 ──────────────────────────────────────────────────────────────
 
 void GBACore::ExecuteArmInstruction(uint32_t opcode) {
-  const uint32_t cond = opcode >> 28;
-  if (cond == 0xFu) {
+    // 条件コードチェック
+    const uint32_t cond = opcode >> 28u;
+    if (cond == 0xFu) {
+        HandleUndefinedInstruction(false);
+        return;
+    }
+    if (!CheckCondition(cond)) {
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── SWI ──────────────────────────────────────────────────────────────────
+    if ((opcode & 0x0F000000u) == 0x0F000000u) {
+        HandleSoftwareInterrupt(opcode & 0xFFFFFFu, false);
+        return;
+    }
+
+    // ── B / BL ───────────────────────────────────────────────────────────────
+    // ARM7TDMI: target = (PC + 8) + (sign_extend_24bit << 2)
+    //           PC during execute = execute_addr + 8
+    if ((opcode & 0x0E000000u) == 0x0A000000u) {
+        // imm24 → sign-extend → << 2
+        const int32_t off = static_cast<int32_t>((opcode & 0x00FFFFFFu) << 8u) >> 6;
+        if (opcode & (1u << 24u)) {
+            // BL: LR = execute_addr + 4 (次命令アドレス)
+            cpu_.regs[14] = cpu_.regs[15] + 4u;
+        }
+        // target = execute_addr + 8 + off
+        cpu_.regs[15] = cpu_.regs[15] + 8u + static_cast<uint32_t>(off);
+        return;
+    }
+
+    // ── BX ───────────────────────────────────────────────────────────────────
+    if ((opcode & 0x0FFFFFF0u) == 0x012FFF10u) {
+        const uint32_t rm  = opcode & 0xFu;
+        const uint32_t tgt = (rm == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rm];
+        if (tgt & 1u) {
+            cpu_.cpsr |=  (1u << 5u); // Thumbへ
+            cpu_.regs[15] = tgt & ~1u;
+        } else {
+            cpu_.cpsr &= ~(1u << 5u); // ARMへ
+            cpu_.regs[15] = tgt & ~3u;
+        }
+        return;
+    }
+
+    // ── MUL / MLA ────────────────────────────────────────────────────────────
+    if ((opcode & 0x0FC000F0u) == 0x00000090u) {
+        const bool acc       = (opcode & (1u << 21u)) != 0u;
+        const bool setflags  = (opcode & (1u << 20u)) != 0u;
+        const uint32_t rd = ArmReg(opcode, 16u);
+        const uint32_t rn = ArmReg(opcode, 12u);
+        const uint32_t rs = ArmReg(opcode, 8u);
+        const uint32_t rm = ArmReg(opcode, 0u);
+        if (rd != 15u) {
+            uint32_t res = cpu_.regs[rm] * cpu_.regs[rs];
+            if (acc) res += cpu_.regs[rn];
+            cpu_.regs[rd] = res;
+            if (setflags) SetNZFlags(res);
+        }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── MULL / MLAL (UMULL/UMLAL/SMULL/SMLAL) ───────────────────────────────
+    if ((opcode & 0x0F8000F0u) == 0x00800090u) {
+        const bool is_signed = (opcode & (1u << 22u)) != 0u;
+        const bool acc       = (opcode & (1u << 21u)) != 0u;
+        const bool setflags  = (opcode & (1u << 20u)) != 0u;
+        const uint32_t rdhi = ArmReg(opcode, 16u);
+        const uint32_t rdlo = ArmReg(opcode, 12u);
+        const uint32_t rs   = ArmReg(opcode, 8u);
+        const uint32_t rm   = ArmReg(opcode, 0u);
+        if (rdhi != 15u && rdlo != 15u) {
+            uint64_t prod;
+            if (is_signed) {
+                prod = static_cast<uint64_t>(
+                    static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rm])) *
+                    static_cast<int64_t>(static_cast<int32_t>(cpu_.regs[rs])));
+            } else {
+                prod = static_cast<uint64_t>(cpu_.regs[rm]) *
+                       static_cast<uint64_t>(cpu_.regs[rs]);
+            }
+            if (acc) {
+                prod += (static_cast<uint64_t>(cpu_.regs[rdhi]) << 32u) |
+                        static_cast<uint64_t>(cpu_.regs[rdlo]);
+            }
+            cpu_.regs[rdlo] = static_cast<uint32_t>(prod);
+            cpu_.regs[rdhi] = static_cast<uint32_t>(prod >> 32u);
+            if (setflags) {
+                const uint32_t hi = cpu_.regs[rdhi];
+                const uint32_t lo = cpu_.regs[rdlo];
+                cpu_.cpsr = (cpu_.cpsr & ~((1u << 31u) | (1u << 30u)))
+                          | (hi & 0x80000000u)
+                          | (((hi | lo) == 0u) ? (1u << 30u) : 0u);
+            }
+        }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── SWP / SWPB ───────────────────────────────────────────────────────────
+    if ((opcode & 0x0FB00FF0u) == 0x01000090u) {
+        const bool byte_mode = (opcode & (1u << 22u)) != 0u;
+        const uint32_t rn = ArmReg(opcode, 16u);
+        const uint32_t rd = ArmReg(opcode, 12u);
+        const uint32_t rm = ArmReg(opcode, 0u);
+        const uint32_t addr  = (rn == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
+        const uint32_t store = (rm == 15u) ? (cpu_.regs[15] + 12u) : cpu_.regs[rm];
+        if (byte_mode) {
+            const uint8_t old = Read8(addr);
+            Write8(addr, static_cast<uint8_t>(store));
+            if (rd != 15u) cpu_.regs[rd] = old;
+        } else {
+            const uint32_t old = Read32(addr);
+            Write32(addr, store);
+            if (rd != 15u) cpu_.regs[rd] = old;
+        }
+        if (rd == 15u) { cpu_.regs[15] &= ~3u; return; }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── MRS ──────────────────────────────────────────────────────────────────
+    // MRS Rd, CPSR/SPSR
+    if ((opcode & 0x0FBF0FFFu) == 0x010F0000u) {
+        const bool spsr = (opcode & (1u << 22u)) != 0u;
+        const uint32_t rd = ArmReg(opcode, 12u);
+        if (rd == 15u) { cpu_.regs[15] += 4u; return; } // UNPREDICTABLE
+        if (spsr) {
+            if (!HasSpsr(GetCpuMode())) { HandleUndefinedInstruction(false); return; }
+            cpu_.regs[rd] = cpu_.spsr[GetCpuMode() & 0x1Fu];
+        } else {
+            cpu_.regs[rd] = cpu_.cpsr;
+        }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── MSR (レジスタ) ────────────────────────────────────────────────────────
+    // MSR CPSR/SPSR, Rm
+    if ((opcode & 0x0DB0F000u) == 0x0120F000u) {
+        const bool spsr = (opcode & (1u << 22u)) != 0u;
+        if (spsr && !HasSpsr(GetCpuMode())) { HandleUndefinedInstruction(false); return; }
+        const uint32_t rm    = opcode & 0xFu;
+        const uint32_t rmval = ArmReadReg(cpu_.regs, rm);
+        uint32_t mask = ArmMsrMask(opcode);
+        if (!IsPrivilegedMode(GetCpuMode())) mask &= 0xF0000000u;
+        if (spsr) {
+            auto& psr = cpu_.spsr[GetCpuMode() & 0x1Fu];
+            psr = (psr & ~mask) | (rmval & mask);
+        } else {
+            const uint32_t old_mode = GetCpuMode();
+            cpu_.cpsr = (cpu_.cpsr & ~mask) | (rmval & mask);
+            if ((mask & 0x1Fu) && GetCpuMode() != old_mode)
+                SwitchCpuMode(GetCpuMode());
+        }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── MSR (即値) ────────────────────────────────────────────────────────────
+    // MSR CPSR/SPSR, #imm
+    if ((opcode & 0x0DB0F000u) == 0x0320F000u) {
+        const bool spsr = (opcode & (1u << 22u)) != 0u;
+        if (spsr && !HasSpsr(GetCpuMode())) { HandleUndefinedInstruction(false); return; }
+        const uint32_t imm  = ExpandArmImmediate(opcode & 0xFFFu);
+        uint32_t mask = ArmMsrMask(opcode);
+        if (!IsPrivilegedMode(GetCpuMode())) mask &= 0xF0000000u;
+        if (spsr) {
+            auto& psr = cpu_.spsr[GetCpuMode() & 0x1Fu];
+            psr = (psr & ~mask) | (imm & mask);
+        } else {
+            const uint32_t old_mode = GetCpuMode();
+            cpu_.cpsr = (cpu_.cpsr & ~mask) | (imm & mask);
+            if ((mask & 0x1Fu) && GetCpuMode() != old_mode)
+                SwitchCpuMode(GetCpuMode());
+        }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── LDRH / STRH / LDRSB / LDRSH (アドレッシングモード3) ─────────────────
+    // bit25=0, bit7=1, bit4=1, not coprocessor
+    if ((opcode & 0x0E000090u) == 0x00000090u) {
+        const bool pre      = (opcode & (1u << 24u)) != 0u;
+        const bool up       = (opcode & (1u << 23u)) != 0u;
+        const bool imm_off  = (opcode & (1u << 22u)) != 0u;
+        const bool wb       = (opcode & (1u << 21u)) != 0u;
+        const bool load     = (opcode & (1u << 20u)) != 0u;
+        const uint32_t rn   = ArmReg(opcode, 16u);
+        const uint32_t rd   = ArmReg(opcode, 12u);
+        const uint32_t hops = (opcode >> 5u) & 0x3u; // 1=H,2=SB,3=SH
+
+        uint32_t off;
+        if (imm_off) {
+            off = ((opcode >> 4u) & 0xF0u) | (opcode & 0xFu);
+        } else {
+            const uint32_t rm = opcode & 0xFu;
+            off = (rm == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rm];
+        }
+
+        uint32_t addr = (rn == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
+        if (pre) addr = up ? (addr + off) : (addr - off);
+
+        if (load) {
+            uint32_t val;
+            switch (hops) {
+                case 1u: val = Read16(addr); break;
+                case 2u: val = static_cast<uint32_t>(static_cast<int32_t>(
+                                   static_cast<int8_t>(Read8(addr)))); break;
+                default: // LDRSH
+                    val = (addr & 1u) ? static_cast<uint32_t>(static_cast<int32_t>(
+                                            static_cast<int8_t>(Read8(addr))))
+                                      : static_cast<uint32_t>(static_cast<int32_t>(
+                                            static_cast<int16_t>(Read16(addr))));
+                    break;
+            }
+            cpu_.regs[rd] = val;
+        } else if (hops == 1u) {
+            const uint32_t sv = (rd == 15u) ? (cpu_.regs[15] + 12u) : cpu_.regs[rd];
+            Write16(addr, static_cast<uint16_t>(sv));
+        }
+
+        if (!pre) addr = up ? (addr + off) : (addr - off);
+        // ライトバック: LDM+Rn==Rd の場合は抑制
+        if (rn != 15u && (wb || !pre)) {
+            if (!(load && rd == rn)) cpu_.regs[rn] = addr;
+        }
+        if (load && rd == 15u) { cpu_.regs[15] &= ~3u; return; }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── LDR / STR (アドレッシングモード2) ────────────────────────────────────
+    if ((opcode & 0x0C000000u) == 0x04000000u) {
+        const bool imm_off = (opcode & (1u << 25u)) == 0u;
+        const bool pre     = (opcode & (1u << 24u)) != 0u;
+        const bool up      = (opcode & (1u << 23u)) != 0u;
+        const bool byte    = (opcode & (1u << 22u)) != 0u;
+        const bool wb      = (opcode & (1u << 21u)) != 0u;
+        const bool load    = (opcode & (1u << 20u)) != 0u;
+        const uint32_t rn  = ArmReg(opcode, 16u);
+        const uint32_t rd  = ArmReg(opcode, 12u);
+
+        uint32_t off;
+        if (imm_off) {
+            off = opcode & 0xFFFu;
+        } else {
+            const uint32_t rm   = opcode & 0xFu;
+            const uint32_t stype = (opcode >> 5u) & 0x3u;
+            const bool     sbyR  = (opcode & (1u << 4u)) != 0u;
+            uint32_t samt;
+            if (sbyR) {
+                const uint32_t rs = (opcode >> 8u) & 0xFu;
+                samt = ((rs == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rs]) & 0xFFu;
+                const uint32_t rmv = ArmReadRegRS(cpu_.regs, rm);
+                off = ArmRegShift(rmv, stype, samt, GetFlagC(), nullptr);
+            } else {
+                samt = (opcode >> 7u) & 0x1Fu;
+                const uint32_t rmv = ArmReadReg(cpu_.regs, rm);
+                off = ApplyShift(rmv, stype, samt, nullptr);
+            }
+        }
+
+        uint32_t addr = (rn == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
+        if (pre) addr = up ? (addr + off) : (addr - off);
+
+        if (load) {
+            uint32_t v;
+            if (byte) {
+                v = Read8(addr);
+            } else {
+                const uint32_t aln = addr & ~3u;
+                v = Read32(aln);
+                if (addr & 3u) v = RotateRight(v, (addr & 3u) * 8u);
+            }
+            cpu_.regs[rd] = v;
+        } else {
+            const uint32_t sv = (rd == 15u) ? (cpu_.regs[15] + 12u) : cpu_.regs[rd];
+            if (byte) Write8(addr, static_cast<uint8_t>(sv));
+            else      Write32(addr, sv);
+        }
+
+        if (!pre) addr = up ? (addr + off) : (addr - off);
+        if (rn != 15u && (wb || !pre)) {
+            if (!(load && rd == rn)) cpu_.regs[rn] = addr;
+        }
+        if (rd == 15u && load) { cpu_.regs[15] &= ~3u; return; }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── LDM / STM ────────────────────────────────────────────────────────────
+    if ((opcode & 0x0E000000u) == 0x08000000u) {
+        const bool pre      = (opcode & (1u << 24u)) != 0u;
+        const bool up       = (opcode & (1u << 23u)) != 0u;
+        const bool s        = (opcode & (1u << 22u)) != 0u; // ユーザーバンク / SPSR復元
+        const bool wb       = (opcode & (1u << 21u)) != 0u;
+        const bool load     = (opcode & (1u << 20u)) != 0u;
+        const uint32_t rn   = ArmReg(opcode, 16u);
+        const uint32_t rlist = opcode & 0xFFFFu;
+
+        uint32_t addr = (rn == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
+        const uint32_t base_addr = addr;
+        const uint32_t n_regs = rlist ? static_cast<uint32_t>(__builtin_popcount(rlist)) : 1u;
+        const uint32_t wb_addr = up ? (base_addr + n_regs * 4u) : (base_addr - n_regs * 4u);
+
+        // S ビット: PC含まないリストでユーザーバンクアクセス
+        const bool usr_bank = s && ((rlist & (1u << 15u)) == 0u);
+        const bool fiq_mode = (GetCpuMode() == 0x11u);
+
+        // 空リスト: ARM7TDMI quirk
+        if (rlist == 0u) {
+            if (load) {
+                cpu_.regs[15] = Read32(addr) & ~3u;
+                if (rn != 15u && wb)
+                    cpu_.regs[rn] = up ? (cpu_.regs[rn] + 0x40u) : (cpu_.regs[rn] - 0x40u);
+                return;
+            }
+            Write32(addr, cpu_.regs[15] + 12u);
+            if (rn != 15u && wb)
+                cpu_.regs[rn] = up ? (cpu_.regs[rn] + 0x40u) : (cpu_.regs[rn] - 0x40u);
+            cpu_.regs[15] += 4u;
+            return;
+        }
+
+        // ユーザーバンクアクセス用ヘルパー
+        auto read_usr = [&](uint32_t r) -> uint32_t {
+            if (!usr_bank) return cpu_.regs[r];
+            if (r >= 8u && r <= 12u)
+                return fiq_mode ? cpu_.banked_usr_r8_r12[r - 8u] : cpu_.regs[r];
+            if (r == 13u) return cpu_.banked_sp[0x1Fu];
+            if (r == 14u) return cpu_.banked_lr[0x1Fu];
+            return cpu_.regs[r];
+        };
+        auto write_usr = [&](uint32_t r, uint32_t v) {
+            if (!usr_bank) { cpu_.regs[r] = v; return; }
+            if (r >= 8u && r <= 12u) {
+                if (fiq_mode) cpu_.banked_usr_r8_r12[r - 8u] = v;
+                else          cpu_.regs[r] = v;
+                return;
+            }
+            if      (r == 13u) cpu_.banked_sp[0x1Fu] = v;
+            else if (r == 14u) cpu_.banked_lr[0x1Fu] = v;
+            else               cpu_.regs[r] = v;
+        };
+
+        for (uint32_t r = 0u; r < 16u; ++r) {
+            if ((rlist & (1u << r)) == 0u) continue;
+            if (pre) addr = up ? (addr + 4u) : (addr - 4u);
+            if (load) {
+                write_usr(r, Read32(addr));
+            } else {
+                uint32_t sv = read_usr(r);
+                // STM: Rn が最初以外のレジスタの場合、ライトバック済みアドレスを格納
+                if (wb && r == rn && rn != 15u) {
+                    const bool first = (rlist & ((1u << r) - 1u)) == 0u;
+                    if (!first) sv = wb_addr;
+                }
+                if (r == 15u) sv = cpu_.regs[15] + 12u;
+                Write32(addr, sv);
+            }
+            if (!pre) addr = up ? (addr + 4u) : (addr - 4u);
+        }
+
+        // ライトバック: LDM+Rn in rlist の場合は抑制
+        if (rn != 15u && wb) {
+            if (!load || ((rlist & (1u << rn)) == 0u))
+                cpu_.regs[rn] = addr;
+        }
+
+        // PC がロードされた場合
+        if (load && (rlist & (1u << 15u))) {
+            cpu_.regs[15] &= ~3u;
+            if (s && HasSpsr(GetCpuMode())) {
+                const uint32_t old_mode = GetCpuMode();
+                cpu_.cpsr = cpu_.spsr[old_mode & 0x1Fu];
+                const uint32_t new_mode = GetCpuMode();
+                if (new_mode != old_mode) SwitchCpuMode(new_mode);
+            }
+            return;
+        }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // ── データ処理 (ALU) ──────────────────────────────────────────────────────
+    if ((opcode & 0x0C000000u) == 0x00000000u) {
+        const bool imm_mode = (opcode & (1u << 25u)) != 0u;
+        const uint32_t alu_op   = (opcode >> 21u) & 0xFu;
+        const bool setflags     = (opcode & (1u << 20u)) != 0u;
+        const uint32_t rn       = ArmReg(opcode, 16u);
+        const uint32_t rd       = ArmReg(opcode, 12u);
+        const bool reg_shift    = !imm_mode && ((opcode & (1u << 4u)) != 0u);
+
+        // rn == PC: レジスタシフトなら +12、即値/即値シフトなら +8
+        const uint32_t lhs = (rn == 15u) ? (cpu_.regs[15] + (reg_shift ? 12u : 8u))
+                                          : cpu_.regs[rn];
+
+        bool carry = GetFlagC();
+        uint32_t rhs;
+        if (imm_mode) {
+            rhs = ExpandArmImmediate(opcode & 0xFFFu);
+            const uint32_t rot = ((opcode >> 8u) & 0xFu) * 2u;
+            if (rot) carry = (rhs >> 31u) & 1u;
+        } else {
+            const uint32_t rm    = opcode & 0xFu;
+            const uint32_t stype = (opcode >> 5u) & 0x3u;
+            if (reg_shift) {
+                // Rs の低8ビットがシフト量
+                const uint32_t rs   = (opcode >> 8u) & 0xFu;
+                const uint32_t samt = ((rs == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rs]) & 0xFFu;
+                const uint32_t rmv  = ArmReadRegRS(cpu_.regs, rm);
+                rhs = ArmRegShift(rmv, stype, samt, carry, &carry);
+            } else {
+                const uint32_t samt = (opcode >> 7u) & 0x1Fu;
+                const uint32_t rmv  = ArmReadReg(cpu_.regs, rm);
+                rhs = ApplyShift(rmv, stype, samt, &carry);
+            }
+        }
+
+        uint64_t r64  = 0ull;
+        uint32_t res  = 0u;
+        const bool c  = GetFlagC();
+        switch (alu_op) {
+            case 0x0u: // AND
+                res = lhs & rhs;
+                if (setflags) { SetNZFlags(res); SetFlagC(carry); } break;
+            case 0x1u: // EOR
+                res = lhs ^ rhs;
+                if (setflags) { SetNZFlags(res); SetFlagC(carry); } break;
+            case 0x2u: // SUB
+                r64 = static_cast<uint64_t>(lhs) - rhs;
+                res = static_cast<uint32_t>(r64);
+                if (setflags) SetSubFlags(lhs, rhs, r64); break;
+            case 0x3u: // RSB
+                r64 = static_cast<uint64_t>(rhs) - lhs;
+                res = static_cast<uint32_t>(r64);
+                if (setflags) SetSubFlags(rhs, lhs, r64); break;
+            case 0x4u: // ADD
+                r64 = static_cast<uint64_t>(lhs) + rhs;
+                res = static_cast<uint32_t>(r64);
+                if (setflags) SetAddFlags(lhs, rhs, r64); break;
+            case 0x5u: { // ADC
+                const uint32_t cv = c ? 1u : 0u;
+                r64 = static_cast<uint64_t>(lhs) + rhs + cv;
+                res = static_cast<uint32_t>(r64);
+                if (setflags) SetAddFlags(lhs, rhs + cv, r64); break;
+            }
+            case 0x6u: { // SBC
+                const uint32_t borrow = c ? 0u : 1u;
+                r64 = static_cast<uint64_t>(lhs) - rhs - borrow;
+                res = static_cast<uint32_t>(r64);
+                if (setflags) SetSubFlags(lhs, rhs + borrow, r64); break;
+            }
+            case 0x7u: { // RSC
+                const uint32_t borrow = c ? 0u : 1u;
+                r64 = static_cast<uint64_t>(rhs) - lhs - borrow;
+                res = static_cast<uint32_t>(r64);
+                if (setflags) SetSubFlags(rhs, lhs + borrow, r64); break;
+            }
+            case 0x8u: // TST
+                r64 = lhs & rhs;
+                if (setflags) { SetNZFlags(static_cast<uint32_t>(r64)); SetFlagC(carry); } break;
+            case 0x9u: // TEQ
+                r64 = lhs ^ rhs;
+                if (setflags) { SetNZFlags(static_cast<uint32_t>(r64)); SetFlagC(carry); } break;
+            case 0xAu: // CMP
+                r64 = static_cast<uint64_t>(lhs) - rhs;
+                if (setflags) SetSubFlags(lhs, rhs, r64); break;
+            case 0xBu: // CMN
+                r64 = static_cast<uint64_t>(lhs) + rhs;
+                if (setflags) SetAddFlags(lhs, rhs, r64); break;
+            case 0xCu: // ORR
+                res = lhs | rhs;
+                if (setflags) { SetNZFlags(res); SetFlagC(carry); } break;
+            case 0xDu: // MOV
+                res = rhs;
+                if (setflags) { SetNZFlags(res); SetFlagC(carry); } break;
+            case 0xEu: // BIC
+                res = lhs & ~rhs;
+                if (setflags) { SetNZFlags(res); SetFlagC(carry); } break;
+            case 0xFu: // MVN
+                res = ~rhs;
+                if (setflags) { SetNZFlags(res); SetFlagC(carry); } break;
+            default:
+                cpu_.regs[15] += 4u;
+                return;
+        }
+
+        // TST/TEQ/CMP/CMN は rd に書き込まない
+        if (alu_op >= 0x8u && alu_op <= 0xBu) {
+            cpu_.regs[15] += 4u;
+            return;
+        }
+
+        cpu_.regs[rd] = res;
+        if (rd == 15u) {
+            cpu_.regs[15] &= ~3u;
+            if (setflags && HasSpsr(GetCpuMode())) {
+                const uint32_t old_mode = GetCpuMode();
+                cpu_.cpsr = cpu_.spsr[old_mode & 0x1Fu];
+                const uint32_t new_mode = GetCpuMode();
+                if (new_mode != old_mode) SwitchCpuMode(new_mode);
+            }
+            return;
+        }
+        cpu_.regs[15] += 4u;
+        return;
+    }
+
+    // コプロセッサ / 未定義
     HandleUndefinedInstruction(false);
-    return;
-  }
-  if (!CheckCondition(cond)) {
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  if ((opcode & 0x0F000000u) == 0x0F000000u) {
-    HandleSoftwareInterrupt(opcode & 0xFFFFFFu, false);
-    return;
-  }
-
-  // B/BL
-  if ((opcode & 0x0E000000u) == 0x0A000000u) {
-    int32_t off = static_cast<int32_t>((opcode & 0x00FFFFFFu) << 8) >> 6;
-    const uint32_t next = cpu_.regs[15] + 4;
-    if (opcode & (1u << 24)) {
-      cpu_.regs[14] = next;
-    }
-    cpu_.regs[15] = next + static_cast<uint32_t>(off);
-    return;
-  }
-
-  // BX
-  if ((opcode & 0x0FFFFFF0u) == 0x012FFF10u) {
-    const uint32_t rm = opcode & 0xFu;
-    const uint32_t target = (rm == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rm];
-    if (target & 1u) {
-      cpu_.cpsr |= (1u << 5);
-      cpu_.regs[15] = target & ~1u;
-    } else {
-      cpu_.cpsr &= ~(1u << 5);
-      cpu_.regs[15] = target & ~3u;
-    }
-    return;
-  }
-
-  // MUL/MLA
-  if ((opcode & 0x0FC000F0u) == 0x00000090u) {
-    const bool accumulate = (opcode & (1u << 21)) != 0;
-    const bool set_flags = (opcode & (1u << 20)) != 0;
-    const uint32_t rd = ArmRegIndex(opcode, 16);
-    const uint32_t rn = ArmRegIndex(opcode, 12);
-    const uint32_t rs = ArmRegIndex(opcode, 8);
-    const uint32_t rm = ArmRegIndex(opcode, 0);
-    if (rd != 15u) {
-      uint32_t result = ArmReadBasicOperandReg(cpu_.regs, rm) * ArmReadBasicOperandReg(cpu_.regs, rs);
-      if (accumulate) result += ArmReadBasicOperandReg(cpu_.regs, rn);
-      cpu_.regs[rd] = result;
-      if (set_flags) SetNZFlags(result);
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // UMULL/UMLAL/SMULL/SMLAL
-  if ((opcode & 0x0F8000F0u) == 0x00800090u) {
-    const bool signed_mul = (opcode & (1u << 22)) != 0;
-    const bool accumulate = (opcode & (1u << 21)) != 0;
-    const bool set_flags = (opcode & (1u << 20)) != 0;
-    const uint32_t rd_hi = ArmRegIndex(opcode, 16);
-    const uint32_t rd_lo = ArmRegIndex(opcode, 12);
-    const uint32_t rs = ArmRegIndex(opcode, 8);
-    const uint32_t rm = ArmRegIndex(opcode, 0);
-    if (rd_hi != 15u && rd_lo != 15u) {
-      uint64_t product = 0;
-      if (signed_mul) {
-        product = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(ArmReadBasicOperandReg(cpu_.regs, rm))) *
-                                        static_cast<int64_t>(static_cast<int32_t>(ArmReadBasicOperandReg(cpu_.regs, rs))));
-      } else {
-        product = static_cast<uint64_t>(ArmReadBasicOperandReg(cpu_.regs, rm)) * static_cast<uint64_t>(ArmReadBasicOperandReg(cpu_.regs, rs));
-      }
-      if (accumulate) {
-        const uint64_t old = (static_cast<uint64_t>(cpu_.regs[rd_hi]) << 32) | cpu_.regs[rd_lo];
-        product += old;
-      }
-      cpu_.regs[rd_lo] = static_cast<uint32_t>(product);
-      cpu_.regs[rd_hi] = static_cast<uint32_t>(product >> 32);
-      if (set_flags) {
-        cpu_.cpsr = (cpu_.cpsr & ~((1u << 31) | (1u << 30))) |
-                    (cpu_.regs[rd_hi] & 0x80000000u) |
-                    (((cpu_.regs[rd_hi] | cpu_.regs[rd_lo]) == 0) ? (1u << 30) : 0u);
-      }
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // SWP/SWPB
-  if ((opcode & 0x0FB00FF0u) == 0x01000090u) {
-    const bool byte = (opcode & (1u << 22)) != 0;
-    const uint32_t rn = ArmRegIndex(opcode, 16);
-    const uint32_t rd = ArmRegIndex(opcode, 12);
-    const uint32_t rm = ArmRegIndex(opcode, 0);
-    const uint32_t addr = (rn == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
-    const uint32_t store_value = (rm == 15) ? (cpu_.regs[15] + 12u) : cpu_.regs[rm];
-    if (byte) {
-      const uint8_t old = Read8(addr);
-      Write8(addr, static_cast<uint8_t>(store_value));
-      cpu_.regs[rd] = old;
-    } else {
-      const uint32_t old = Read32(addr);
-      Write32(addr, store_value);
-      cpu_.regs[rd] = old;
-    }
-    if (rd == 15) {
-      cpu_.regs[15] &= ~3u;
-      return;
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // MRS / MSR (最低限)
-  if ((opcode & 0x0FBF0FFFu) == 0x010F0000u) {  // MRS Rd, CPSR/SPSR
-    const bool spsr = (opcode & (1u << 22)) != 0;
-    if (spsr && !HasSpsr(GetCpuMode())) {
-      HandleUndefinedInstruction(false);
-      return;
-    }
-    const uint32_t rd = ArmRegIndex(opcode, 12);
-    if (rd == 15u) {
-      // ARMv4T: MRS with Rd=PC is UNPREDICTABLE. Suppress side effects safely.
-      cpu_.regs[15] += 4;
-      return;
-    }
-    cpu_.regs[rd] = spsr ? cpu_.spsr[GetCpuMode() & 0x1Fu] : cpu_.cpsr;
-    cpu_.regs[15] += 4;
-    return;
-  }
-  if ((opcode & 0x0DB0F000u) == 0x0120F000u) {  // MSR CPSR/SPSR_flg, Rm
-    const bool spsr = (opcode & (1u << 22)) != 0;
-    if (spsr && !HasSpsr(GetCpuMode())) {
-      HandleUndefinedInstruction(false);
-      return;
-    }
-    const uint32_t rm = opcode & 0xFu;
-    const uint32_t rm_value = (rm == 15) ? (cpu_.regs[15] + 12u) : cpu_.regs[rm];
-    uint32_t mask = ArmPsrWriteMask(opcode);
-    if (!IsPrivilegedMode(GetCpuMode())) mask &= 0xF0000000u;
-    if (spsr) {
-      auto& psr = cpu_.spsr[GetCpuMode() & 0x1Fu];
-      psr = (psr & ~mask) | (rm_value & mask);
-    } else {
-      const uint32_t old_mode = GetCpuMode();
-      cpu_.cpsr = (cpu_.cpsr & ~mask) | (rm_value & mask);
-      if ((mask & 0x1Fu) && GetCpuMode() != old_mode) {
-        SwitchCpuMode(GetCpuMode());
-      }
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-  if ((opcode & 0x0DB0F000u) == 0x0320F000u) {  // MSR CPSR/SPSR_flg, #imm
-    const bool spsr = (opcode & (1u << 22)) != 0;
-    if (spsr && !HasSpsr(GetCpuMode())) {
-      HandleUndefinedInstruction(false);
-      return;
-    }
-    const uint32_t imm = ExpandArmImmediate(opcode & 0xFFFu);
-    uint32_t mask = ArmPsrWriteMask(opcode);
-    if (!IsPrivilegedMode(GetCpuMode())) mask &= 0xF0000000u;
-    if (spsr) {
-      auto& psr = cpu_.spsr[GetCpuMode() & 0x1Fu];
-      psr = (psr & ~mask) | (imm & mask);
-    } else {
-      const uint32_t old_mode = GetCpuMode();
-      cpu_.cpsr = (cpu_.cpsr & ~mask) | (imm & mask);
-      if ((mask & 0x1Fu) && GetCpuMode() != old_mode) {
-        SwitchCpuMode(GetCpuMode());
-      }
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // LDRH/LDRSH/LDRSB/STRH (addr mode 3)
-  if ((opcode & 0x0E000090u) == 0x00000090u && (opcode & 0x0F000000u) != 0x0F000000u) {
-    const bool pre = (opcode & (1u << 24)) != 0;
-    const bool up = (opcode & (1u << 23)) != 0;
-    const bool imm = (opcode & (1u << 22)) != 0;
-    const bool writeback = (opcode & (1u << 21)) != 0;
-    const bool load = (opcode & (1u << 20)) != 0;
-    const uint32_t rn = ArmRegIndex(opcode, 16);
-    const uint32_t rd = ArmRegIndex(opcode, 12);
-    const uint32_t op = (opcode >> 5) & 0x3u;  // 1=H, 2=SB, 3=SH
-    uint32_t off = 0;
-    if (imm) {
-      off = ((opcode >> 4) & 0xF0u) | (opcode & 0xFu);
-    } else {
-      const uint32_t rm = opcode & 0xFu;
-      off = (rm == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rm];
-    }
-    uint32_t addr = (rn == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
-    if (pre) addr = up ? (addr + off) : (addr - off);
-
-    if (load) {
-      if (op == 1) cpu_.regs[rd] = Read16(addr);
-      else if (op == 2) cpu_.regs[rd] = static_cast<int32_t>(static_cast<int8_t>(Read8(addr)));
-      else {
-        // ARM7TDMI: odd address LDRSH behaves like signed byte load.
-        cpu_.regs[rd] = (addr & 1u) ? static_cast<int32_t>(static_cast<int8_t>(Read8(addr)))
-                                    : static_cast<int32_t>(static_cast<int16_t>(Read16(addr)));
-      }
-    } else if (op == 1) {
-      const uint32_t store_value = (rd == 15) ? (cpu_.regs[15] + 12u) : cpu_.regs[rd];
-      Write16(addr, static_cast<uint16_t>(store_value));
-    }
-
-    if (!pre) addr = up ? (addr + off) : (addr - off);
-    if (rn != 15 && (writeback || !pre)) {
-      // ARMv4T: load + writeback with Rd==Rn is UNPREDICTABLE.
-      // Keep destination load result and suppress writeback on this hazard.
-      if (!(load && rd == rn)) {
-        cpu_.regs[rn] = addr;
-      }
-    }
-    if (load && rd == 15) {
-      cpu_.regs[15] &= ~3u;
-      return;
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // LDR/STR (single data transfer, immediate/register offset)
-  if ((opcode & 0x0C000000u) == 0x04000000u) {
-    const bool is_imm = (opcode & (1u << 25)) == 0;
-    const bool pre = (opcode & (1u << 24)) != 0;
-    const bool up = (opcode & (1u << 23)) != 0;
-    const bool byte = (opcode & (1u << 22)) != 0;
-    const bool writeback = (opcode & (1u << 21)) != 0;
-    const bool load = (opcode & (1u << 20)) != 0;
-    const uint32_t rn = ArmRegIndex(opcode, 16);
-    const uint32_t rd = ArmRegIndex(opcode, 12);
-
-    uint32_t off = 0;
-    if (is_imm) {
-      off = opcode & 0xFFFu;
-    } else {
-      const uint32_t rm = opcode & 0xFu;
-      const uint32_t shift = (opcode >> 5) & 0x3u;
-      const bool shift_by_register = (opcode & (1u << 4)) != 0;
-      uint32_t amount = 0;
-      if (shift_by_register) {
-        const uint32_t rs = (opcode >> 8) & 0xFu;
-        amount = ((rs == 15 ? (cpu_.regs[15] + 8) : cpu_.regs[rs])) & 0xFFu;
-      } else {
-        amount = (opcode >> 7) & 0x1Fu;
-      }
-      const uint32_t rmv = (rm == 15) ? (cpu_.regs[15] + (shift_by_register ? 12u : 8u)) : cpu_.regs[rm];
-      if (shift_by_register) off = ArmApplyRegisterShift(rmv, shift, amount, GetFlagC(), nullptr);
-      else off = ApplyShift(rmv, shift, amount, nullptr);
-    }
-
-    uint32_t addr = (rn == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
-    if (pre) {
-      addr = up ? (addr + off) : (addr - off);
-    }
-
-    if (load) {
-      uint32_t v = 0;
-      if (byte) {
-        v = Read8(addr);
-      } else {
-        v = (addr & 3u) ? RotateRight(Read32(addr & ~3u), (addr & 3u) * 8u) : Read32(addr);
-      }
-      cpu_.regs[rd] = v;
-    } else {
-      const uint32_t v = (rd == 15) ? (cpu_.regs[15] + 12u) : cpu_.regs[rd];
-      if (byte) {
-        Write8(addr, static_cast<uint8_t>(v));
-      } else {
-        Write32(addr, v);
-      }
-    }
-
-    if (!pre) {
-      addr = up ? (addr + off) : (addr - off);
-    }
-    if (rn != 15 && (writeback || !pre)) {
-      // ARMv4T: load + writeback with Rd==Rn is UNPREDICTABLE.
-      // Keep destination load result and suppress writeback on this hazard.
-      if (!(load && rd == rn)) {
-        cpu_.regs[rn] = addr;
-      }
-    }
-
-    if (rd == 15 && load) {
-      cpu_.regs[15] &= ~3u;
-    } else {
-      cpu_.regs[15] += 4;
-    }
-    return;
-  }
-
-  // LDM/STM
-  if ((opcode & 0x0E000000u) == 0x08000000u) {
-    const bool pre = (opcode & (1u << 24)) != 0;
-    const bool up = (opcode & (1u << 23)) != 0;
-    const bool s = (opcode & (1u << 22)) != 0;
-    const bool writeback = (opcode & (1u << 21)) != 0;
-    const bool load = (opcode & (1u << 20)) != 0;
-    const uint32_t rn = ArmRegIndex(opcode, 16);
-    uint32_t rlist = opcode & 0xFFFFu;
-    uint32_t addr = (rn == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rn];
-    const uint32_t base_addr = addr;
-    const uint32_t transfer_count = rlist ? static_cast<uint32_t>(__builtin_popcount(rlist)) : 1u;
-    const uint32_t writeback_addr = up ? (base_addr + transfer_count * 4u) : (base_addr - transfer_count * 4u);
-    const bool user_register_transfer = s && ((rlist & (1u << 15)) == 0);
-    const bool in_fiq_mode = GetCpuMode() == 0x11u;
-    if (rlist == 0) {
-      // ARM7TDMI quirk: empty list transfers PC and applies +0x40 writeback.
-      if (load) {
-        cpu_.regs[15] = Read32(addr) & ~3u;
-        if (rn != 15 && writeback) cpu_.regs[rn] = up ? (cpu_.regs[rn] + 0x40u) : (cpu_.regs[rn] - 0x40u);
-        return;
-      } else {
-        Write32(addr, cpu_.regs[15] + 12u);
-      }
-      if (rn != 15 && writeback) cpu_.regs[rn] = up ? (cpu_.regs[rn] + 0x40u) : (cpu_.regs[rn] - 0x40u);
-      cpu_.regs[15] += 4;
-      return;
-    }
-
-    auto advance = [&](bool before) {
-      if (before) addr = up ? (addr + 4) : (addr - 4);
-    };
-    auto finish = [&](bool after) {
-      if (after) addr = up ? (addr + 4) : (addr - 4);
-    };
-    auto read_transfer_reg = [&](uint32_t r) -> uint32_t {
-      if (!user_register_transfer) return cpu_.regs[r];
-      if (r >= 8 && r <= 12) {
-        return in_fiq_mode ? cpu_.banked_usr_r8_r12[r - 8] : cpu_.regs[r];
-      }
-      if (r == 13) return cpu_.banked_sp[0x1Fu];
-      if (r == 14) return cpu_.banked_lr[0x1Fu];
-      return cpu_.regs[r];
-    };
-    auto write_transfer_reg = [&](uint32_t r, uint32_t value) {
-      if (!user_register_transfer) {
-        cpu_.regs[r] = value;
-        return;
-      }
-      if (r >= 8 && r <= 12) {
-        if (in_fiq_mode) cpu_.banked_usr_r8_r12[r - 8] = value;
-        else cpu_.regs[r] = value;
-        return;
-      }
-      if (r == 13) cpu_.banked_sp[0x1Fu] = value;
-      else if (r == 14) cpu_.banked_lr[0x1Fu] = value;
-      else cpu_.regs[r] = value;
-    };
-
-    for (uint32_t r = 0; r < 16; ++r) {
-      if ((rlist & (1u << r)) == 0) continue;
-      advance(pre);
-      if (load) {
-        write_transfer_reg(r, Read32(addr));
-      } else {
-        uint32_t store_value = read_transfer_reg(r);
-        if (writeback && r == rn && rn != 15) {
-          const bool rn_is_first = (rlist & ((1u << r) - 1u)) == 0;
-          if (!rn_is_first) store_value = writeback_addr;
-        }
-        if (r == 15) store_value = cpu_.regs[15] + 12u;
-        Write32(addr, store_value);
-      }
-      finish(!pre);
-    }
-
-    if (rn != 15 && writeback) {
-      // ARM7TDMI: STM writes back even when Rn is in rlist; LDM suppresses writeback when Rn is loaded.
-      if (!load || ((rlist & (1u << rn)) == 0)) {
-        cpu_.regs[rn] = addr;
-      }
-    }
-    if (load && (rlist & (1u << 15))) {
-      cpu_.regs[15] &= ~3u;
-      if (s && HasSpsr(GetCpuMode())) {
-        const uint32_t old_mode = GetCpuMode();
-        cpu_.cpsr = cpu_.spsr[old_mode & 0x1Fu];
-        const uint32_t new_mode = GetCpuMode();
-        if (new_mode != old_mode) {
-          SwitchCpuMode(new_mode);
-        }
-      }
-      return;
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // ARM data processing
-  if ((opcode & 0x0C000000u) == 0x00000000u) {
-    const bool immediate = (opcode & (1u << 25)) != 0;
-    const uint32_t op = (opcode >> 21) & 0xFu;
-    const bool set_flags = (opcode & (1u << 20)) != 0;
-    const uint32_t rn = ArmRegIndex(opcode, 16);
-    const uint32_t rd = ArmRegIndex(opcode, 12);
-    const bool operand2_reg_shift_by_reg = !immediate && ((opcode & (1u << 4)) != 0);
-    const uint32_t lhs = (rn == 15)
-                             ? (cpu_.regs[15] + (operand2_reg_shift_by_reg ? 12u : 8u))
-                             : cpu_.regs[rn];
-
-    bool carry = GetFlagC();
-    uint32_t rhs = 0;
-    if (immediate) {
-      rhs = ExpandArmImmediate(opcode & 0xFFFu);
-      const uint32_t rot = ((opcode >> 8) & 0xFu) * 2u;
-      if (rot != 0) carry = (rhs >> 31) & 1u;
-    } else {
-      const uint32_t rm = opcode & 0xFu;
-      const uint32_t shift_type = (opcode >> 5) & 0x3u;
-      const bool shift_by_register = (opcode & (1u << 4)) != 0;
-      uint32_t shift = 0;
-      if (shift_by_register) {
-        const uint32_t rs = (opcode >> 8) & 0xFu;
-        const uint32_t rsv = (rs == 15) ? (cpu_.regs[15] + 8) : cpu_.regs[rs];
-        shift = rsv & 0xFFu;
-      } else {
-        shift = (opcode >> 7) & 0x1Fu;
-      }
-      const uint32_t rmv = (rm == 15) ? (cpu_.regs[15] + (shift_by_register ? 12u : 8u)) : cpu_.regs[rm];
-      if (shift_by_register) rhs = ArmApplyRegisterShift(rmv, shift_type, shift, GetFlagC(), &carry);
-      else rhs = ApplyShift(rmv, shift_type, shift, &carry);
-    }
-
-    uint64_t r64 = 0;
-    uint32_t result = 0;
-    switch (op) {
-      case 0x0: result = lhs & rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // AND
-      case 0x1: result = lhs ^ rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // EOR
-      case 0x2: r64 = static_cast<uint64_t>(lhs) - rhs; result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(lhs, rhs, r64); break; // SUB
-      case 0x3: r64 = static_cast<uint64_t>(rhs) - lhs; result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(rhs, lhs, r64); break; // RSB
-      case 0x4: r64 = static_cast<uint64_t>(lhs) + rhs; result = static_cast<uint32_t>(r64); if (set_flags) SetAddFlags(lhs, rhs, r64); break; // ADD
-      case 0x5: r64 = static_cast<uint64_t>(lhs) + rhs + (GetFlagC() ? 1u : 0u); result = static_cast<uint32_t>(r64); if (set_flags) SetAddFlags(lhs, rhs + (GetFlagC() ? 1u : 0u), r64); break; // ADC
-      case 0x6: r64 = static_cast<uint64_t>(lhs) - rhs - (GetFlagC() ? 0u : 1u); result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(lhs, rhs + (GetFlagC() ? 0u : 1u), r64); break; // SBC
-      case 0x7: r64 = static_cast<uint64_t>(rhs) - lhs - (GetFlagC() ? 0u : 1u); result = static_cast<uint32_t>(r64); if (set_flags) SetSubFlags(rhs, lhs + (GetFlagC() ? 0u : 1u), r64); break; // RSC
-      case 0x8: result = lhs & rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // TST
-      case 0x9: result = lhs ^ rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // TEQ
-      case 0xA: r64 = static_cast<uint64_t>(lhs) - rhs; if (set_flags) SetSubFlags(lhs, rhs, r64); break; // CMP
-      case 0xB: r64 = static_cast<uint64_t>(lhs) + rhs; if (set_flags) SetAddFlags(lhs, rhs, r64); break; // CMN
-      case 0xC: result = lhs | rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // ORR
-      case 0xD: result = rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // MOV
-      case 0xE: result = lhs & ~rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // BIC
-      case 0xF: result = ~rhs; if (set_flags) { SetNZFlags(result); SetFlagC(carry); } break; // MVN
-      default:
-        cpu_.regs[15] += 4;
-        return;
-    }
-
-    if (op != 0x8 && op != 0x9 && op != 0xA && op != 0xB) {
-      cpu_.regs[rd] = result;
-      if (rd == 15) {
-        cpu_.regs[15] &= ~3u;
-        if (set_flags && HasSpsr(GetCpuMode())) {
-          const uint32_t old_mode = GetCpuMode();
-          cpu_.cpsr = cpu_.spsr[old_mode & 0x1Fu];
-          const uint32_t new_mode = GetCpuMode();
-          if (new_mode != old_mode) {
-            SwitchCpuMode(new_mode);
-          }
-        }
-        return;
-      }
-    }
-    cpu_.regs[15] += 4;
-    return;
-  }
-
-  // 未実装命令はUNDEFへ
-  HandleUndefinedInstruction(false);
 }
+
+// ─── CPU スライス実行 ─────────────────────────────────────────────────────────
 
 uint32_t GBACore::RunCpuSlice(uint32_t cycles) {
-  auto mul_internal_cycles = [&](uint32_t value) -> uint32_t {
-    // ARM7TDMI 乗算の内部Iサイクル近似（値依存 1..4）
-    if ((value & 0xFFFFFF00u) == 0u || (value & 0xFFFFFF00u) == 0xFFFFFF00u) return 1;
-    if ((value & 0xFFFF0000u) == 0u || (value & 0xFFFF0000u) == 0xFFFF0000u) return 2;
-    if ((value & 0xFF000000u) == 0u || (value & 0xFF000000u) == 0xFF000000u) return 3;
-    return 4;
-  };
+    while (cycles > 0u) {
+        ServiceInterruptIfNeeded();
+        if (cpu_.halted) break;
 
-  while (cycles > 0) {
-    ServiceInterruptIfNeeded();
-    if (cpu_.halted) break;
+        const bool thumb = (cpu_.cpsr & (1u << 5u)) != 0u;
+        const uint32_t pc_exec = cpu_.regs[15]; // 実行アドレス
 
-    const bool thumb = (cpu_.cpsr & (1u << 5)) != 0;
-    const uint32_t pc_before = cpu_.regs[15];
-    if (pc_before < 0x4000u) {
-      const uint32_t a = pc_before & ~3u;
-      bios_fetch_latch_ = static_cast<uint32_t>(bios_[a & 0x3FFFu]) |
-                          (static_cast<uint32_t>(bios_[(a + 1) & 0x3FFFu]) << 8) |
-                          (static_cast<uint32_t>(bios_[(a + 2) & 0x3FFFu]) << 16) |
-                          (static_cast<uint32_t>(bios_[(a + 3) & 0x3FFFu]) << 24);
+        // BIOSフェッチラッチ更新
+        if (pc_exec < 0x4000u) {
+            const uint32_t a = pc_exec & ~3u;
+            bios_fetch_latch_ =
+                static_cast<uint32_t>(bios_[a & 0x3FFFu]) |
+                (static_cast<uint32_t>(bios_[(a + 1u) & 0x3FFFu]) << 8u) |
+                (static_cast<uint32_t>(bios_[(a + 2u) & 0x3FFFu]) << 16u) |
+                (static_cast<uint32_t>(bios_[(a + 3u) & 0x3FFFu]) << 24u);
+        }
+
+        const uint64_t ws_before      = waitstates_accum_;
+        const uint32_t pending_refill = pipeline_refill_pending_;
+        pipeline_refill_pending_      = 0u;
+
+        if (thumb) {
+            // ── Thumb フェッチ & 実行 ────────────────────────────────────
+            const uint16_t op = Read16(pc_exec);
+            ExecuteThumbInstruction(op);
+            if (cpu_.regs[15] != pc_exec + 2u) FlushPipeline(1u);
+
+            const uint32_t base_spent = EstimateThumbCycles(op);
+            const uint32_t ws_delta   = static_cast<uint32_t>(waitstates_accum_ - ws_before);
+            const uint32_t spent      = base_spent + ws_delta + pending_refill +
+                                         pipeline_refill_pending_;
+            pipeline_refill_pending_ = 0u;
+            cycles = (spent >= cycles) ? 0u : (cycles - spent);
+            executed_cycles_ += spent;
+        } else {
+            // ── ARM フェッチ & 実行 ──────────────────────────────────────
+            const uint32_t op = Read32(pc_exec);
+
+            // 乗算命令の内部サイクルをプリ計算
+            uint32_t mul_override = 0u;
+            if ((op & 0x0FC000F0u) == 0x00000090u) {
+                const uint32_t rs    = ArmReg(op, 8u);
+                const uint32_t rsval = (rs == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rs];
+                const uint32_t ic    = MulInternalCycles(rsval);
+                mul_override = 1u + ic + ((op & (1u << 21u)) ? 1u : 0u);
+            } else if ((op & 0x0F8000F0u) == 0x00800090u) {
+                const uint32_t rs    = ArmReg(op, 8u);
+                const uint32_t rsval = (rs == 15u) ? (cpu_.regs[15] + 8u) : cpu_.regs[rs];
+                const uint32_t ic    = MulInternalCycles(rsval);
+                mul_override = 2u + ic + ((op & (1u << 21u)) ? 1u : 0u);
+            }
+
+            ExecuteArmInstruction(op);
+            if (cpu_.regs[15] != pc_exec + 4u) FlushPipeline(2u);
+
+            const uint32_t base_spent = mul_override ? mul_override : EstimateArmCycles(op);
+            const uint32_t ws_delta   = static_cast<uint32_t>(waitstates_accum_ - ws_before);
+            const uint32_t spent      = base_spent + ws_delta + pending_refill +
+                                         pipeline_refill_pending_;
+            pipeline_refill_pending_ = 0u;
+            cycles = (spent >= cycles) ? 0u : (cycles - spent);
+            executed_cycles_ += spent;
+        }
     }
-    const uint64_t ws_before = waitstates_accum_;
-    const uint32_t pending_refill = pipeline_refill_pending_;
-    pipeline_refill_pending_ = 0;
-    if (thumb) {
-      const uint16_t op = Read16(cpu_.regs[15]);
-      ExecuteThumbInstruction(op);
-      if (cpu_.regs[15] != pc_before + 2u) {
-        FlushPipeline(1);
-      }
-      const uint32_t base_spent = EstimateThumbCycles(op);
-      const uint64_t ws_delta = waitstates_accum_ - ws_before;
-      const uint32_t spent = base_spent + static_cast<uint32_t>(ws_delta) + pending_refill + pipeline_refill_pending_;
-      pipeline_refill_pending_ = 0;
-      cycles = (spent >= cycles) ? 0 : (cycles - spent);
-      executed_cycles_ += spent;
-    } else {
-      const uint32_t op = Read32(cpu_.regs[15]);
-      uint32_t mul_spent_override = 0;
-      if ((op & 0x0FC000F0u) == 0x00000090u) {
-        const uint32_t rs = ArmRegIndex(op, 8);
-        const uint32_t rs_value = (rs == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rs];
-        const uint32_t i_cycles = mul_internal_cycles(rs_value);
-        const bool accumulate = (op & (1u << 21)) != 0;
-        mul_spent_override = 1u + i_cycles + (accumulate ? 1u : 0u);
-      } else if ((op & 0x0F8000F0u) == 0x00800090u) {
-        const uint32_t rs = ArmRegIndex(op, 8);
-        const uint32_t rs_value = (rs == 15) ? (cpu_.regs[15] + 8u) : cpu_.regs[rs];
-        const uint32_t i_cycles = mul_internal_cycles(rs_value);
-        const bool accumulate = (op & (1u << 21)) != 0;
-        mul_spent_override = 2u + i_cycles + (accumulate ? 1u : 0u);
-      }
-      ExecuteArmInstruction(op);
-      if (cpu_.regs[15] != pc_before + 4u) {
-        FlushPipeline(2);
-      }
-      const uint32_t base_spent = mul_spent_override ? mul_spent_override : EstimateArmCycles(op);
-      const uint64_t ws_delta = waitstates_accum_ - ws_before;
-      const uint32_t spent = base_spent + static_cast<uint32_t>(ws_delta) + pending_refill + pipeline_refill_pending_;
-      pipeline_refill_pending_ = 0;
-      cycles = (spent >= cycles) ? 0 : (cycles - spent);
-      executed_cycles_ += spent;
-    }
-  }
-  return cycles;
+    return cycles;
 }
 
-}  // namespace gba
+} // namespace gba
