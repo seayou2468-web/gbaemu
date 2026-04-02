@@ -6,6 +6,7 @@
 #include "./gba_core_modules/core_gbp_runtime.c"
 #include "./gba_core_modules/core_overrides_runtime.c"
 #include "./gba_core_modules/core_bootstrap.c"
+#include "./gba_core_modules/core_io_runtime.c"
 #include "./gba_core_modules/core_reset_state.c"
 #include "./gba_core_modules/core_timing_runtime.c"
 #include "./gba_core_modules/core_sync_runtime.c"
