@@ -284,9 +284,11 @@ void GBACore::StepFrame() {
       Write8(0x04000300u, 0x01u);
     } else {
       ++bios_boot_watchdog_frames_;
+      const bool postflg_set = (Read8(0x04000300u) & 0x01u) != 0u;
+      const bool early_handoff_timeout = postflg_set && bios_boot_watchdog_frames_ > 8u;
       // Watchdog fallback: if BIOS init does not hand off to ROM for a long
       // time, switch to direct cartridge entry to avoid permanent white screen.
-      if (bios_boot_watchdog_frames_ > 240u) {
+      if (early_handoff_timeout || bios_boot_watchdog_frames_ > 240u) {
         bios_boot_via_vector_ = false;
         bios_boot_watchdog_frames_ = 0;
         cpu_.cpsr = static_cast<uint32_t>((cpu_.cpsr & ~0x1Fu) | 0x1Fu);

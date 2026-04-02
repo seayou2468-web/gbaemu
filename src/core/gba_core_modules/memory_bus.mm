@@ -495,6 +495,19 @@ void GBACore::WriteIO16(uint32_t addr, uint16_t value) {
     io_regs_[off + 1] = static_cast<uint8_t>((next >> 8) & 0xFF);
     return;
   }
+  // POSTFLG/HALTCNT share 0x04000300/0x04000301.
+  // Low byte (POSTFLG) is writable for BIOS bookkeeping.
+  // High byte (HALTCNT) requests low-power mode; approximate STOP as HALT.
+  if (addr == 0x04000300u) {
+    const uint8_t postflg = static_cast<uint8_t>(value & 0x00FFu);
+    const uint8_t haltcnt = static_cast<uint8_t>((value >> 8) & 0x00FFu);
+    if (haltcnt != 0u) {
+      cpu_.halted = true;
+    }
+    io_regs_[off] = postflg;
+    io_regs_[off + 1] = 0u;
+    return;
+  }
   // IME only bit0 is used.
   if (addr == 0x04000208u) {
     value &= 0x0001u;

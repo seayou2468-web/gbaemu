@@ -58,20 +58,28 @@ void GBACore::Reset() {
   swi_intrwait_mask_ = 0;
   bios_latch_ = 0;
   cpu_ = CpuState{};
-  cpu_.active_mode = cpu_.cpsr & 0x1Fu;
   cpu_.banked_fiq_r8_r12.fill(0);
-  // Real hardware leaves post-boot stack pointers at these locations after
-  // BIOS SoftReset (GBATEK "SWI 00h - SoftReset"), then enters game code.
-  cpu_.banked_sp[0x13u] = 0x03007FE0u;  // SVC
-  cpu_.banked_sp[0x12u] = 0x03007FA0u;  // IRQ
-  cpu_.banked_sp[0x1Fu] = 0x03007F00u;  // SYS
-  cpu_.banked_lr[0x13u] = 0;
-  cpu_.banked_lr[0x12u] = 0;
-  cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
-  cpu_.regs[14] = 0;
   // Prefer true BIOS-vector boot when a real external BIOS is loaded.
   // Built-in BIOS remains HLE/direct-boot oriented.
   const bool use_real_bios_boot = bios_loaded_ && !bios_is_builtin_;
+  if (use_real_bios_boot) {
+    // Power-on state for BIOS execution: SVC mode, ARM state, IRQ/FIQ disabled.
+    cpu_.cpsr = 0x000000D3u;
+    cpu_.active_mode = 0x13u;
+    cpu_.regs[13] = 0;
+  } else {
+    cpu_.cpsr = 0x0000001Fu;
+    cpu_.active_mode = 0x1Fu;
+    // Real hardware leaves post-boot stack pointers at these locations after
+    // BIOS SoftReset (GBATEK "SWI 00h - SoftReset"), then enters game code.
+    cpu_.banked_sp[0x13u] = 0x03007FE0u;  // SVC
+    cpu_.banked_sp[0x12u] = 0x03007FA0u;  // IRQ
+    cpu_.banked_sp[0x1Fu] = 0x03007F00u;  // SYS
+    cpu_.regs[13] = cpu_.banked_sp[0x1Fu];
+  }
+  cpu_.banked_lr[0x13u] = 0;
+  cpu_.banked_lr[0x12u] = 0;
+  cpu_.regs[14] = 0;
   bios_boot_via_vector_ = use_real_bios_boot;
   bios_boot_watchdog_frames_ = 0;
   halt_watchdog_frames_ = 0;
@@ -93,7 +101,7 @@ void GBACore::Reset() {
   // IE/IF/IME
   WriteIO16(0x04000200u, 0x0000u);
   WriteIO16(0x04000202u, 0x0000u);
-  WriteIO16(0x04000208u, 0x0001u);
+  WriteIO16(0x04000208u, use_real_bios_boot ? 0x0000u : 0x0001u);
   // POSTFLG: 0 during BIOS flow, 1 when skipping to cartridge entry.
   Write8(0x04000300u, use_real_bios_boot ? 0x00u : 0x01u);
   SyncKeyInputRegister();

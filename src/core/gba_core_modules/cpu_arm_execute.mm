@@ -102,6 +102,14 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       addr = up ? (addr + offset) : (addr - offset);
     }
     if (write_back || !pre) cpu_.regs[rn] = addr;
+    if (load && rd == 15u) {
+      if (cpu_.cpsr & (1u << 5)) {
+        cpu_.regs[15] &= ~1u;
+      } else {
+        cpu_.regs[15] &= ~3u;
+      }
+      return;
+    }
     cpu_.regs[15] += 4;
     return;
   }
@@ -288,14 +296,21 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     if (pre) {
       addr = up ? (addr + offset) : (addr - offset);
     }
+    uint32_t load_result = 0;
+    bool load_to_pc = false;
     if (load) {
       if (byte) {
-        cpu_.regs[rd] = Read8(addr);
+        load_result = Read8(addr);
       } else {
         const uint32_t aligned = addr & ~3u;
         const uint32_t raw = Read32(aligned);
         const uint32_t rot = (addr & 3u) * 8u;
-        cpu_.regs[rd] = (rot == 0) ? raw : RotateRight(raw, rot);
+        load_result = (rot == 0) ? raw : RotateRight(raw, rot);
+      }
+      if (rd == 15u) {
+        load_to_pc = true;
+      } else {
+        cpu_.regs[rd] = load_result;
       }
     } else {
       if (byte) {
@@ -308,6 +323,15 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       addr = up ? (addr + offset) : (addr - offset);
     }
     if (write_back || !pre) cpu_.regs[rn] = addr;
+    if (load_to_pc) {
+      cpu_.regs[15] = load_result;
+      if (cpu_.cpsr & (1u << 5)) {
+        cpu_.regs[15] &= ~1u;
+      } else {
+        cpu_.regs[15] &= ~3u;
+      }
+      return;
+    }
     cpu_.regs[15] += 4;
     return;
   }
@@ -444,56 +468,43 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     };
 
     bool writes_result = true;
+    uint32_t result_value = 0;
     switch (op) {
       case 0x0: { // AND
-        const uint32_t r = arm_reg_value(rn) & operand2;
-        cpu_.regs[rd] = r;
-        if (set_flags) set_logic_flags(r);
+        result_value = arm_reg_value(rn) & operand2;
+        if (set_flags) set_logic_flags(result_value);
         break;
       }
       case 0x1: { // EOR
-        const uint32_t r = arm_reg_value(rn) ^ operand2;
-        cpu_.regs[rd] = r;
-        if (set_flags) set_logic_flags(r);
+        result_value = arm_reg_value(rn) ^ operand2;
+        if (set_flags) set_logic_flags(result_value);
         break;
       }
       case 0x2: { // SUB
         const uint32_t rn_val = arm_reg_value(rn);
-        uint32_t r = 0;
-        do_sub(rn_val, operand2, 0u, &r);
-        cpu_.regs[rd] = r;
+        do_sub(rn_val, operand2, 0u, &result_value);
         break;
       }
       case 0x3: { // RSB
         const uint32_t rn_val = arm_reg_value(rn);
-        uint32_t r = 0;
-        do_sub(operand2, rn_val, 0u, &r);
-        cpu_.regs[rd] = r;
+        do_sub(operand2, rn_val, 0u, &result_value);
         break;
       }
       case 0x4: { // ADD
         const uint32_t rn_val = arm_reg_value(rn);
-        uint32_t r = 0;
-        do_add(rn_val, operand2, 0u, &r);
-        cpu_.regs[rd] = r;
+        do_add(rn_val, operand2, 0u, &result_value);
         break;
       }
       case 0x5: { // ADC
-        uint32_t r = 0;
-        do_add(arm_reg_value(rn), operand2, GetFlagC() ? 1u : 0u, &r);
-        cpu_.regs[rd] = r;
+        do_add(arm_reg_value(rn), operand2, GetFlagC() ? 1u : 0u, &result_value);
         break;
       }
       case 0x6: { // SBC
-        uint32_t r = 0;
-        do_sub(arm_reg_value(rn), operand2, GetFlagC() ? 0u : 1u, &r);
-        cpu_.regs[rd] = r;
+        do_sub(arm_reg_value(rn), operand2, GetFlagC() ? 0u : 1u, &result_value);
         break;
       }
       case 0x7: { // RSC
-        uint32_t r = 0;
-        do_sub(operand2, arm_reg_value(rn), GetFlagC() ? 0u : 1u, &r);
-        cpu_.regs[rd] = r;
+        do_sub(operand2, arm_reg_value(rn), GetFlagC() ? 0u : 1u, &result_value);
         break;
       }
       case 0x8: { // TST
@@ -521,26 +532,23 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         break;
       }
       case 0xC: { // ORR
-        const uint32_t r = arm_reg_value(rn) | operand2;
-        cpu_.regs[rd] = r;
-        if (set_flags) set_logic_flags(r);
+        result_value = arm_reg_value(rn) | operand2;
+        if (set_flags) set_logic_flags(result_value);
         break;
       }
       case 0xD: { // MOV
-        cpu_.regs[rd] = operand2;
-        if (set_flags) set_logic_flags(operand2);
+        result_value = operand2;
+        if (set_flags) set_logic_flags(result_value);
         break;
       }
       case 0xE: { // BIC
-        const uint32_t r = arm_reg_value(rn) & ~operand2;
-        cpu_.regs[rd] = r;
-        if (set_flags) set_logic_flags(r);
+        result_value = arm_reg_value(rn) & ~operand2;
+        if (set_flags) set_logic_flags(result_value);
         break;
       }
       case 0xF: { // MVN
-        const uint32_t r = ~operand2;
-        cpu_.regs[rd] = r;
-        if (set_flags) set_logic_flags(r);
+        result_value = ~operand2;
+        if (set_flags) set_logic_flags(result_value);
         break;
       }
       default:
@@ -548,7 +556,15 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
         return;
     }
 
-    if (writes_result && rd == 15) {
+    if (writes_result && rd != 15u) {
+      cpu_.regs[rd] = result_value;
+    }
+
+    if (writes_result && rd == 15u) {
+      // Data-processing write to PC is a branch. Keep the computed ALU result
+      // explicitly, then apply exception-return semantics for SUBS/MOVS/etc.
+      // (e.g. IRQ return via "SUBS PC, LR, #4") by restoring CPSR from SPSR.
+      const uint32_t branch_target = result_value;
       if (set_flags && HasSpsr(GetCpuMode())) {
         const uint32_t old_mode = GetCpuMode();
         const uint32_t restored = cpu_.spsr[old_mode];
@@ -560,6 +576,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
           cpu_.active_mode = new_mode;
         }
       }
+      cpu_.regs[15] = branch_target;
       if (cpu_.cpsr & (1u << 5)) {
         cpu_.regs[15] &= ~1u;
       } else {
