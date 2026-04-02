@@ -4,6 +4,14 @@
 
 /* ===== Imported from reference implementation/serialize.c ===== */
 
+#ifndef MGBA_EXPORT
+#define MGBA_EXPORT
+#endif
+
+#ifndef UNUSED
+#define UNUSED(x) (void) (x)
+#endif
+
 /*
  * Debug/savestate serialization is intentionally removed from the standalone core.
  * The core keeps runtime execution/rendering only.
