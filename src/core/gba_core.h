@@ -2,6 +2,26 @@
 
 #include "./gba_core_c_api.h"
 
+#ifndef MGBA_EXPORT
+#define MGBA_EXPORT
+#endif
+
+#ifndef UNUSED
+#define UNUSED(x) (void) (x)
+#endif
+
+#ifndef ATTRIBUTE_NOINLINE
+#define ATTRIBUTE_NOINLINE
+#endif
+
+#ifndef mLOG_DEFINE_CATEGORY
+#define mLOG_DEFINE_CATEGORY(...)
+#endif
+
+#ifndef mLOG
+#define mLOG(...)
+#endif
+
 #ifdef __cplusplus
 
 #include <cstddef>
