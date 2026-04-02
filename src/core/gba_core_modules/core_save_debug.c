@@ -5,7 +5,6 @@
 
 /* ===== Imported from reference implementation/serialize.c ===== */
 
-
 MGBA_EXPORT const uint32_t GBASavestateMagic = 0x01000000;
 MGBA_EXPORT const uint32_t GBASavestateVersion = 0x0000000A;
 
@@ -91,17 +90,12 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 	uint32_t ucheck;
 	LOAD_32(ucheck, 0, &state->versionMagic);
 	if (ucheck > GBASavestateMagic + GBASavestateVersion) {
-		mLOG(GBA_STATE, WARN, "Invalid or too new savestate: expected %08X, got %08X", GBASavestateMagic + GBASavestateVersion, ucheck);
 		error = true;
 	} else if (ucheck < GBASavestateMagic) {
-		mLOG(GBA_STATE, WARN, "Invalid savestate: expected %08X, got %08X", GBASavestateMagic + GBASavestateVersion, ucheck);
 		error = true;
-	} else if (ucheck < GBASavestateMagic + GBASavestateVersion) {
-		mLOG(GBA_STATE, WARN, "Old savestate: expected %08X, got %08X, continuing anyway", GBASavestateMagic + GBASavestateVersion, ucheck);
 	}
 	LOAD_32(ucheck, 0, &state->biosChecksum);
 	if (ucheck != gba->biosChecksum) {
-		mLOG(GBA_STATE, WARN, "Savestate created using a different version of the BIOS: expected %08X, got %08X", gba->biosChecksum, ucheck);
 		uint32_t pc;
 		LOAD_32(pc, ARM_PC * sizeof(state->cpu.gprs[0]), state->cpu.gprs);
 		if ((ucheck == GBA_BIOS_CHECKSUM || gba->biosChecksum == GBA_BIOS_CHECKSUM) && pc < GBA_SIZE_BIOS && pc >= 0x20) {
@@ -121,30 +115,23 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 			break;
 		}
 		if (state->id != cart->id || memcmp(state->title, cart->title, sizeof(state->title))) {
-			mLOG(GBA_STATE, WARN, "Savestate is for a different game");
 			error = true;
 		}
 	} else if (!gba->memory.rom && state->id != 0) {
-		mLOG(GBA_STATE, WARN, "Savestate is for a game, but no game loaded");
 		error = true;
 	}
 	LOAD_32(ucheck, 0, &state->romCrc32);
-	if (ucheck != gba->romCrc32) {
-		mLOG(GBA_STATE, WARN, "Savestate is for a different version of the game");
-	}
+	UNUSED(ucheck);
 	LOAD_32(check, 0, &state->cpu.cycles);
 	if (check < 0) {
-		mLOG(GBA_STATE, WARN, "Savestate is corrupted: CPU cycles are negative");
 		error = true;
 	}
 	if (check >= (int32_t) GBA_ARM7TDMI_FREQUENCY) {
-		mLOG(GBA_STATE, WARN, "Savestate is corrupted: CPU cycles are too high");
 		error = true;
 	}
 	LOAD_32(check, ARM_PC * sizeof(state->cpu.gprs[0]), state->cpu.gprs);
 	int region = (check >> BASE_OFFSET);
 	if ((region == GBA_REGION_ROM0 || region == GBA_REGION_ROM1 || region == GBA_REGION_ROM2) && ((check - WORD_SIZE_ARM) & GBA_SIZE_ROM0) >= gba->memory.romSize - WORD_SIZE_ARM) {
-		mLOG(GBA_STATE, WARN, "Savestate created using a differently sized version of the ROM");
 		error = true;
 	}
 	if (error) {
