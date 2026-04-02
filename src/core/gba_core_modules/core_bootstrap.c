@@ -8,7 +8,6 @@
 /* ===== Imported from reference implementation/input.c ===== */
 /* ===== Imported from reference implementation/gbp.c ===== */
 /* ===== Imported from reference implementation/dolphin.c ===== */
-/* ===== Imported from reference implementation/overwrides.c ===== */
 static const struct mCoreChannelInfo _GBAVideoLayers[] = {
 	{ GBA_LAYER_BG0, "bg0", "Background 0", NULL },
 	{ GBA_LAYER_BG1, "bg1", "Background 1", NULL },
