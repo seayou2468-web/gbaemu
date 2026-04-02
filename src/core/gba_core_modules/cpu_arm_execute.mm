@@ -298,6 +298,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
     }
     uint32_t load_result = 0;
     bool load_to_pc = false;
+    bool load_to_gpr = false;
     if (load) {
       if (byte) {
         load_result = Read8(addr);
@@ -310,7 +311,7 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       if (rd == 15u) {
         load_to_pc = true;
       } else {
-        cpu_.regs[rd] = load_result;
+        load_to_gpr = true;
       }
     } else {
       if (byte) {
@@ -323,6 +324,9 @@ void GBACore::ExecuteArmInstruction(uint32_t opcode) {
       addr = up ? (addr + offset) : (addr - offset);
     }
     if (write_back || !pre) cpu_.regs[rn] = addr;
+    if (load_to_gpr) {
+      cpu_.regs[rd] = load_result;
+    }
     if (load_to_pc) {
       cpu_.regs[15] = load_result;
       if (cpu_.cpsr & (1u << 5)) {
