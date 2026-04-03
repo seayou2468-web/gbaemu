@@ -28,6 +28,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/types.h>
 
 #ifndef MAX_GBAS
 #define MAX_GBAS 4
@@ -66,6 +67,7 @@ struct mTiming {
 };
 
 void mTimingSchedule(struct mTiming* timing, struct mTimingEvent* event, int32_t when);
+void mTimingScheduleAbsolute(struct mTiming* timing, struct mTimingEvent* event, int32_t when);
 void mTimingDeschedule(struct mTiming* timing, struct mTimingEvent* event);
 
 enum GBASIOMode {
@@ -107,8 +109,9 @@ struct GBASIODriver {
 	uint16_t (*writeSIOCNT)(struct GBASIODriver*, uint16_t);
 	uint16_t (*writeRegister)(struct GBASIODriver*, uint32_t, uint16_t);
 	uint16_t (*readRegister)(struct GBASIODriver*, uint32_t);
+	uint16_t (*finishNormal8)(struct GBASIODriver*);
 	uint32_t (*finishNormal32)(struct GBASIODriver*);
-	bool (*finishMultiplayer)(struct GBASIODriver*, uint16_t);
+	bool (*finishMultiplayer)(struct GBASIODriver*, uint16_t out[4]);
 };
 
 struct GBASIOPlayer {
@@ -235,6 +238,8 @@ struct GBASavedata {
 	bool dirty;
 	uint32_t dirtAge;
 	struct mTimingEvent dust;
+	struct GBA* p;
+	uint32_t writeAddress;
 };
 
 struct GBAHardware {
@@ -311,6 +316,36 @@ struct GBAObj {
 	uint16_t c;
 };
 
+typedef uint16_t GBATimerFlags;
+struct GBATimer {
+	uint16_t reload;
+	GBATimerFlags flags;
+	int32_t lastEvent;
+	struct mTimingEvent event;
+};
+
+struct mCoreSync {
+	bool videoFrameWait;
+	bool audioWait;
+	void* videoFrameMutex;
+	void* videoFrameAvailableCond;
+	void* audioBufferMutex;
+	void* audioRequiredCond;
+	void* frameMutex;
+	void* frameAvailableCond;
+	int waiting;
+};
+
+struct VFile {
+	void (*close)(struct VFile*);
+	ssize_t (*read)(struct VFile*, void*, size_t);
+	ssize_t (*write)(struct VFile*, const void*, size_t);
+	off_t (*seek)(struct VFile*, off_t, int);
+	off_t (*size)(struct VFile*);
+	void* (*map)(struct VFile*, size_t, int);
+	void (*unmap)(struct VFile*, void*, size_t);
+};
+
 struct GBAVideoProxyRenderer {
 	struct GBAVideoRenderer d;
 	int flushScanline;
@@ -374,6 +409,7 @@ struct GBAMemoryBusMini {
 	struct mTimingEvent dmaEvent;
 	struct { uint32_t source; uint32_t dest; uint32_t count; uint32_t latch; uint16_t control; } dma[4];
 	int activeDMA;
+	size_t romSize;
 };
 
 struct GBASIO {
@@ -475,7 +511,7 @@ struct GBA {
 	struct mTiming timing;
 	struct GBAMemoryBusMini memory;
 	struct ARMCore* cpu;
-	struct GBATimer* timers;
+	struct GBATimer timers[4];
 	struct GBASIO sio;
 	struct {
 		struct GBAVideoRenderer* renderer;
@@ -501,6 +537,9 @@ struct GBA {
 	void* sync;
 	void* rtcSource;
 	void* stream;
+	struct VFile* biosVf;
+	struct VFile* romVf;
+	struct VFile* mbVf;
 	struct mKeyCallback* keyCallback;
 	struct { void (*setRumble)(void*, bool, int32_t); }* rumble;
 	int32_t lastRumble;
@@ -521,12 +560,7 @@ static inline uint16_t GBASIORegisterRCNTSetSi(uint16_t v, bool si) { return si 
 static inline uint16_t GBASIORegisterRCNTFillSc(uint16_t v) { return (uint16_t) (v | 0x0002); }
 static inline uint16_t GBASIORegisterRCNTClearSc(uint16_t v) { return (uint16_t) (v & ~0x0002); }
 
-static inline int GBASIOTransferCycles(enum GBASIOMode mode, uint16_t siocnt, int connected) {
-	UNUSED(mode);
-	UNUSED(siocnt);
-	UNUSED(connected);
-	return 1024;
-}
+int GBASIOTransferCycles(enum GBASIOMode mode, uint16_t siocnt, int connected);
 
 static inline uint16_t GBASIOMultiplayerSetSlave(uint16_t v, bool slave) { return slave ? (uint16_t) (v | 0x0080) : (uint16_t) (v & ~0x0080); }
 static inline uint16_t GBASIOMultiplayerSetId(uint16_t v, int id) { return (uint16_t) ((v & ~0x0030) | ((id & 0x3) << 4)); }
@@ -538,6 +572,9 @@ static inline uint16_t GBASIONormalFillSi(uint16_t v) { return (uint16_t) (v | 0
 
 #ifndef MAP_WRITE
 #define MAP_WRITE 1
+#endif
+#ifndef MAP_READ
+#define MAP_READ 2
 #endif
 
 #ifndef EEPROM_COMMAND_NULL
@@ -562,9 +599,15 @@ static inline uint16_t GBASIONormalFillSi(uint16_t v) { return (uint16_t) (v | 0
 #ifndef mCORE_REGISTER_GPR
 #define mCORE_REGISTER_GPR 1u
 #endif
+#ifndef mCORE_REGISTER_FLAGS
+#define mCORE_REGISTER_FLAGS 2u
+#endif
 
 #ifndef GBA_IRQ_TIMER0
 #define GBA_IRQ_TIMER0 3
+#endif
+#ifndef GBA_IRQ_SIO
+#define GBA_IRQ_SIO 7
 #endif
 
 #ifndef HW_GB_PLAYER
@@ -591,11 +634,14 @@ enum {
 	DISPCNT = 0x000, DISPSTAT = 0x004, VCOUNT = 0x006,
 	BG0CNT = 0x008, BG1CNT = 0x00A, BG2CNT = 0x00C, BG3CNT = 0x00E,
 	BG0HOFS = 0x010, BG0VOFS = 0x012, BG1HOFS = 0x014, BG1VOFS = 0x016,
-	BG2HOFS = 0x018, BG2VOFS = 0x01A, BG2PA = 0x020, BG2PB = 0x022, BG2PC = 0x024,
-	BG3HOFS = 0x028, BG3VOFS = 0x02A,
+	BG2HOFS = 0x018, BG2VOFS = 0x01A, BG2PA = 0x020, BG2PB = 0x022, BG2PC = 0x024, BG2PD = 0x026,
+	BG3HOFS = 0x028, BG3VOFS = 0x02A, BG3PA = 0x030, BG3PD = 0x036,
+	KEYINPUT = 0x130, SOUNDBIAS = 0x088, POSTFLG = 0x300,
+	INTERNAL_EXWAITCNT_LO = 0x204, INTERNAL_EXWAITCNT_HI = 0x206, INTERNAL_MAX = 0x400,
 	SIOMULTI0 = 0x120, SIOMULTI1 = 0x122, SIOMULTI2 = 0x124, SIOMULTI3 = 0x126,
 	SIODATA32_LO = 0x120, SIODATA32_HI = 0x122, SIODATA8 = 0x12A, SIOCNT = 0x128, RCNT = 0x134,
-	SIOMLT_SEND = 0x12A, JOYCNT = 0x140, JOY_RECV_LO = 0x150, JOY_TRANS_LO = 0x154
+	SIOMLT_SEND = 0x12A, JOYCNT = 0x140, JOY_RECV_LO = 0x150, JOY_TRANS_LO = 0x154,
+	SOUND1CNT_LO = 0x060, SOUNDCNT_LO = 0x080
 };
 
 #define GBA_REG_DISPCNT GBA_REG(DISPCNT)
@@ -608,18 +654,28 @@ enum {
 #define GBA_REG_JOYCNT GBA_REG(JOYCNT)
 #define GBA_REG_JOY_RECV_LO GBA_REG(JOY_RECV_LO)
 #define GBA_REG_JOY_TRANS_LO GBA_REG(JOY_TRANS_LO)
+#define GBA_REG_VCOUNT GBA_REG(VCOUNT)
+#define GBA_REG_DISPSTAT GBA_REG(DISPSTAT)
+#define GBA_REG_SOUND1CNT_LO GBA_REG(SOUND1CNT_LO)
+#define GBA_REG_SOUNDCNT_LO GBA_REG(SOUNDCNT_LO)
 
 #define GBA_REG_TMCNT_LO(id) (0x100 + ((id) * 4))
 
 static inline uint32_t hash32(const void* data, size_t size, uint32_t seed) { UNUSED(data); UNUSED(size); return seed; }
-static inline int32_t mTimingCurrentTime(struct mTiming* timing) { return timing ? timing->masterCycles : 0; }
-static inline void GBASIOReset(struct GBASIO* sio) { UNUSED(sio); }
+int32_t mTimingCurrentTime(struct mTiming* timing);
+void GBASIOReset(struct GBASIO* sio);
 static inline void GBARaiseIRQ(struct GBA* gba, int irq, int32_t cyclesLate) { UNUSED(gba); UNUSED(irq); UNUSED(cyclesLate); }
 static inline bool GBATimerFlagsIsCountUp(uint16_t flags) { UNUSED(flags); return false; }
 static inline bool GBATimerFlagsIsDoIrq(uint16_t flags) { UNUSED(flags); return false; }
+static inline bool GBATimerFlagsIsEnable(uint16_t flags) { return (flags & 0x0080) != 0; }
+static inline unsigned GBATimerFlagsGetPrescaleBits(uint16_t flags) { return flags & 0x3FF; }
+static inline uint16_t GBATimerFlagsSetPrescaleBits(uint16_t flags, unsigned bits) { return (uint16_t) ((flags & ~0x3FF) | (bits & 0x3FF)); }
+static inline uint16_t GBATimerFlagsTestFillCountUp(uint16_t flags, bool v) { return v ? (uint16_t) (flags | 0x0004) : (uint16_t) (flags & ~0x0004); }
+static inline uint16_t GBATimerFlagsTestFillDoIrq(uint16_t flags, bool v) { return v ? (uint16_t) (flags | 0x0040) : (uint16_t) (flags & ~0x0040); }
+static inline uint16_t GBATimerFlagsTestFillEnable(uint16_t flags, bool v) { return v ? (uint16_t) (flags | 0x0080) : (uint16_t) (flags & ~0x0080); }
 static inline void GBATimerUpdateRegister(struct GBA* gba, int timerId, int32_t cyclesLate) { UNUSED(gba); UNUSED(timerId); UNUSED(cyclesLate); }
 static inline bool GBADMARegisterIsEnable(uint16_t control) { return (control & 0x8000) != 0; }
-static inline void GBAAudioSampleFIFO(struct GBA* gba, int fifo) { UNUSED(gba); UNUSED(fifo); }
+static inline void GBAAudioSampleFIFO(void* audio, int fifo, uint32_t cyclesLate) { UNUSED(audio); UNUSED(fifo); UNUSED(cyclesLate); }
 static inline int GBAMosaicControlGetBgV(uint16_t mosaic) { UNUSED(mosaic); return 0; }
 static inline int GBAObjAttributesAGetMode(uint16_t a) { UNUSED(a); return 0; }
 static inline int GBAObjAttributesAGetShape(uint16_t a) { UNUSED(a); return 0; }
@@ -632,6 +688,12 @@ static inline void MutexUnlock(void* m) { UNUSED(m); }
 static inline void ConditionWait(void* c, void* m) { UNUSED(c); UNUSED(m); }
 static inline void ConditionWake(void* c) { UNUSED(c); }
 static inline void ARMSelectBank(struct ARMCore* cpu, unsigned mode) { UNUSED(cpu); UNUSED(mode); }
+static inline int GBASIOMultiplayerGetBaud(uint16_t siocnt) { return siocnt & 3; }
+static inline bool GBASIONormalIsInternalSc(uint16_t siocnt) { return (siocnt & 1) != 0; }
+static inline uint16_t GBASIOMultiplayerClearBusy(uint16_t v) { return (uint16_t) (v & ~0x0080); }
+static inline bool GBASIOMultiplayerIsIrq(uint16_t v) { return (v & 0x4000) != 0; }
+static inline uint16_t GBASIONormalClearStart(uint16_t v) { return (uint16_t) (v & ~0x0080); }
+static inline bool GBASIONormalIsIrq(uint16_t v) { return (v & 0x4000) != 0; }
 
 #ifndef MODE_FIQ
 #define MODE_FIQ 0x11
