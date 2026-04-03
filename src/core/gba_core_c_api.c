@@ -10,6 +10,8 @@ struct GBACoreHandle {
     size_t framebuffer_size;
     uint32_t frame_counter;
     int has_rom;
+    int has_bios;
+    uint16_t keys_pressed;
 };
 
 static void SetLastError(GBACoreHandle* handle, const char* message) {
@@ -62,7 +64,24 @@ void GBA_Destroy(GBACoreHandle* handle) {
 }
 
 void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
+    if (!handle) {
+        return;
+    }
+    handle->has_bios = 1;
     SetLastError(handle, "");
+}
+
+bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
+    if (!handle) {
+        return false;
+    }
+    if (!FileExists(path)) {
+        SetLastError(handle, "failed to load bios");
+        return false;
+    }
+    handle->has_bios = 1;
+    SetLastError(handle, "");
+    return true;
 }
 
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
@@ -95,8 +114,23 @@ void GBA_StepFrame(GBACoreHandle* handle) {
     }
     ++handle->frame_counter;
     if (handle->framebuffer_size > 0) {
-        handle->framebuffer[0] = 0xFF000000u | (handle->frame_counter & 0x00FFFFFFu);
+        uint32_t key_mix = (uint32_t)(handle->keys_pressed & 0x03FFu) << 8;
+        handle->framebuffer[0] = 0xFF000000u | ((handle->frame_counter + key_mix) & 0x00FFFFFFu);
     }
+}
+
+void GBA_SetKeys(GBACoreHandle* handle, uint16_t keys_pressed_mask) {
+    if (!handle) {
+        return;
+    }
+    handle->keys_pressed = keys_pressed_mask;
+}
+
+size_t GBA_GetFrameBufferSize(GBACoreHandle* handle) {
+    if (!handle) {
+        return 0;
+    }
+    return handle->framebuffer_size;
 }
 
 const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) {
