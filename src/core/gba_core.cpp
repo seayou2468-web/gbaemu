@@ -7,7 +7,7 @@
 #include "./gba_core_modules/core_reset_state.c"
 #include "./gba_core_modules/core_timing_runtime.c"
 #include "./gba_core_modules/core_sync_runtime.c"
-#include "./gba_core_modules/core_save_runtime_stub.c"
+#include "./gba_core_modules/core_save_runtime.c"
 #include "./gba_core_modules/core_backup_runtime.c"
 #include "./gba_core_modules/cpu_helpers.c"
 #include "./gba_core_modules/cpu_swi.c"
