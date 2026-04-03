@@ -40,6 +40,13 @@
 struct mTiming;
 typedef void (*mTimingCallback)(struct mTiming* timing, void* context, uint32_t cyclesLate);
 
+struct Configuration;
+const char* ConfigurationGetValue(const struct Configuration* config, const char* section, const char* key);
+void ConfigurationSetValue(struct Configuration* config, const char* section, const char* key, const char* value);
+void ConfigurationSetIntValue(struct Configuration* config, const char* section, const char* key, int value);
+void ConfigurationSetUIntValue(struct Configuration* config, const char* section, const char* key, uint32_t value);
+void ConfigurationClearValue(struct Configuration* config, const char* section, const char* key);
+
 struct mTimingEvent {
 	const char* name;
 	uint32_t priority;

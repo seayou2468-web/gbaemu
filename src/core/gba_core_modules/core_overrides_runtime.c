@@ -1,5 +1,8 @@
 #include "../gba_core.h"
 #include <string.h>
+#include <strings.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 
