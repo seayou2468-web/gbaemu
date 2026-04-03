@@ -1,6 +1,4 @@
 #if defined(__cplusplus)
-#include "../../../reference implementation/gba/gba.h"
-
 void CPUCheckDMA(int reason, int dmamask)
 {
     // DMA 0

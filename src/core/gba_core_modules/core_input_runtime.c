@@ -1,6 +1,4 @@
 #if defined(__cplusplus)
-#include "../../../reference implementation/gba/gba.h"
-
 // Imported from reference implementation: gbaGlobals.cpp
 /* BEGIN gbaGlobals.cpp */
 

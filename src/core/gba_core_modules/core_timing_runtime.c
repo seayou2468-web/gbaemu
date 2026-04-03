@@ -1,6 +1,4 @@
 #if defined(__cplusplus)
-#include "../../../reference implementation/gba/gba.h"
-
 inline int CPUUpdateTicks()
 {
     int cpuLoopTicks = lcdTicks;
