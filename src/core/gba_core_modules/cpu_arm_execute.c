@@ -1094,7 +1094,7 @@ static void count(uint32_t opcode, int cond_res)
 // ALU_INIT: init code (ALU_INIT_C or ALU_INIT_NC)
 // GETVALUE: load value and shift/rotate (VALUE_XXX)
 // OP: ALU operation (OP_XXX)
-// MODECHANGE: MODECHANGE_NO or MODECHANGE_YES
+// MODECHANGE: ModeChangeNo() or ModeChangeYes()
 // ISREGSHIFT: 1 for insns of the form ...,Rn LSL/etc Rs; 0 otherwise
 // ALU_INIT, GETVALUE, OP, and ALU_FINISH are concatenated in order.
 #define ALU_INSN(ALU_INIT, GETVALUE, OP, MODECHANGE, ISREGSHIFT) \
@@ -1121,318 +1121,318 @@ static void count(uint32_t opcode, int cond_res)
             + codeTicksAccessSeq32(armNextPC);                   \
     }
 
-#define MODECHANGE_NO /*nothing*/
-#define MODECHANGE_YES CPUSwitchMode(reg[17].I & 0x1f, false);
+static inline void ModeChangeNo() {}
+static inline void ModeChangeYes() { CPUSwitchMode(reg[17].I & 0x1f, false); }
 
 // ALU instruction handlers (expanded; macro generator removed)
 
 // AND
-static INSN_REGPARM void arm000(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_AND, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm001(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_AND, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm002(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_AND, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm003(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_AND, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm004(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_AND, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm005(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_AND, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm006(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_AND, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm007(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_AND, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm200(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_AND, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm000(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_AND, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm001(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_AND, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm002(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_AND, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm003(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_AND, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm004(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_AND, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm005(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_AND, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm006(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_AND, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm007(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_AND, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm200(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_AND, ModeChangeNo(), 0); }
 
 // ANDS
-static INSN_REGPARM void arm010(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_ANDS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm011(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_ANDS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm012(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_ANDS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm013(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_ANDS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm014(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_ANDS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm015(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_ANDS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm016(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_ANDS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm017(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_ANDS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm210(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_ANDS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm010(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_ANDS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm011(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_ANDS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm012(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_ANDS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm013(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_ANDS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm014(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_ANDS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm015(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_ANDS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm016(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_ANDS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm017(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_ANDS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm210(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_ANDS, ModeChangeYes(), 0); }
 
 // EOR
-static INSN_REGPARM void arm020(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_EOR, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm021(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_EOR, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm022(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_EOR, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm023(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_EOR, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm024(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_EOR, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm025(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_EOR, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm026(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_EOR, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm027(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_EOR, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm220(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_EOR, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm020(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_EOR, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm021(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_EOR, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm022(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_EOR, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm023(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_EOR, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm024(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_EOR, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm025(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_EOR, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm026(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_EOR, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm027(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_EOR, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm220(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_EOR, ModeChangeNo(), 0); }
 
 // EORS
-static INSN_REGPARM void arm030(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_EORS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm031(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_EORS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm032(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_EORS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm033(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_EORS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm034(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_EORS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm035(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_EORS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm036(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_EORS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm037(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_EORS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm230(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_EORS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm030(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_EORS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm031(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_EORS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm032(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_EORS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm033(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_EORS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm034(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_EORS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm035(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_EORS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm036(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_EORS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm037(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_EORS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm230(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_EORS, ModeChangeYes(), 0); }
 
 // SUB
-static INSN_REGPARM void arm040(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_SUB, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm041(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_SUB, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm042(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_SUB, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm043(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_SUB, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm044(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_SUB, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm045(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_SUB, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm046(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_SUB, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm047(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_SUB, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm240(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_SUB, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm040(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_SUB, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm041(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_SUB, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm042(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_SUB, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm043(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_SUB, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm044(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_SUB, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm045(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_SUB, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm046(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_SUB, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm047(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_SUB, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm240(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_SUB, ModeChangeNo(), 0); }
 
 // SUBS
-static INSN_REGPARM void arm050(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_SUBS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm051(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_SUBS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm052(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_SUBS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm053(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_SUBS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm054(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_SUBS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm055(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_SUBS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm056(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_SUBS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm057(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_SUBS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm250(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_SUBS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm050(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_SUBS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm051(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_SUBS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm052(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_SUBS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm053(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_SUBS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm054(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_SUBS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm055(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_SUBS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm056(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_SUBS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm057(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_SUBS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm250(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_SUBS, ModeChangeYes(), 0); }
 
 // RSB
-static INSN_REGPARM void arm060(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_RSB, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm061(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_RSB, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm062(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_RSB, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm063(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_RSB, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm064(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_RSB, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm065(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_RSB, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm066(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_RSB, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm067(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_RSB, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm260(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_RSB, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm060(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_RSB, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm061(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_RSB, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm062(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_RSB, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm063(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_RSB, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm064(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_RSB, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm065(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_RSB, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm066(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_RSB, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm067(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_RSB, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm260(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_RSB, ModeChangeNo(), 0); }
 
 // RSBS
-static INSN_REGPARM void arm070(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_RSBS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm071(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_RSBS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm072(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_RSBS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm073(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_RSBS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm074(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_RSBS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm075(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_RSBS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm076(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_RSBS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm077(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_RSBS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm270(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_RSBS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm070(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_RSBS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm071(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_RSBS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm072(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_RSBS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm073(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_RSBS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm074(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_RSBS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm075(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_RSBS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm076(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_RSBS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm077(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_RSBS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm270(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_RSBS, ModeChangeYes(), 0); }
 
 // ADD
-static INSN_REGPARM void arm080(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ADD, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm081(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ADD, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm082(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ADD, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm083(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ADD, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm084(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ADD, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm085(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ADD, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm086(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ADD, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm087(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ADD, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm280(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ADD, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm080(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ADD, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm081(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ADD, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm082(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ADD, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm083(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ADD, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm084(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ADD, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm085(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ADD, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm086(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ADD, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm087(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ADD, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm280(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ADD, ModeChangeNo(), 0); }
 
 // ADDS
-static INSN_REGPARM void arm090(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ADDS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm091(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ADDS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm092(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ADDS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm093(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ADDS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm094(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ADDS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm095(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ADDS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm096(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ADDS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm097(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ADDS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm290(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ADDS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm090(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ADDS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm091(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ADDS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm092(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ADDS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm093(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ADDS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm094(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ADDS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm095(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ADDS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm096(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ADDS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm097(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ADDS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm290(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ADDS, ModeChangeYes(), 0); }
 
 // ADC
-static INSN_REGPARM void arm0A0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ADC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0A1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ADC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0A2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ADC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0A3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ADC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0A4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ADC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0A5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ADC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0A6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ADC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0A7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ADC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm2A0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ADC, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm0A0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ADC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0A1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ADC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0A2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ADC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0A3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ADC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0A4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ADC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0A5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ADC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0A6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ADC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0A7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ADC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm2A0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ADC, ModeChangeNo(), 0); }
 
 // ADCS
-static INSN_REGPARM void arm0B0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ADCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0B1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ADCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0B2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ADCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0B3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ADCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0B4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ADCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0B5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ADCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0B6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ADCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0B7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ADCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm2B0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ADCS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm0B0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ADCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0B1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ADCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0B2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ADCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0B3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ADCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0B4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ADCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0B5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ADCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0B6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ADCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0B7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ADCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm2B0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ADCS, ModeChangeYes(), 0); }
 
 // SBC
-static INSN_REGPARM void arm0C0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_SBC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0C1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_SBC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0C2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_SBC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0C3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_SBC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0C4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_SBC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0C5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_SBC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0C6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_SBC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0C7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_SBC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm2C0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_SBC, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm0C0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_SBC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0C1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_SBC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0C2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_SBC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0C3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_SBC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0C4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_SBC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0C5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_SBC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0C6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_SBC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0C7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_SBC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm2C0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_SBC, ModeChangeNo(), 0); }
 
 // SBCS
-static INSN_REGPARM void arm0D0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_SBCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0D1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_SBCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0D2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_SBCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0D3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_SBCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0D4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_SBCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0D5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_SBCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0D6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_SBCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0D7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_SBCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm2D0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_SBCS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm0D0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_SBCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0D1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_SBCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0D2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_SBCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0D3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_SBCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0D4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_SBCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0D5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_SBCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0D6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_SBCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0D7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_SBCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm2D0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_SBCS, ModeChangeYes(), 0); }
 
 // RSC
-static INSN_REGPARM void arm0E0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_RSC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0E1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_RSC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0E2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_RSC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0E3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_RSC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0E4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_RSC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0E5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_RSC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm0E6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_RSC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm0E7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_RSC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm2E0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_RSC, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm0E0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_RSC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0E1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_RSC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0E2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_RSC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0E3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_RSC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0E4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_RSC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0E5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_RSC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm0E6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_RSC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm0E7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_RSC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm2E0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_RSC, ModeChangeNo(), 0); }
 
 // RSCS
-static INSN_REGPARM void arm0F0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_RSCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0F1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_RSCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0F2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_RSCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0F3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_RSCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0F4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_RSCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0F5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_RSCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm0F6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_RSCS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm0F7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_RSCS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm2F0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_RSCS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm0F0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_RSCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0F1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_RSCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0F2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_RSCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0F3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_RSCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0F4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_RSCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0F5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_RSCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm0F6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_RSCS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm0F7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_RSCS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm2F0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_RSCS, ModeChangeYes(), 0); }
 
 // TST
-static INSN_REGPARM void arm110(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_TST, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm111(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_TST, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm112(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_TST, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm113(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_TST, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm114(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_TST, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm115(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_TST, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm116(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_TST, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm117(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_TST, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm310(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_TST, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm110(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_TST, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm111(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_TST, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm112(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_TST, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm113(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_TST, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm114(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_TST, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm115(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_TST, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm116(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_TST, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm117(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_TST, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm310(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_TST, ModeChangeNo(), 0); }
 
 // TEQ
-static INSN_REGPARM void arm130(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_TEQ, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm131(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_TEQ, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm132(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_TEQ, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm133(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_TEQ, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm134(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_TEQ, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm135(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_TEQ, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm136(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_TEQ, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm137(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_TEQ, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm330(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_TEQ, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm130(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_TEQ, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm131(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_TEQ, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm132(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_TEQ, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm133(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_TEQ, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm134(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_TEQ, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm135(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_TEQ, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm136(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_TEQ, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm137(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_TEQ, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm330(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_TEQ, ModeChangeNo(), 0); }
 
 // CMP
-static INSN_REGPARM void arm150(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_CMP, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm151(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_CMP, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm152(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_CMP, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm153(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_CMP, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm154(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_CMP, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm155(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_CMP, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm156(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_CMP, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm157(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_CMP, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm350(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_CMP, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm150(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_CMP, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm151(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_CMP, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm152(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_CMP, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm153(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_CMP, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm154(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_CMP, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm155(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_CMP, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm156(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_CMP, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm157(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_CMP, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm350(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_CMP, ModeChangeNo(), 0); }
 
 // CMN
-static INSN_REGPARM void arm170(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_CMN, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm171(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_CMN, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm172(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_CMN, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm173(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_CMN, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm174(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_CMN, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm175(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_CMN, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm176(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_CMN, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm177(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_CMN, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm370(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_CMN, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm170(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_CMN, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm171(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_CMN, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm172(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_CMN, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm173(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_CMN, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm174(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_CMN, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm175(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_CMN, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm176(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_CMN, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm177(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_CMN, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm370(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_CMN, ModeChangeNo(), 0); }
 
 // ORR
-static INSN_REGPARM void arm180(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ORR, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm181(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ORR, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm182(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ORR, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm183(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ORR, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm184(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ORR, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm185(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ORR, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm186(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ORR, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm187(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ORR, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm380(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ORR, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm180(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_ORR, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm181(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_ORR, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm182(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_ORR, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm183(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_ORR, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm184(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_ORR, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm185(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_ORR, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm186(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_ORR, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm187(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_ORR, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm380(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_ORR, ModeChangeNo(), 0); }
 
 // ORRS
-static INSN_REGPARM void arm190(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_ORRS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm191(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_ORRS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm192(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_ORRS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm193(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_ORRS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm194(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_ORRS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm195(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_ORRS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm196(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_ORRS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm197(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_ORRS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm390(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_ORRS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm190(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_ORRS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm191(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_ORRS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm192(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_ORRS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm193(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_ORRS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm194(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_ORRS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm195(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_ORRS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm196(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_ORRS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm197(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_ORRS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm390(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_ORRS, ModeChangeYes(), 0); }
 
 // MOV
-static INSN_REGPARM void arm1A0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_MOV, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1A1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_MOV, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1A2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_MOV, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1A3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_MOV, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1A4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_MOV, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1A5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_MOV, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1A6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_MOV, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1A7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_MOV, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm3A0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_MOV, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm1A0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_MOV, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1A1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_MOV, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1A2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_MOV, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1A3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_MOV, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1A4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_MOV, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1A5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_MOV, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1A6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_MOV, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1A7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_MOV, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm3A0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_MOV, ModeChangeNo(), 0); }
 
 // MOVS
-static INSN_REGPARM void arm1B0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_MOVS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1B1(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_MOVS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1B2(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_MOVS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1B3(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_MOVS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1B4(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_MOVS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1B5(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_MOVS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1B6(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_MOVS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1B7(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_MOVS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm3B0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_MOVS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm1B0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_MOVS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1B1(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_MOVS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1B2(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_MOVS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1B3(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_MOVS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1B4(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_MOVS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1B5(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_MOVS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1B6(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_MOVS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1B7(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_MOVS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm3B0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_MOVS, ModeChangeYes(), 0); }
 
 // BIC
-static INSN_REGPARM void arm1C0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_BIC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1C1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_BIC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1C2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_BIC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1C3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_BIC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1C4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_BIC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1C5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_BIC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1C6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_BIC, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1C7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_BIC, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm3C0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_BIC, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm1C0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_BIC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1C1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_BIC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1C2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_BIC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1C3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_BIC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1C4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_BIC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1C5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_BIC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1C6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_BIC, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1C7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_BIC, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm3C0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_BIC, ModeChangeNo(), 0); }
 
 // BICS
-static INSN_REGPARM void arm1D0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_BICS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1D1(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_BICS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1D2(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_BICS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1D3(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_BICS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1D4(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_BICS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1D5(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_BICS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1D6(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_BICS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1D7(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_BICS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm3D0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_BICS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm1D0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_BICS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1D1(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_BICS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1D2(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_BICS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1D3(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_BICS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1D4(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_BICS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1D5(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_BICS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1D6(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_BICS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1D7(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_BICS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm3D0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_BICS, ModeChangeYes(), 0); }
 
 // MVN
-static INSN_REGPARM void arm1E0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_MVN, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1E1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_MVN, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1E2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_MVN, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1E3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_MVN, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1E4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_MVN, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1E5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_MVN, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm1E6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_MVN, MODECHANGE_NO, 0); }
-static INSN_REGPARM void arm1E7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_MVN, MODECHANGE_NO, 1); }
-static INSN_REGPARM void arm3E0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_MVN, MODECHANGE_NO, 0); }
+static INSN_REGPARM void arm1E0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_IMM_NC, OP_MVN, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1E1(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSL_REG_NC, OP_MVN, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1E2(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_IMM_NC, OP_MVN, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1E3(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_LSR_REG_NC, OP_MVN, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1E4(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_IMM_NC, OP_MVN, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1E5(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ASR_REG_NC, OP_MVN, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm1E6(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_IMM_NC, OP_MVN, ModeChangeNo(), 0); }
+static INSN_REGPARM void arm1E7(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_ROR_REG_NC, OP_MVN, ModeChangeNo(), 1); }
+static INSN_REGPARM void arm3E0(uint32_t opcode) { ALU_INSN(ALU_INIT_NC, VALUE_IMM_NC, OP_MVN, ModeChangeNo(), 0); }
 
 // MVNS
-static INSN_REGPARM void arm1F0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_MVNS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1F1(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_MVNS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1F2(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_MVNS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1F3(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_MVNS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1F4(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_MVNS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1F5(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_MVNS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm1F6(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_MVNS, MODECHANGE_YES, 0); }
-static INSN_REGPARM void arm1F7(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_MVNS, MODECHANGE_YES, 1); }
-static INSN_REGPARM void arm3F0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_MVNS, MODECHANGE_YES, 0); }
+static INSN_REGPARM void arm1F0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_IMM_C, OP_MVNS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1F1(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSL_REG_C, OP_MVNS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1F2(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_IMM_C, OP_MVNS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1F3(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_LSR_REG_C, OP_MVNS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1F4(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_IMM_C, OP_MVNS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1F5(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ASR_REG_C, OP_MVNS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm1F6(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_IMM_C, OP_MVNS, ModeChangeYes(), 0); }
+static INSN_REGPARM void arm1F7(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_ROR_REG_C, OP_MVNS, ModeChangeYes(), 1); }
+static INSN_REGPARM void arm3F0(uint32_t opcode) { ALU_INSN(ALU_INIT_C, VALUE_IMM_C, OP_MVNS, ModeChangeYes(), 0); }
 // Multiply instructions //////////////////////////////////////////////////
 
 // OP: OP_MUL, OP_MLA etc.
