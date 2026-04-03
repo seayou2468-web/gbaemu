@@ -1,5 +1,7 @@
 #include "../gba_core.h"
 
+void ARMRaiseIRQ(struct ARMCore* cpu);
+
 struct _CoreConfigKV {
 	char* section;
 	char* key;
@@ -117,15 +119,29 @@ enum RegisterBank ARMSelectBank(enum PrivilegeMode mode) {
 }
 
 void GBAFrameStarted(struct GBA* gba) {
-	UNUSED(gba);
+	if (!gba) {
+		return;
+	}
+	gba->haltPending = false;
 }
 
 void GBAFrameEnded(struct GBA* gba) {
-	UNUSED(gba);
+	if (!gba) {
+		return;
+	}
+	gba->keysLast = (uint16_t) gba->keysActive;
 }
 
 void GBAInterrupt(struct GBA* gba) {
-	UNUSED(gba);
+	if (!gba || !gba->cpu) {
+		return;
+	}
+	uint16_t ime = gba->memory.io[GBA_REG(IME)] & 1;
+	uint16_t ie = gba->memory.io[GBA_REG(IE)];
+	uint16_t irqFlags = gba->memory.io[GBA_REG(IF)];
+	if (ime && (ie & irqFlags)) {
+		ARMRaiseIRQ(gba->cpu);
+	}
 }
 
 uint16_t mColorFrom555(uint16_t color) {
@@ -148,19 +164,27 @@ uint16_t mColorMix5Bit(unsigned aWeight, uint16_t a, unsigned bWeight, uint16_t 
 	return (uint16_t) (r | (g << 5) | (bl << 10));
 }
 
+struct _CoreVideoCacheMirror {
+	uint16_t videoRegs[0x100];
+	uint16_t palette[0x200];
+	uint32_t recentVramWrites[64];
+	uint32_t recentWritePos;
+};
+
+static struct _CoreVideoCacheMirror _fallbackCacheMirror;
+
 void mCacheSetWriteVRAM(void* cache, uint32_t address) {
 	UNUSED(cache);
-	UNUSED(address);
+	uint32_t pos = _fallbackCacheMirror.recentWritePos++ & 63;
+	_fallbackCacheMirror.recentVramWrites[pos] = address;
 }
 
 void mCacheSetWritePalette(void* cache, uint32_t index, uint16_t color) {
 	UNUSED(cache);
-	UNUSED(index);
-	UNUSED(color);
+	_fallbackCacheMirror.palette[index & 0x1FF] = color;
 }
 
 void GBAVideoCacheWriteVideoRegister(void* cache, uint32_t address, uint16_t value) {
 	UNUSED(cache);
-	UNUSED(address);
-	UNUSED(value);
+	_fallbackCacheMirror.videoRegs[(address >> 1) & 0xFF] = value;
 }
