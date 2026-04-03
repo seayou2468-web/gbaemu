@@ -9,7 +9,7 @@
 #include "./gba_core_modules/core_sync_runtime.c"
 #include "./gba_core_modules/core_save_runtime.c"
 #include "./gba_core_modules/core_backup_runtime.c"
-#include "./gba_core_modules/core_unlicenced_runtime.c"
+#include "./gba_core_modules/core_unlicensed_runtime.c"
 #include "./gba_core_modules/cpu_helpers.c"
 #include "./gba_core_modules/cpu_swi.c"
 #include "./gba_core_modules/cpu_arm_execute.c"
