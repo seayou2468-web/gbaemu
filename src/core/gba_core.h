@@ -318,6 +318,55 @@ struct GBACartEReader {
 
 typedef uint16_t mColor;
 
+struct GBAObj {
+	uint16_t a;
+	uint16_t b;
+	uint16_t c;
+};
+
+struct WindowControl {
+	uint16_t packed;
+	int priority;
+};
+
+struct WindowDimension {
+	int32_t start;
+	int32_t end;
+};
+
+struct GBAVideoSoftwareBackground {
+	int index;
+	int priority;
+	int charBase;
+	int screenBase;
+	int size;
+	int overflow;
+	int x;
+	int y;
+	int32_t refx;
+	int32_t refy;
+	int16_t dx;
+	int16_t dmx;
+	int16_t dy;
+	int16_t dmy;
+	int32_t sx;
+	int32_t sy;
+	int32_t nextY;
+	int32_t h;
+	int offsetX;
+	int offsetY;
+	bool mosaic;
+	bool target1;
+	bool target2;
+	bool enabled;
+	bool multipalette;
+	bool highlight;
+	int yCache;
+	uint32_t flags;
+	uint32_t objwinFlags;
+	bool variant;
+};
+
 struct GBAVideoRenderer {
 	void (*init)(struct GBAVideoRenderer*);
 	void (*reset)(struct GBAVideoRenderer*);
@@ -341,26 +390,60 @@ struct GBAVideoRenderer {
 	bool disableOBJ;
 	bool disableWIN[2];
 	bool disableOBJWIN;
+	bool highlightBG[4];
 	bool highlightOBJ[128];
 	int highlightAmount;
+	mColor highlightColor;
+};
+
+struct GBAVideoRendererSprite {
+	int y;
+	int endY;
+	int cycles;
+	struct GBAObj obj;
+	int index;
+};
+
+struct WindowN {
+	struct WindowDimension h;
+	struct WindowDimension v;
+	struct WindowControl control;
+	int32_t offsetY;
+	bool on;
 };
 
 struct GBAVideoSoftwareRenderer {
 	struct GBAVideoRenderer d;
 	mColor* outputBuffer;
 	size_t outputBufferStride;
-	struct { int32_t offsetX; int32_t offsetY; bool target2; bool enabled; } bg[4];
-	struct { int32_t offsetX; int32_t offsetY; } winN[2];
+	struct {
+		int32_t scale[2][2];
+	} cache[GBA_VIDEO_VERTICAL_PIXELS];
+	uint16_t nextIo[0x80];
+	bool stereo;
+	int32_t nextY;
+	struct GBAVideoSoftwareBackground bg[4];
+	struct WindowN winN[2];
+	struct WindowN windows[4];
+	int nWindows;
 	int32_t objOffsetX;
 	int32_t objOffsetY;
 	int oamDirty;
+	int oamMax;
+	struct GBAVideoRendererSprite sprites[128];
+	int spriteCyclesRemaining;
 	int start;
 	int end;
 	uint16_t mosaic;
 	uint16_t blendEffect;
+	bool blendDirty;
+	uint16_t blda;
+	uint16_t bldb;
+	uint16_t bldy;
 	uint32_t scanlineDirty[256];
 	mColor* normalPalette;
-	uint8_t* target1Obj;
+	bool target1Obj;
+	bool target1Bd;
 	bool target2Obj;
 	bool target2Bd;
 	bool forceTarget1;
@@ -368,27 +451,18 @@ struct GBAVideoSoftwareRenderer {
 	mColor* highlightVariantPalette;
 	mColor* variantPalette;
 	uint32_t* row;
+	uint32_t* temporaryBuffer;
 	uint32_t* spriteLayer;
-	struct { uint16_t packed; int priority; } currentWindow;
-	struct { uint16_t packed; int priority; } objwin;
+	struct WindowControl currentWindow;
+	struct WindowControl objwin;
+	struct WindowControl winout;
+	bool objwinForceEnable;
+	bool objwinOnly;
+	int lastHighlightAmount;
 	uint16_t dispcnt;
 };
 
 extern const int GBAVideoObjSizes[16][2];
-
-struct GBAVideo {
-	struct GBA* p;
-	struct mTimingEvent event;
-	struct GBAVideoRenderer* renderer;
-	uint16_t* palette;
-	uint8_t* vram;
-	struct { uint8_t raw[GBA_SIZE_OAM]; } oam;
-	uint32_t frameCounter;
-	int frameskip;
-	int frameskipCounter;
-	uint32_t stallMask;
-	uint16_t vcount;
-};
 
 struct GBAOAMMatrix {
 	int16_t a;
@@ -399,20 +473,22 @@ struct GBAOAMMatrix {
 
 struct GBAOAM {
 	struct GBAOAMMatrix mat[32];
+	struct GBAObj obj[128];
+	uint8_t raw[GBA_SIZE_OAM];
 };
 
-struct GBAVideoSoftwareBackground {
-	int x;
-	int y;
-	int offsetX;
-	int offsetY;
-	bool mosaic;
-};
-
-struct GBAObj {
-	uint16_t a;
-	uint16_t b;
-	uint16_t c;
+struct GBAVideo {
+	struct GBA* p;
+	struct mTimingEvent event;
+	struct GBAVideoRenderer* renderer;
+	uint16_t* palette;
+	uint8_t* vram;
+	struct GBAOAM oam;
+	uint32_t frameCounter;
+	int frameskip;
+	int frameskipCounter;
+	uint32_t stallMask;
+	uint16_t vcount;
 };
 
 typedef uint16_t GBATimerFlags;
@@ -473,6 +549,9 @@ struct GBASerializedState {
 	uint8_t io[0x400];
 	uint8_t wram[GBA_SIZE_EWRAM];
 	uint8_t iwram[GBA_SIZE_IWRAM];
+	uint8_t vram[GBA_SIZE_VRAM];
+	uint8_t oam[GBA_SIZE_OAM];
+	uint8_t pram[GBA_SIZE_PALETTE_RAM];
 	struct {
 		uint16_t reload;
 		uint32_t lastEvent;
@@ -481,6 +560,14 @@ struct GBASerializedState {
 	} timers[4];
 	uint32_t bus;
 	uint32_t versionMagic;
+	struct {
+		uint32_t nextEvent;
+		uint32_t flags;
+		uint32_t frameCounter;
+	} video;
+	struct {
+		uint32_t lastSample;
+	} audio;
 	struct {
 		uint32_t type;
 		uint32_t command;
@@ -1276,6 +1363,15 @@ static inline uint16_t GBASIONormalFillSi(uint16_t v) { return (uint16_t) (v | 0
 #ifndef GBA_IRQ_SIO
 #define GBA_IRQ_SIO 7
 #endif
+#ifndef GBA_IRQ_HBLANK
+#define GBA_IRQ_HBLANK 0
+#endif
+#ifndef GBA_IRQ_VBLANK
+#define GBA_IRQ_VBLANK 1
+#endif
+#ifndef GBA_IRQ_VCOUNTER
+#define GBA_IRQ_VCOUNTER 2
+#endif
 
 #ifndef HW_GB_PLAYER
 #define HW_GB_PLAYER (1u << 7)
@@ -1284,13 +1380,28 @@ static inline uint16_t GBASIONormalFillSi(uint16_t v) { return (uint16_t) (v | 0
 #ifndef VIDEO_HDRAW_LENGTH
 #define VIDEO_HDRAW_LENGTH 1006
 #endif
+#ifndef VIDEO_HBLANK_LENGTH
+#define VIDEO_HBLANK_LENGTH 226
+#endif
 
 #ifndef BLEND_ALPHA
 #define BLEND_ALPHA 1
 #endif
+#ifndef BLEND_NONE
+#define BLEND_NONE 0
+#endif
 
 #ifndef OFFSET_PRIORITY
 #define OFFSET_PRIORITY 0
+#endif
+#ifndef OFFSET_INDEX
+#define OFFSET_INDEX 2
+#endif
+#ifndef FLAG_IS_BACKGROUND
+#define FLAG_IS_BACKGROUND (1u << 5)
+#endif
+#ifndef M_COLOR_WHITE
+#define M_COLOR_WHITE 0x7FFFu
 #endif
 
 #ifndef GBA_REG
@@ -1303,8 +1414,8 @@ enum {
 	BG0HOFS = 0x010, BG0VOFS = 0x012, BG1HOFS = 0x014, BG1VOFS = 0x016,
 	BG2HOFS = 0x018, BG2VOFS = 0x01A, BG2PA = 0x020, BG2PB = 0x022, BG2PC = 0x024, BG2PD = 0x026,
 	BG2X_LO = 0x028, BG2X_HI = 0x02A, BG2Y_LO = 0x02C, BG2Y_HI = 0x02E,
-	BG3HOFS = 0x030, BG3VOFS = 0x032, BG3PA = 0x034, BG3PB = 0x036, BG3PC = 0x038, BG3PD = 0x03A,
-	BG3X_LO = 0x03C, BG3X_HI = 0x03E, BG3Y_LO = 0x040, BG3Y_HI = 0x042,
+	BG3HOFS = 0x01C, BG3VOFS = 0x01E, BG3PA = 0x030, BG3PB = 0x032, BG3PC = 0x034, BG3PD = 0x036,
+	BG3X_LO = 0x038, BG3X_HI = 0x03A, BG3Y_LO = 0x03C, BG3Y_HI = 0x03E,
 	WIN0H = 0x040, WIN1H = 0x042, WIN0V = 0x044, WIN1V = 0x046,
 	WININ = 0x048, WINOUT = 0x04A, MOSAIC = 0x04C, BLDCNT = 0x050, BLDALPHA = 0x052, BLDY = 0x054,
 	DMA0SAD_LO = 0x0B0, DMA0SAD_HI = 0x0B2, DMA0DAD_LO = 0x0B4, DMA0DAD_HI = 0x0B6, DMA0CNT_LO = 0x0B8, DMA0CNT_HI = 0x0BA,
@@ -1509,7 +1620,7 @@ static inline void GBAHalt(struct GBA* gba) { UNUSED(gba); }
 static inline void GBAStop(struct GBA* gba) { UNUSED(gba); }
 static inline void GBAAudioSampleFIFO(void* audio, int fifo, uint32_t cyclesLate) { UNUSED(audio); UNUSED(fifo); UNUSED(cyclesLate); }
 static inline void GBAAudioSample(void* audio, int32_t cyclesLate) { UNUSED(audio); UNUSED(cyclesLate); }
-static inline uint16_t GBAVideoWriteDISPSTAT(void* video, uint16_t value) { UNUSED(video); return value; }
+uint16_t GBAVideoWriteDISPSTAT(struct GBAVideo* video, uint16_t value);
 static inline void GBAAudioWriteSOUND1CNT_LO(void* audio, uint16_t value) { UNUSED(audio); UNUSED(value); }
 static inline void GBAAudioWriteSOUND1CNT_HI(void* audio, uint16_t value) { UNUSED(audio); UNUSED(value); }
 static inline void GBAAudioWriteSOUND1CNT_X(void* audio, uint16_t value) { UNUSED(audio); UNUSED(value); }
@@ -1607,7 +1718,7 @@ static inline void GBACreate(struct GBA* gba) { UNUSED(gba); }
 static inline void GBADestroy(struct GBA* gba) { UNUSED(gba); }
 void GBAVideoDummyRendererCreate(struct GBAVideoRenderer* renderer);
 void GBAVideoAssociateRenderer(struct GBAVideo* video, struct GBAVideoRenderer* renderer);
-static inline void GBAVideoSoftwareRendererCreate(struct GBAVideoSoftwareRenderer* renderer) { UNUSED(renderer); }
+void GBAVideoSoftwareRendererCreate(struct GBAVideoSoftwareRenderer* renderer);
 static inline void mVideoThreadProxyCreate(struct mVideoThreadProxy* proxy) { UNUSED(proxy); }
 static inline void GBAAudioResizeBuffer(void* audio, size_t samples) { UNUSED(audio); UNUSED(samples); }
 void GBAPrintFlush(struct GBA* gba);
@@ -1917,9 +2028,80 @@ private:
 
 #endif  // __cplusplus
 typedef uint16_t GBARegisterDISPSTAT;
+typedef uint16_t GBARegisterDISPCNT;
+typedef uint16_t GBARegisterBGCNT;
 static inline GBARegisterDISPSTAT GBARegisterDISPSTATClearInHblank(GBARegisterDISPSTAT v) { return (uint16_t) (v & ~0x2); }
+static inline GBARegisterDISPSTAT GBARegisterDISPSTATFillInHblank(GBARegisterDISPSTAT v) { return (uint16_t) (v | 0x2); }
+static inline GBARegisterDISPSTAT GBARegisterDISPSTATClearInVblank(GBARegisterDISPSTAT v) { return (uint16_t) (v & ~0x1); }
+static inline GBARegisterDISPSTAT GBARegisterDISPSTATFillInVblank(GBARegisterDISPSTAT v) { return (uint16_t) (v | 0x1); }
 static inline GBARegisterDISPSTAT GBARegisterDISPSTATFillVcounter(GBARegisterDISPSTAT v) { return (uint16_t) (v | 0x4); }
 static inline GBARegisterDISPSTAT GBARegisterDISPSTATClearVcounter(GBARegisterDISPSTAT v) { return (uint16_t) (v & ~0x4); }
 static inline unsigned GBARegisterDISPSTATGetVcountSetting(GBARegisterDISPSTAT v) { return (v >> 8) & 0xFF; }
+static inline bool GBARegisterDISPSTATIsInHblank(GBARegisterDISPSTAT v) { return (v & 0x2) != 0; }
+static inline bool GBARegisterDISPSTATIsVcounter(GBARegisterDISPSTAT v) { return (v & 0x4) != 0; }
+static inline bool GBARegisterDISPSTATIsVblankIRQ(GBARegisterDISPSTAT v) { return (v & 0x8) != 0; }
+static inline bool GBARegisterDISPSTATIsHblankIRQ(GBARegisterDISPSTAT v) { return (v & 0x10) != 0; }
 static inline bool GBARegisterDISPSTATIsVcounterIRQ(GBARegisterDISPSTAT v) { return (v & 0x20) != 0; }
-#define GBA_IRQ_VCOUNTER 2
+static inline bool GBARegisterDISPCNTIsForcedBlank(GBARegisterDISPCNT v) { return (v & 0x80) != 0; }
+static inline bool GBARegisterDISPCNTIsBg0Enable(GBARegisterDISPCNT v) { return (v & 0x0100) != 0; }
+static inline bool GBARegisterDISPCNTIsBg1Enable(GBARegisterDISPCNT v) { return (v & 0x0200) != 0; }
+static inline bool GBARegisterDISPCNTIsBg2Enable(GBARegisterDISPCNT v) { return (v & 0x0400) != 0; }
+static inline bool GBARegisterDISPCNTIsBg3Enable(GBARegisterDISPCNT v) { return (v & 0x0800) != 0; }
+static inline bool GBARegisterDISPCNTIsObjEnable(GBARegisterDISPCNT v) { return (v & 0x1000) != 0; }
+static inline bool GBARegisterDISPCNTIsWin0Enable(GBARegisterDISPCNT v) { return (v & 0x2000) != 0; }
+static inline bool GBARegisterDISPCNTIsWin1Enable(GBARegisterDISPCNT v) { return (v & 0x4000) != 0; }
+static inline bool GBARegisterDISPCNTGetBg0Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg0Enable(v); }
+static inline bool GBARegisterDISPCNTGetBg1Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg1Enable(v); }
+static inline bool GBARegisterDISPCNTGetBg2Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg2Enable(v); }
+static inline bool GBARegisterDISPCNTGetBg3Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg3Enable(v); }
+static inline bool GBARegisterBGCNTIs256Color(GBARegisterBGCNT v) { return (v & 0x0080) != 0; }
+static inline int GBARegisterBGCNTGetPriority(GBARegisterBGCNT v) { return v & 0x3; }
+static inline int GBARegisterBGCNTGetCharBase(GBARegisterBGCNT v) { return (v >> 2) & 0x3; }
+static inline bool GBARegisterBGCNTGetMosaic(GBARegisterBGCNT v) { return (v & 0x40) != 0; }
+static inline bool GBARegisterBGCNTGet256Color(GBARegisterBGCNT v) { return GBARegisterBGCNTIs256Color(v); }
+static inline int GBARegisterBGCNTGetScreenBase(GBARegisterBGCNT v) { return (v >> 8) & 0x1F; }
+static inline bool GBARegisterBGCNTGetOverflow(GBARegisterBGCNT v) { return (v & 0x2000) != 0; }
+static inline int GBARegisterBGCNTGetSize(GBARegisterBGCNT v) { return (v >> 14) & 0x3; }
+static inline bool GBAObjAttributesAIsDisable(uint16_t a) { return (a & 0x0200) == 0; }
+static inline int GBAMosaicControlGetObjV(uint16_t mosaic) { return (mosaic >> 12) & 0xF; }
+#define ENABLED_MAX 4
+
+enum GBAVideoBlendEffect {
+	GBAVIDEO_BLEND_NONE = BLEND_NONE,
+	GBAVIDEO_BLEND_ALPHA = BLEND_ALPHA,
+	GBAVIDEO_BLEND_BRIGHTEN = BLEND_BRIGHTEN,
+	GBAVIDEO_BLEND_DARKEN = BLEND_DARKEN
+};
+
+typedef uint16_t GBARegisterBLDCNT;
+static inline bool GBARegisterBLDCNTGetTarget1Bg0(GBARegisterBLDCNT v) { return (v & (1u << 0)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget1Bg1(GBARegisterBLDCNT v) { return (v & (1u << 1)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget1Bg2(GBARegisterBLDCNT v) { return (v & (1u << 2)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget1Bg3(GBARegisterBLDCNT v) { return (v & (1u << 3)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget1Obj(GBARegisterBLDCNT v) { return (v & (1u << 4)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget1Bd(GBARegisterBLDCNT v) { return (v & (1u << 5)) != 0; }
+static inline enum GBAVideoBlendEffect GBARegisterBLDCNTGetEffect(GBARegisterBLDCNT v) { return (enum GBAVideoBlendEffect) ((v >> 6) & 0x3); }
+static inline bool GBARegisterBLDCNTGetTarget2Bg0(GBARegisterBLDCNT v) { return (v & (1u << 8)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget2Bg1(GBARegisterBLDCNT v) { return (v & (1u << 9)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget2Bg2(GBARegisterBLDCNT v) { return (v & (1u << 10)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget2Bg3(GBARegisterBLDCNT v) { return (v & (1u << 11)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget2Obj(GBARegisterBLDCNT v) { return (v & (1u << 12)) != 0; }
+static inline bool GBARegisterBLDCNTGetTarget2Bd(GBARegisterBLDCNT v) { return (v & (1u << 13)) != 0; }
+#define LOAD_16LE LOAD_16
+
+void GBAFrameStarted(struct GBA* gba);
+void GBAFrameEnded(struct GBA* gba);
+void mCoreSyncPostFrame(struct mCoreSync* sync);
+void GBAInterrupt(struct GBA* gba);
+void GBADMARunVblank(struct GBA* gba, int32_t cyclesLate);
+void GBADMARunHblank(struct GBA* gba, int32_t cyclesLate);
+void GBADMARunDisplayStart(struct GBA* gba, int32_t cyclesLate);
+uint16_t mColorFrom555(uint16_t color);
+uint16_t mColorMix5Bit(unsigned aWeight, uint16_t a, unsigned bWeight, uint16_t b);
+void mCacheSetWriteVRAM(void* cache, uint32_t address);
+void mCacheSetWritePalette(void* cache, uint32_t index, uint16_t color);
+void GBAVideoCacheWriteVideoRegister(void* cache, uint32_t address, uint16_t value);
+
+typedef uint32_t GBASerializedVideoFlags;
+static inline GBASerializedVideoFlags GBASerializedVideoFlagsSetMode(GBASerializedVideoFlags flags, unsigned mode) { return (flags & ~0x3u) | (mode & 0x3u); }
+static inline unsigned GBASerializedVideoFlagsGetMode(GBASerializedVideoFlags flags) { return flags & 0x3u; }

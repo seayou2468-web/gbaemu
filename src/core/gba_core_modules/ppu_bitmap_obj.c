@@ -3,16 +3,16 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-static void _compositeBlendObjwin(struct GBAVideoSoftwareRenderer* renderer, mColor* pixel, uint32_t color, uint32_t current);
-static void _compositeBlendNoObjwin(struct GBAVideoSoftwareRenderer* renderer, mColor* pixel, uint32_t color, uint32_t current);
+static void _compositeBlendObjwin(struct GBAVideoSoftwareRenderer* renderer, uint32_t* pixel, uint32_t color, uint32_t current);
+static void _compositeBlendNoObjwin(struct GBAVideoSoftwareRenderer* renderer, uint32_t* pixel, uint32_t color, uint32_t current);
 
-static void _compositeBlendObjwin(struct GBAVideoSoftwareRenderer* renderer, mColor* pixel, uint32_t color, uint32_t current) {
+static void _compositeBlendObjwin(struct GBAVideoSoftwareRenderer* renderer, uint32_t* pixel, uint32_t color, uint32_t current) {
 	UNUSED(renderer);
 	UNUSED(current);
 	*pixel = (mColor) color;
 }
 
-static void _compositeBlendNoObjwin(struct GBAVideoSoftwareRenderer* renderer, mColor* pixel, uint32_t color, uint32_t current) {
+static void _compositeBlendNoObjwin(struct GBAVideoSoftwareRenderer* renderer, uint32_t* pixel, uint32_t color, uint32_t current) {
 	UNUSED(renderer);
 	UNUSED(current);
 	*pixel = (mColor) color;
