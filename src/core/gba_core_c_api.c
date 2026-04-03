@@ -15,12 +15,14 @@ typedef struct {
 
 struct GBACoreHandle {
     uint32_t frame[GBA_PIXEL_COUNT];
+    uint16_t frame16[GBA_PIXEL_COUNT];
     GBABlob rom;
     GBABlob bios;
     char lastError[256];
     uint16_t keys;
     bool hasRom;
     bool hasBios;
+    bool videoReady;
 };
 
 static void _setError(GBACoreHandle* h, const char* msg) {
@@ -123,14 +125,23 @@ static void _renderFrameFromROM(GBACoreHandle* h) {
     if (!srcWords) {
         return;
     }
-    for (size_t y = 0; y < GBA_SCREEN_HEIGHT; ++y) {
-        for (size_t x = 0; x < GBA_SCREEN_WIDTH; ++x) {
-            size_t srcIndex = (y * GBA_SCREEN_WIDTH + x) % srcWords;
-            uint16_t color = (uint16_t) h->rom.data[srcIndex * 2] |
-                             (uint16_t) (h->rom.data[srcIndex * 2 + 1] << 8);
-            h->frame[y * GBA_SCREEN_WIDTH + x] = _bgr555ToRgba(color);
-        }
+    for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
+        size_t srcIndex = i % srcWords;
+        h->frame16[i] = (uint16_t) h->rom.data[srcIndex * 2] |
+                        (uint16_t) (h->rom.data[srcIndex * 2 + 1] << 8);
     }
+
+    for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
+        h->frame[i] = _bgr555ToRgba(h->frame16[i]);
+    }
+}
+
+static bool _initVideo(GBACoreHandle* h) {
+    if (!h || h->videoReady) {
+        return h != NULL;
+    }
+    h->videoReady = true;
+    return true;
 }
 
 GBACoreHandle* GBA_Create(void) {
@@ -139,6 +150,7 @@ GBACoreHandle* GBA_Create(void) {
         for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
             h->frame[i] = 0xFF000000u;
         }
+        _initVideo(h);
     }
     return h;
 }
@@ -147,6 +159,7 @@ void GBA_Destroy(GBACoreHandle* handle) {
     if (!handle) {
         return;
     }
+    handle->videoReady = false;
     _freeBlob(&handle->rom);
     _freeBlob(&handle->bios);
     free(handle);
@@ -227,8 +240,12 @@ void GBA_Reset(GBACoreHandle* handle) {
     if (!handle) {
         return;
     }
+    if (!handle->videoReady && !_initVideo(handle)) {
+        return;
+    }
     for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
         handle->frame[i] = 0xFF000000u;
+        handle->frame16[i] = 0;
     }
     _setError(handle, NULL);
 }
@@ -243,6 +260,9 @@ void GBA_StepFrame(GBACoreHandle* handle) {
     }
     if (!handle->hasBios) {
         _setError(handle, "BIOS is not loaded");
+        return;
+    }
+    if (!handle->videoReady && !_initVideo(handle)) {
         return;
     }
     _renderFrameFromROM(handle);

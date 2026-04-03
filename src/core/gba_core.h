@@ -1802,6 +1802,8 @@ static inline void GBACreate(struct GBA* gba) { UNUSED(gba); }
 static inline void GBADestroy(struct GBA* gba) { UNUSED(gba); }
 void GBAVideoDummyRendererCreate(struct GBAVideoRenderer* renderer);
 void GBAVideoAssociateRenderer(struct GBAVideo* video, struct GBAVideoRenderer* renderer);
+void GBAVideoInit(struct GBAVideo* video);
+void GBAVideoDeinit(struct GBAVideo* video);
 void GBAVideoSoftwareRendererCreate(struct GBAVideoSoftwareRenderer* renderer);
 static inline void mVideoThreadProxyCreate(struct mVideoThreadProxy* proxy) { UNUSED(proxy); }
 static inline void GBAAudioResizeBuffer(void* audio, size_t samples) { UNUSED(audio); UNUSED(samples); }
