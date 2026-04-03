@@ -5,8 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Embed runtime modules directly so the C API can run even when the full
-// top-level core wiring is not linked by the host target yet.
+// NOTE:
+// Embedding runtime .c modules directly is useful for standalone integration,
+// but can trigger duplicate-definition linker errors in targets that already
+// compile those modules as separate translation units.
+//
+// Keep this path opt-in to avoid duplicate symbols by default.
+#if defined(GBA_C_API_EMBED_RUNTIME_MODULES)
 #include "./gba_core_modules/core_input_runtime.c"
 #include "./gba_core_modules/core_overrides_runtime.c"
 #include "./gba_core_modules/core_bootstrap.c"
@@ -50,6 +55,7 @@ int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* re
 void GBAVideoSoftwareRendererPostprocessSprite(struct GBAVideoSoftwareRenderer* renderer, unsigned priority) {
     UNUSED(renderer); UNUSED(priority);
 }
+#endif
 
 #define GBA_SCREEN_WIDTH 240
 #define GBA_SCREEN_HEIGHT 160
