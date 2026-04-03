@@ -1,1 +1,1 @@
-/* Timing runtime hooks remain to be split from migrated reference code. */
+/* Timing runtime wiring remains in migrated core entrypoints. */

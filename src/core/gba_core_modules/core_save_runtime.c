@@ -1,1 +1,1 @@
-/* Save runtime hooks remain to be split from migrated reference code. */
+/* Save/load runtime wiring remains in migrated core entrypoints. */

@@ -1,15 +1,15 @@
 #if defined(__cplusplus)
 // Imported from reference implementation: internal/gbaBios.cpp
 /* BEGIN internal/gbaBios.cpp */
-#include "../../../reference implementation/gba/core/gba/internal/gbaBios.h"
+#include "../../../reference implementation/gba/internal/gbaBios.h"
 
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 
-#include "../../../reference implementation/gba/core/gba/gba.h"
-#include "../../../reference implementation/gba/core/gba/gbaGlobals.h"
-#include "../../../reference implementation/gba/core/gba/gbaInline.h"
+#include "../../../reference implementation/gba/gba.h"
+#include "../../../reference implementation/gba/gbaGlobals.h"
+#include "../../../reference implementation/gba/gbaInline.h"
 
 int16_t sineTable[256] = {
     (int16_t)0x0000u, (int16_t)0x0192u, (int16_t)0x0323u, (int16_t)0x04B5u, (int16_t)0x0645u, (int16_t)0x07D5u, (int16_t)0x0964u, (int16_t)0x0AF1u,

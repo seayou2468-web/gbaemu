@@ -1,1 +1,1 @@
-/* Input runtime hooks remain to be split from migrated reference code. */
+/* Input runtime wiring lives in core_bootstrap and CPU/IO modules. */

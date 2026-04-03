@@ -1,1 +1,1 @@
-/* Sync runtime hooks remain to be split from migrated reference code. */
+/* Core sync runtime wiring remains in migrated core entrypoints. */

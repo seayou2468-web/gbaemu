@@ -1,14 +1,14 @@
 #if defined(__cplusplus)
 // Imported from reference implementation: gbaCpuArm.cpp
 /* BEGIN gbaCpuArm.cpp */
-#include "../../../reference implementation/gba/core/gba/gba.h"
+#include "../../../reference implementation/gba/gba.h"
 
-#include "../../../reference implementation/gba/core/gba/gbaCpu.h"
-#include "../../../reference implementation/gba/core/gba/gbaInline.h"
-#include "../../../reference implementation/gba/core/gba/gbaGlobals.h"
+#include "../../../reference implementation/gba/gbaCpu.h"
+#include "../../../reference implementation/gba/gbaInline.h"
+#include "../../../reference implementation/gba/gbaGlobals.h"
 
 #if defined(VBAM_ENABLE_DEBUGGER)
-#include "../../../reference implementation/gba/core/gba/gbaRemote.h"
+#include "../../../reference implementation/gba/gbaRemote.h"
 #endif  // defined(VBAM_ENABLE_DEBUGGER)
 
 #ifdef PROFILING
