@@ -7,9 +7,7 @@
 #include "./gba_core_modules/core_reset_state.c"
 #include "./gba_core_modules/core_timing_runtime.c"
 #include "./gba_core_modules/core_sync_runtime.c"
-#if !GBAEMU_ENABLE_DEBUG_FEATURES
 #include "./gba_core_modules/core_save_runtime_stub.c"
-#endif
 #include "./gba_core_modules/core_backup_runtime.c"
 #include "./gba_core_modules/cpu_helpers.c"
 #include "./gba_core_modules/cpu_swi.c"

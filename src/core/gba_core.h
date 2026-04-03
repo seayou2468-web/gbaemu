@@ -22,10 +22,6 @@
 #define mLOG(...)
 #endif
 
-#ifndef GBAEMU_ENABLE_DEBUG_FEATURES
-#define GBAEMU_ENABLE_DEBUG_FEATURES 0
-#endif
-
 #ifndef GBA_CORE_COMMON_FOUNDATION_DEFINED
 #define GBA_CORE_COMMON_FOUNDATION_DEFINED 1
 
@@ -102,9 +98,208 @@ struct GBASIOPlayer {
 };
 
 struct GBA;
+struct GBASavedata;
+struct GBAHardware;
+struct GBACartEReader;
+
+enum {
+	GBA_REGION_BIOS = 0,
+	GBA_REGION_EWRAM = 2,
+	GBA_REGION_IWRAM = 3,
+	GBA_REGION_IO = 4,
+	GBA_REGION_PALETTE_RAM = 5,
+	GBA_REGION_VRAM = 6,
+	GBA_REGION_OAM = 7,
+	GBA_REGION_ROM0 = 8,
+	GBA_REGION_ROM1 = 9,
+	GBA_REGION_ROM2 = 10,
+	GBA_REGION_SRAM = 14,
+	GBA_REGION_SRAM_MIRROR = 15
+};
+
+#define GBA_BASE_BIOS 0x00000000u
+#define GBA_BASE_EWRAM 0x02000000u
+#define GBA_BASE_IWRAM 0x03000000u
+#define GBA_BASE_IO 0x04000000u
+#define GBA_BASE_PALETTE_RAM 0x05000000u
+#define GBA_BASE_VRAM 0x06000000u
+#define GBA_BASE_OAM 0x07000000u
+#define GBA_BASE_ROM0 0x08000000u
+#define GBA_BASE_ROM1 0x0A000000u
+#define GBA_BASE_ROM2 0x0C000000u
+#define GBA_BASE_SRAM 0x0E000000u
+
+#define GBA_SIZE_BIOS 0x00004000u
+#define GBA_SIZE_EWRAM 0x00040000u
+#define GBA_SIZE_IWRAM 0x00008000u
+#define GBA_SIZE_IO 0x00000400u
+#define GBA_SIZE_PALETTE_RAM 0x00000400u
+#define GBA_SIZE_VRAM 0x00018000u
+#define GBA_SIZE_OAM 0x00000400u
+#define GBA_SIZE_ROM0 0x02000000u
+#define GBA_SIZE_ROM1 0x02000000u
+#define GBA_SIZE_ROM2 0x02000000u
+#define GBA_SIZE_SRAM 0x00008000u
+#define GBA_SIZE_SRAM512 0x00010000u
+#define GBA_SIZE_FLASH512 0x00010000u
+#define GBA_SIZE_FLASH1M 0x00020000u
+#define GBA_SIZE_EEPROM 0x00002000u
+#define GBA_SIZE_EEPROM512 0x00000200u
+
+enum {
+	mCORE_MEMORY_RW = 1 << 0,
+	mCORE_MEMORY_READ = 1 << 1,
+	mCORE_MEMORY_MAPPED = 1 << 2,
+	mCORE_MEMORY_WORM = 1 << 3,
+	mCORE_MEMORY_VIRTUAL = 1 << 4
+};
+
+struct mCoreMemoryBlock {
+	int id;
+	const char* key;
+	const char* shortName;
+	const char* longName;
+	uint32_t start;
+	uint32_t end;
+	uint32_t size;
+	uint32_t flags;
+	int bank;
+	uint32_t bankAddress;
+};
+
+struct mCoreScreenRegion {
+	int id;
+	const char* name;
+	int32_t x;
+	int32_t y;
+	uint32_t width;
+	uint32_t height;
+};
+
+struct mCoreChannelInfo {
+	int id;
+	const char* key;
+	const char* name;
+	const char* desc;
+};
+
+struct mCoreRegisterInfo {
+	const char* name;
+	const char** aliases;
+	size_t size;
+	uint32_t mask;
+	uint32_t flags;
+};
+
+struct GBASavedata {
+	int type;
+	void* data;
+	void* currentBank;
+};
+
+struct GBAHardware {
+	unsigned devices;
+};
+
+struct GBACartEReader {
+	int _unused;
+};
+
+#define GBA_VIDEO_HORIZONTAL_PIXELS 240u
+#define GBA_VIDEO_VERTICAL_PIXELS 160u
+
+typedef uint16_t mColor;
+
+struct GBAVideoRenderer {
+	void (*init)(struct GBAVideoRenderer*);
+	void (*reset)(struct GBAVideoRenderer*);
+	void (*deinit)(struct GBAVideoRenderer*);
+	uint16_t (*writeVideoRegister)(struct GBAVideoRenderer*, uint32_t, uint16_t);
+	void (*writeVRAM)(struct GBAVideoRenderer*, uint32_t);
+	void (*writePalette)(struct GBAVideoRenderer*, uint32_t, uint16_t);
+	void (*writeOAM)(struct GBAVideoRenderer*, uint32_t);
+	void (*drawScanline)(struct GBAVideoRenderer*, int);
+	void (*finishFrame)(struct GBAVideoRenderer*);
+	void (*getPixels)(struct GBAVideoRenderer*, size_t*, const void**);
+	void (*putPixels)(struct GBAVideoRenderer*, size_t, const void*);
+	uint16_t* palette;
+	uint8_t* vram;
+	void* oam;
+	void* cache;
+	bool disableBG[4];
+	bool disableOBJ;
+	bool disableWIN[2];
+	bool disableOBJWIN;
+};
+
+struct GBAVideoSoftwareRenderer {
+	struct GBAVideoRenderer d;
+	mColor* outputBuffer;
+	size_t outputBufferStride;
+	struct { int32_t offsetX; int32_t offsetY; } bg[4];
+	struct { int32_t offsetX; int32_t offsetY; } winN[2];
+	int32_t objOffsetX;
+	int32_t objOffsetY;
+	int oamDirty;
+};
+
+struct GBAVideoProxyRenderer {
+	struct GBAVideoRenderer d;
+	int flushScanline;
+};
+
+struct mVideoThreadProxy {
+	struct { int _unused; } d;
+};
+
+struct mCoreCallbacks {
+	void (*videoFrameEnded)(void*);
+	void* context;
+};
+
+struct mCPUComponent {
+	int _unused;
+};
+
+#ifndef CPU_COMPONENT_MAX
+#define CPU_COMPONENT_MAX 16
+#endif
+
+enum {
+	GBA_UNL_CART_NONE = 0,
+	GBA_UNL_CART_MULTICART = 1
+};
+
+struct GBAUnlCart {
+	int type;
+};
+
+struct GBACartridge {
+	char id[4];
+};
+
+enum {
+	IDLE_LOOP_DETECT = 1,
+	IDLE_LOOP_REMOVE = 2
+};
+
+void GBASavedataForceType(struct GBASavedata* savedata, int type);
+void GBASavedataRTCRead(struct GBASavedata* savedata);
+void GBAHardwareClear(struct GBAHardware* hw);
+void GBAHardwareInitRTC(struct GBAHardware* hw);
+void GBAHardwareInitGyro(struct GBAHardware* hw);
+void GBAHardwareInitRumble(struct GBAHardware* hw);
+void GBAHardwareInitLight(struct GBAHardware* hw);
+void GBAHardwareInitTilt(struct GBAHardware* hw);
+void GBACartEReaderInit(struct GBACartEReader* ereader);
 
 struct GBAMemoryBusMini {
 	uint16_t io[0x400];
+	uint8_t* rom;
+	struct GBASavedata savedata;
+	struct GBAHardware hw;
+	struct GBACartEReader ereader;
+	struct GBAUnlCart unl;
 };
 
 struct GBASIO {
@@ -137,18 +332,35 @@ enum GBASavedataType {
 	GBA_SAVEDATA_EEPROM = 1,
 	GBA_SAVEDATA_SRAM = 2,
 	GBA_SAVEDATA_FLASH512 = 3,
-	GBA_SAVEDATA_FLASH1M = 4
+	GBA_SAVEDATA_FLASH1M = 4,
+	GBA_SAVEDATA_EEPROM512 = 5,
+	GBA_SAVEDATA_SRAM512 = 6,
+	GBA_SAVEDATA_FORCE_NONE = 7
 };
 
 enum GBAHardwareDeviceFlags {
 	HW_NONE = 0,
 	HW_RTC = 1 << 0,
-	HW_LIGHT_SENSOR = 1 << 1
+	HW_LIGHT_SENSOR = 1 << 1,
+	HW_RUMBLE = 1 << 2,
+	HW_GYRO = 1 << 3,
+	HW_TILT = 1 << 4,
+	HW_EREADER = 1 << 5,
+	HW_GB_PLAYER_DETECTION = 1 << 6,
+	HW_NO_OVERRIDE = 1 << 30
 };
 
 #ifndef GBA_IDLE_LOOP_NONE
 #define GBA_IDLE_LOOP_NONE 0
 #endif
+
+struct GBACartridgeOverride {
+	char id[5];
+	int savetype;
+	unsigned hardware;
+	uint32_t idleLoop;
+	bool vbaBugCompat;
+};
 
 typedef int Socket;
 struct Address { int unused; };
@@ -187,6 +399,27 @@ struct GBA {
 	struct mTiming timing;
 	struct GBAMemoryBusMini memory;
 	struct GBASIO sio;
+	struct {
+		struct GBAVideoRenderer* renderer;
+		uint16_t palette[GBA_SIZE_PALETTE_RAM / sizeof(uint16_t)];
+		uint8_t* vram;
+		struct { uint8_t raw[GBA_SIZE_OAM]; } oam;
+		uint32_t frameCounter;
+	} video;
+	struct {
+		int sampleInterval;
+		size_t samples;
+		struct { struct { int _unused; } buffer; } psg;
+	} audio;
+	struct { int _unused; } d;
+	struct { int _unused; } coreCallbacks;
+	void* sync;
+	void* rtcSource;
+	void* stream;
+	bool vbaBugCompat;
+	uint32_t idleLoop;
+	int idleOptimization;
+	uint32_t romCrc32;
 };
 
 #ifndef RCNT_INITIAL

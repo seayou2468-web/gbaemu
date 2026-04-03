@@ -285,12 +285,6 @@ static void _GBACoreDeinit(struct mCore* core) {
 #if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	mDirectorySetDeinit(&core->dirs);
 #endif
-#ifdef ENABLE_DEBUGGERS
-	if (core->symbolTable) {
-		mDebuggerSymbolTableDestroy(core->symbolTable);
-	}
-#endif
-
 	struct GBACore* gbacore = (struct GBACore*) core;
 	gbacore->debuggerPlatform = NULL;
 	gbacore->cheatDevice = NULL;
@@ -1294,105 +1288,6 @@ static bool _GBACoreWriteRegister(struct mCore* core, const char* name, const vo
 	return true;
 }
 
-#ifdef ENABLE_DEBUGGERS
-static bool _GBACoreSupportsDebuggerType(struct mCore* core, enum mDebuggerType type) {
-	UNUSED(core);
-	UNUSED(type);
-	return false;
-}
-
-static struct mDebuggerPlatform* _GBACoreDebuggerPlatform(struct mCore* core) {
-	UNUSED(core);
-	return NULL;
-}
-
-static struct CLIDebuggerSystem* _GBACoreCliDebuggerSystem(struct mCore* core) {
-	UNUSED(core);
-	return NULL;
-}
-
-static void _GBACoreAttachDebugger(struct mCore* core, struct mDebugger* debugger) {
-	UNUSED(core);
-	UNUSED(debugger);
-}
-
-static void _GBACoreDetachDebugger(struct mCore* core) {
-	UNUSED(core);
-}
-
-static void _GBACoreLoadSymbols(struct mCore* core, struct VFile* vf) {
-	struct GBA* gba = core->board;
-	bool closeAfter = false;
-	if (!core->symbolTable) {
-		core->symbolTable = mDebuggerSymbolTableCreate();
-	}
-	off_t seek;
-	if (vf) {
-		seek = vf->seek(vf, 0, SEEK_CUR);
-		vf->seek(vf, 0, SEEK_SET);
-	}
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
-#ifdef USE_ELF
-	if (!vf && core->dirs.base) {
-		closeAfter = true;
-		vf = mDirectorySetOpenSuffix(&core->dirs, core->dirs.base, ".elf", O_RDONLY);
-	}
-#endif
-	if (!vf && core->dirs.base) {
-		vf = mDirectorySetOpenSuffix(&core->dirs, core->dirs.base, ".sym", O_RDONLY);
-		if (vf) {
-			mDebuggerLoadARMIPSSymbols(core->symbolTable, vf);
-			vf->close(vf);
-			return;
-		}
-	}
-#endif
-	if (!vf && gba->mbVf) {
-		closeAfter = false;
-		vf = gba->mbVf;
-		seek = vf->seek(vf, 0, SEEK_CUR);
-		vf->seek(vf, 0, SEEK_SET);
-	}
-	if (!vf && gba->romVf) {
-		closeAfter = false;
-		vf = gba->romVf;
-		seek = vf->seek(vf, 0, SEEK_CUR);
-		vf->seek(vf, 0, SEEK_SET);
-	}
-	if (!vf) {
-		return;
-	}
-#ifdef USE_ELF
-	struct ELF* elf = ELFOpen(vf);
-	if (elf) {
-#ifdef ENABLE_DEBUGGERS
-		mCoreLoadELFSymbols(core->symbolTable, elf);
-#endif
-		ELFClose(elf);
-	}
-#endif
-	if (closeAfter) {
-		vf->close(vf);
-	} else {
-		vf->seek(vf, seek, SEEK_SET);
-	}
-}
-
-static bool _GBACoreLookupIdentifier(struct mCore* core, const char* name, int32_t* value, int* segment) {
-	UNUSED(core);
-	*segment = -1;
-	int i;
-	for (i = 0; i < GBA_REG_MAX; i += 2) {
-		const char* reg = GBAIORegisterNames[i >> 1];
-		if (reg && strcasecmp(reg, name) == 0) {
-			*value = GBA_BASE_IO | i;
-			return true;
-		}
-	}
-	return false;
-}
-#endif
-
 static struct mCheatDevice* _GBACoreCheatDevice(struct mCore* core) {
 	UNUSED(core);
 	return NULL;
@@ -1625,7 +1520,6 @@ struct mCore* GBACoreCreate(void) {
 	core->listRegisters = _GBACoreListRegisters;
 	core->readRegister = _GBACoreReadRegister;
 	core->writeRegister = _GBACoreWriteRegister;
-#ifdef ENABLE_DEBUGGERS
 	core->supportsDebuggerType = NULL;
 	core->debuggerPlatform = NULL;
 	core->cliDebuggerSystem = NULL;
@@ -1633,7 +1527,6 @@ struct mCore* GBACoreCreate(void) {
 	core->detachDebugger = NULL;
 	core->loadSymbols = NULL;
 	core->lookupIdentifier = NULL;
-#endif
 	core->cheatDevice = NULL;
 	core->savedataClone = _GBACoreSavedataClone;
 	core->savedataRestore = _GBACoreSavedataRestore;

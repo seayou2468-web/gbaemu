@@ -18,7 +18,6 @@ struct GBACoreHandle {
     GBABlob rom;
     GBABlob bios;
     char lastError[256];
-    uint64_t frameCounter;
     uint16_t keys;
     bool hasRom;
     bool hasBios;
@@ -119,28 +118,16 @@ static inline uint32_t _bgr555ToRgba(uint16_t color) {
     return _rgba(r, g, b);
 }
 
-static void _stepEmbeddedFrame(GBACoreHandle* h) {
+static void _renderFrameFromROM(GBACoreHandle* h) {
     size_t srcWords = h->rom.size / 2;
     if (!srcWords) {
         return;
     }
-    size_t phase = (size_t) (h->frameCounter * 257u) % srcWords;
-    int xScroll = (h->keys & 0x0020) ? 2 : (h->keys & 0x0010) ? -2 : 0;
-    int yScroll = (h->keys & 0x0040) ? 2 : (h->keys & 0x0080) ? -2 : 0;
     for (size_t y = 0; y < GBA_SCREEN_HEIGHT; ++y) {
         for (size_t x = 0; x < GBA_SCREEN_WIDTH; ++x) {
-            int sx = (int) x + xScroll;
-            int sy = (int) y + yScroll;
-            if (sx < 0) sx += GBA_SCREEN_WIDTH;
-            if (sy < 0) sy += GBA_SCREEN_HEIGHT;
-            sx %= GBA_SCREEN_WIDTH;
-            sy %= GBA_SCREEN_HEIGHT;
-            size_t srcIndex = (phase + (size_t) sy * GBA_SCREEN_WIDTH + (size_t) sx) % srcWords;
+            size_t srcIndex = (y * GBA_SCREEN_WIDTH + x) % srcWords;
             uint16_t color = (uint16_t) h->rom.data[srcIndex * 2] |
                              (uint16_t) (h->rom.data[srcIndex * 2 + 1] << 8);
-            if (h->keys & 0x0001) {
-                color ^= 0x7FFF;
-            }
             h->frame[y * GBA_SCREEN_WIDTH + x] = _bgr555ToRgba(color);
         }
     }
@@ -240,7 +227,6 @@ void GBA_Reset(GBACoreHandle* handle) {
     if (!handle) {
         return;
     }
-    handle->frameCounter = 0;
     for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
         handle->frame[i] = 0xFF000000u;
     }
@@ -259,8 +245,7 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         _setError(handle, "BIOS is not loaded");
         return;
     }
-    ++handle->frameCounter;
-    _stepEmbeddedFrame(handle);
+    _renderFrameFromROM(handle);
     _setError(handle, NULL);
 }
 

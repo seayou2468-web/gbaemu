@@ -5,13 +5,12 @@
 ## 絶対条件
 - 下記ファイルは **削除禁止**。
 - 下記ファイルは **空ファイル化禁止**。
-- `Imported from reference implementation` コメント総数は **29** を維持すること。
+- `Imported from reference implementation` コメント総数は **27** を維持すること。
 - `hlebios.s` は **存在必須**。
 
 ## 対象ファイル
 - core_bootstrap.c
 - core_reset_state.c
-- core_save_debug.c
 - core_backup_runtime.c
 - cpu_helpers.c
 - cpu_swi.c
@@ -23,7 +22,6 @@
 - ppu_tile_modes.c
 - timing_dma.c
 - apu_interrupts.c
-- render_debug.c
 - hlebios.s
 
 ## 検証

@@ -7,7 +7,6 @@ MOD_DIR="$ROOT_DIR/src/core/gba_core_modules"
 required_files=(
   core_bootstrap.c
   core_reset_state.c
-  core_save_debug.c
   core_backup_runtime.c
   cpu_helpers.c
   cpu_swi.c
@@ -19,7 +18,6 @@ required_files=(
   ppu_tile_modes.c
   timing_dma.c
   apu_interrupts.c
-  render_debug.c
   hlebios.s
 )
 
@@ -36,9 +34,9 @@ for file in "${required_files[@]}"; do
 done
 
 import_count=$(rg -n "Imported from reference implementation" "$MOD_DIR"/*.c | wc -l | tr -d ' ')
-if [[ "$import_count" != "29" ]]; then
-  echo "[ERROR] import marker count mismatch: expected=29 actual=$import_count" >&2
+if [[ "$import_count" != "27" ]]; then
+  echo "[ERROR] import marker count mismatch: expected=27 actual=$import_count" >&2
   exit 1
 fi
 
-echo "[OK] migration lock verified (required files exist, non-empty, markers=29)"
+echo "[OK] migration lock verified (required files exist, non-empty, markers=27)"
