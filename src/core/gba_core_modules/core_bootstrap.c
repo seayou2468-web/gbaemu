@@ -1409,17 +1409,6 @@ static void _GBACoreAdjustVideoLayer(struct mCore* core, size_t id, int32_t x, i
 		gbacore->renderer.bg[id].offsetX = x;
 		gbacore->renderer.bg[id].offsetY = y;
 #ifdef BUILD_GLES3
-		gbacore->glRenderer.bg[id].offsetX = x;
-		gbacore->glRenderer.bg[id].offsetY = y;
-#endif
-		break;
-	case GBA_LAYER_OBJ:
-		gbacore->renderer.objOffsetX = x;
-		gbacore->renderer.objOffsetY = y;
-		gbacore->renderer.oamDirty = 1;
-#ifdef BUILD_GLES3
-		gbacore->glRenderer.objOffsetX = x;
-		gbacore->glRenderer.objOffsetY = y;
 		gbacore->glRenderer.oamDirty = 1;
 #endif
 		break;
@@ -1510,45 +1499,6 @@ struct mCore* GBACoreCreate(void) {
 	core->busRead8 = _GBACoreBusRead8;
 	core->busRead16 = _GBACoreBusRead16;
 	core->busRead32 = _GBACoreBusRead32;
-	core->busWrite8 = _GBACoreBusWrite8;
-	core->busWrite16 = _GBACoreBusWrite16;
-	core->busWrite32 = _GBACoreBusWrite32;
-	core->rawRead8 = _GBACoreRawRead8;
-	core->rawRead16 = _GBACoreRawRead16;
-	core->rawRead32 = _GBACoreRawRead32;
-	core->rawWrite8 = _GBACoreRawWrite8;
-	core->rawWrite16 = _GBACoreRawWrite16;
-	core->rawWrite32 = _GBACoreRawWrite32;
-	core->listMemoryBlocks = _GBACoreListMemoryBlocks;
-	core->getMemoryBlock = _GBACoreGetMemoryBlock;
-	core->listRegisters = _GBACoreListRegisters;
-	core->readRegister = _GBACoreReadRegister;
-	core->writeRegister = _GBACoreWriteRegister;
-	core->supportsDebuggerType = NULL;
-	core->debuggerPlatform = NULL;
-	core->cliDebuggerSystem = NULL;
-	core->attachDebugger = NULL;
-	core->detachDebugger = NULL;
-	core->loadSymbols = NULL;
-	core->lookupIdentifier = NULL;
-	core->cheatDevice = NULL;
-	core->savedataClone = _GBACoreSavedataClone;
-	core->savedataRestore = _GBACoreSavedataRestore;
-	core->listVideoLayers = _GBACoreListVideoLayers;
-	core->listAudioChannels = _GBACoreListAudioChannels;
-	core->enableVideoLayer = _GBACoreEnableVideoLayer;
-	core->enableAudioChannel = _GBACoreEnableAudioChannel;
-	core->adjustVideoLayer = _GBACoreAdjustVideoLayer;
-#ifndef MINIMAL_CORE
-	core->startVideoLog = NULL;
-	core->endVideoLog = NULL;
-#endif
-	return core;
-}
-
-#ifndef MINIMAL_CORE
-static void _GBAVLPStartFrameCallback(void *context) {
-	UNUSED(context);
 }
 
 static bool _GBAVLPInit(struct mCore* core) {
