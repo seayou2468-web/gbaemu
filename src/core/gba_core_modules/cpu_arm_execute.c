@@ -277,7 +277,7 @@ static void count(uint32_t opcode, int cond_res)
 // Macros to emit instructions in the format used by the particular compiler.
 // We use GNU assembler syntax: "op src, dest" rather than "op dest, src"
 
-#ifdef __GNUC__
+#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
 #define ALU_HEADER           asm("mov %%ecx, %%edi; "
 #define ALU_TRAILER          : "=D" (opcode) : "c" (opcode) : "eax", "ebx", "edx", "esi")
 #define EMIT0(op) #op "; "
@@ -655,7 +655,7 @@ static void count(uint32_t opcode, int cond_res)
 // End of ALU macros
 //X//#endif //_MSC_VER
 
-#ifdef __GNUC__
+#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
 
 #define ROR_IMM_MSR        \
     asm("ror %%cl, %%eax;" \

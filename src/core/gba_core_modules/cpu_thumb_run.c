@@ -82,7 +82,7 @@ static INSN_REGPARM void thumbBreakpoint(uint32_t opcode)
 #define POS(i) ((~(i)) >> 31)
 
 #ifndef C_CORE
-#ifdef __GNUC__
+#if defined(__GNUC__) && (defined(__POWERPC__) || defined(__i386__) || defined(__x86_64__))
 #ifdef __POWERPC__
 #define ADD_RD_RS_RN(N)                    \
     {                                      \
