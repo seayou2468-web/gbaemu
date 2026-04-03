@@ -928,36 +928,14 @@ static void _GBACoreAddKeys(struct mCore* core, uint32_t keys) {
 
 static void _GBACoreClearKeys(struct mCore* core, uint32_t keys) {
 	struct GBA* gba = core->board;
-	gba->keysActive &= ~keys;
-	GBATestKeypadIRQ(gba);
-}
-
-static uint32_t _GBACoreGetKeys(struct mCore* core) {
-	struct GBA* gba = core->board;
-	return gba->keysActive;
-}
-
-static uint32_t _GBACoreFrameCounter(const struct mCore* core) {
-	const struct GBA* gba = core->board;
-	return gba->video.frameCounter;
-}
-
-static int32_t _GBACoreFrameCycles(const struct mCore* core) {
 	UNUSED(core);
-	return VIDEO_TOTAL_LENGTH;
+	UNUSED(type);
+	UNUSED(periph);
 }
 
-static int32_t _GBACoreFrequency(const struct mCore* core) {
 	UNUSED(core);
-	return GBA_ARM7TDMI_FREQUENCY;
-}
-
-static void _GBACoreGetGameInfo(const struct mCore* core, struct mGameInfo* info) {
-	GBAGetGameInfo(core->board, info);
-}
-
-static void _GBACoreSetPeripheral(struct mCore* core, int type, void* periph) {
-	struct GBA* gba = core->board;
+	UNUSED(type);
+	return NULL;
 	switch (type) {
 	case mPERIPH_ROTATION:
 		gba->rotationSource = periph;
@@ -1030,224 +1008,24 @@ static uint32_t _GBACoreRawRead8(struct mCore* core, uint32_t address, int segme
 static uint32_t _GBACoreRawRead16(struct mCore* core, uint32_t address, int segment) {
 	UNUSED(segment);
 	struct ARMCore* cpu = core->cpu;
-	return GBAView16(cpu, address);
-}
-
-static uint32_t _GBACoreRawRead32(struct mCore* core, uint32_t address, int segment) {
-	UNUSED(segment);
-	struct ARMCore* cpu = core->cpu;
-	return GBAView32(cpu, address);
-}
-
-static void _GBACoreRawWrite8(struct mCore* core, uint32_t address, int segment, uint8_t value) {
-	UNUSED(segment);
-	struct ARMCore* cpu = core->cpu;
-	GBAPatch8(cpu, address, value, NULL);
-}
-
-static void _GBACoreRawWrite16(struct mCore* core, uint32_t address, int segment, uint16_t value) {
-	UNUSED(segment);
-	struct ARMCore* cpu = core->cpu;
-	GBAPatch16(cpu, address, value, NULL);
-}
-
-static void _GBACoreRawWrite32(struct mCore* core, uint32_t address, int segment, uint32_t value) {
-	UNUSED(segment);
-	struct ARMCore* cpu = core->cpu;
-	GBAPatch32(cpu, address, value, NULL);
-}
-
-size_t _GBACoreListMemoryBlocks(const struct mCore* core, const struct mCoreMemoryBlock** blocks) {
-	const struct GBA* gba = core->board;
-	struct GBACore* gbacore = (struct GBACore*) core;
-
-	if (gbacore->memoryBlockType != gba->memory.savedata.type) {
-		switch (gba->memory.savedata.type) {
-		case GBA_SAVEDATA_SRAM:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksSRAM, sizeof(_GBAMemoryBlocksSRAM));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksSRAM) / sizeof(*_GBAMemoryBlocksSRAM);
-			break;
-		case GBA_SAVEDATA_SRAM512:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksSRAM512, sizeof(_GBAMemoryBlocksSRAM512));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksSRAM512) / sizeof(*_GBAMemoryBlocksSRAM512);
-			break;
-		case GBA_SAVEDATA_FLASH512:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksFlash512, sizeof(_GBAMemoryBlocksFlash512));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksFlash512) / sizeof(*_GBAMemoryBlocksFlash512);
-			break;
-		case GBA_SAVEDATA_FLASH1M:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksFlash1M, sizeof(_GBAMemoryBlocksFlash1M));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksFlash1M) / sizeof(*_GBAMemoryBlocksFlash1M);
-			break;
-		case GBA_SAVEDATA_EEPROM:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksEEPROM, sizeof(_GBAMemoryBlocksEEPROM));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksEEPROM) / sizeof(*_GBAMemoryBlocksEEPROM);
-			break;
-		case GBA_SAVEDATA_EEPROM512:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksEEPROM512, sizeof(_GBAMemoryBlocksEEPROM512));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksEEPROM512) / sizeof(*_GBAMemoryBlocksEEPROM512);
-			break;
-		default:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocks, sizeof(_GBAMemoryBlocks));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocks) / sizeof(*_GBAMemoryBlocks);
-			break;
-		}
-
-		size_t i;
-		for (i = 0; i < gbacore->nMemoryBlocks; ++i) {
-			if (gbacore->memoryBlocks[i].id == GBA_REGION_ROM0 || gbacore->memoryBlocks[i].id == GBA_REGION_ROM1 || gbacore->memoryBlocks[i].id == GBA_REGION_ROM2) {
-				gbacore->memoryBlocks[i].size = gba->memory.romSize;
-			}
-		}
-		gbacore->memoryBlockType = gba->memory.savedata.type;
-
-		mCALLBACKS_INVOKE(gba, memoryBlocksChanged);
-	}
-
-	*blocks = gbacore->memoryBlocks;
-	return gbacore->nMemoryBlocks;
-}
-
-void* _GBACoreGetMemoryBlock(struct mCore* core, size_t id, size_t* sizeOut) {
-	struct GBA* gba = core->board;
-	switch (id) {
-	default:
-		return NULL;
-	case GBA_REGION_BIOS:
-		*sizeOut = GBA_SIZE_BIOS;
-		return gba->memory.bios;
-	case GBA_REGION_EWRAM:
-		*sizeOut = GBA_SIZE_EWRAM;
-		return gba->memory.wram;
-	case GBA_REGION_IWRAM:
-		*sizeOut = GBA_SIZE_IWRAM;
-		return gba->memory.iwram;
-	case GBA_REGION_PALETTE_RAM:
-		*sizeOut = GBA_SIZE_PALETTE_RAM;
-		return gba->video.palette;
-	case GBA_REGION_VRAM:
-		*sizeOut = GBA_SIZE_VRAM;
-		return gba->video.vram;
-	case GBA_REGION_OAM:
-		*sizeOut = GBA_SIZE_OAM;
-		return gba->video.oam.raw;
-	case GBA_REGION_ROM0:
-	case GBA_REGION_ROM1:
-	case GBA_REGION_ROM2:
-		*sizeOut = gba->memory.romSize;
-		return gba->memory.rom;
-	case GBA_REGION_SRAM:
-		if (gba->memory.savedata.type == GBA_SAVEDATA_FLASH1M) {
-			*sizeOut = GBA_SIZE_FLASH1M;
-			return gba->memory.savedata.currentBank;
-		}
-		// Fall through
-	case GBA_REGION_SRAM_MIRROR:
-		*sizeOut = GBASavedataSize(&gba->memory.savedata);
-		return gba->memory.savedata.data;
-	}
-}
-
-static size_t _GBACoreListRegisters(const struct mCore* core, const struct mCoreRegisterInfo** list) {
 	UNUSED(core);
-	*list = _GBARegisters;
-	return sizeof(_GBARegisters) / sizeof(*_GBARegisters);
-}
-
-static bool _GBACoreReadRegister(const struct mCore* core, const char* name, void* out) {
-	struct ARMCore* cpu = core->cpu;
-	int32_t* value = out;
-	switch (name[0]) {
-	case 'r':
-	case 'R':
-		++name;
-		break;
-	case 'c':
-	case 'C':
-		if (strcmp(name, "cpsr") == 0 || strcmp(name, "CPSR") == 0) {
-			*value = cpu->cpsr.packed;
-			_ARMReadCPSR(cpu);
-			return true;
-		}
-		return false;
-	case 'i':
-	case 'I':
-		if (strcmp(name, "ip") == 0 || strcmp(name, "IP") == 0) {
-			*value = cpu->gprs[12];
-			return true;
-		}
-		return false;
-	case 's':
-	case 'S':
-		if (strcmp(name, "sp") == 0 || strcmp(name, "SP") == 0) {
-			*value = cpu->gprs[ARM_SP];
-			return true;
-		}
-		// TODO: SPSR
-		return false;
-	case 'l':
-	case 'L':
-		if (strcmp(name, "lr") == 0 || strcmp(name, "LR") == 0) {
-			*value = cpu->gprs[ARM_LR];
-			return true;
-		}
-		return false;
-	case 'p':
-	case 'P':
-		if (strcmp(name, "pc") == 0 || strcmp(name, "PC") == 0) {
-			*value = cpu->gprs[ARM_PC];
-			return true;
-		}
-		return false;
-	default:
-		return false;
-	}
-
-	char* parseEnd;
-	errno = 0;
-	unsigned long regId = strtoul(name, &parseEnd, 10);
-	if (errno || regId > 15 || *parseEnd) {
-		return false;
-	}
-	*value = cpu->gprs[regId];
-	return true;
-}
-
-static bool _GBACoreWriteRegister(struct mCore* core, const char* name, const void* in) {
-	struct ARMCore* cpu = core->cpu;
-	int32_t value = *(const int32_t*) in;
-	switch (name[0]) {
-	case 'r':
-	case 'R':
-		++name;
-		break;
-	case 'c':
-	case 'C':
-		if (strcmp(name, "cpsr") == 0) {
-			uint32_t pc = cpu->gprs[ARM_PC] & -WORD_SIZE_THUMB;
-			enum ExecutionMode mode = cpu->cpsr.t;
-			cpu->cpsr.packed = value & 0xF00000FF;
-			_ARMReadCPSR(cpu);
-			if (mode != cpu->cpsr.t) {
-				// Mode changed, flush the prefetch
-				if (cpu->cpsr.t == MODE_ARM) {
-					pc &= -WORD_SIZE_ARM;
-					LOAD_32(cpu->prefetch[0], (pc - WORD_SIZE_ARM) & cpu->memory.activeMask, cpu->memory.activeRegion);
-					LOAD_32(cpu->prefetch[1], pc & cpu->memory.activeMask, cpu->memory.activeRegion);
-				} else {
-					LOAD_16(cpu->prefetch[0], (pc - WORD_SIZE_THUMB) & cpu->memory.activeMask, cpu->memory.activeRegion);
-					LOAD_16(cpu->prefetch[1], pc & cpu->memory.activeMask, cpu->memory.activeRegion);
-				}
-			}
-			return true;
-		}
-		return false;
-	case 'i':
-	case 'I':
-		if (strcmp(name, "ip") == 0 || strcmp(name, "IP") == 0) {
-			cpu->gprs[12] = value;
-			return true;
-		}
+	*blocks = NULL;
+	return 0;
+	UNUSED(core);
+	UNUSED(id);
+	if (sizeOut) {
+		*sizeOut = 0;
+	return NULL;
+	*list = NULL;
+	return 0;
+	UNUSED(core);
+	UNUSED(name);
+	UNUSED(out);
+	return false;
+	UNUSED(core);
+	UNUSED(name);
+	UNUSED(in);
+	return false;
 		return false;
 	case 's':
 	case 'S':
