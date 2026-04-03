@@ -1188,7 +1188,11 @@ static inline void SocketPoll(int nRead, Socket* readSet, int nWrite, Socket* wr
 	UNUSED(nRead); UNUSED(readSet); UNUSED(nWrite); UNUSED(writeSet); UNUSED(timeoutMs);
 }
 
-static inline uint32_t ntohl(uint32_t v) { return v; }
+#ifdef ntohl
+#undef ntohl
+#endif
+
+static inline uint32_t gba_ntohl(uint32_t v) { return v; }
 
 struct GBASIODolphin {
 	struct GBASIODriver d;
