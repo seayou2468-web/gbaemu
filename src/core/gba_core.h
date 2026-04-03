@@ -1090,6 +1090,7 @@ void GBAMemoryClearAGBPrint(struct GBA* gba);
 void ARMDecodeThumb(uint16_t opcode, struct ARMInstructionInfo* info);
 bool GBAIOIsReadConstant(uint32_t address);
 uint32_t GBAVFameGetPatternValue(uint32_t address, int bits);
+uint32_t GBAVFrameGetPatternValue(uint32_t address, int bits); /* typo-compat alias */
 uint16_t GBASavedataReadEEPROM(struct GBASavedata* savedata);
 uint32_t GBACartEReaderRead(struct GBACartEReader* ereader, uint32_t address);
 uint32_t GBACartEReaderReadFlash(struct GBACartEReader* ereader, uint32_t address);
