@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Use embedded runtime modules by default so this C API path consistently
+// executes concrete core implementations instead of header-level fallbacks.
+#ifndef GBA_C_API_EMBED_RUNTIME_MODULES
+#define GBA_C_API_EMBED_RUNTIME_MODULES 1
+#endif
+
 // NOTE:
 // Embedding runtime .c modules directly is useful for standalone integration,
 // but can trigger duplicate-definition linker errors in targets that already
@@ -396,8 +402,13 @@ void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
         return;
     }
     _freeBlob(&handle->bios);
-    handle->bios.data = (uint8_t*) calloc(GBA_BIOS_SIZE, 1);
-    handle->bios.size = handle->bios.data ? GBA_BIOS_SIZE : 0;
+    handle->bios.data = (uint8_t*) malloc(GBA_BIOS_SIZE);
+    if (handle->bios.data) {
+        memcpy(handle->bios.data, hleBios, GBA_BIOS_SIZE);
+        handle->bios.size = GBA_BIOS_SIZE;
+    } else {
+        handle->bios.size = 0;
+    }
     handle->hasBios = handle->bios.data != NULL;
     if (!handle->hasBios) {
         _setError(handle, "failed to allocate built-in BIOS");
