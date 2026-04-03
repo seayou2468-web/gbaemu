@@ -138,7 +138,7 @@ void agbPrintEnable(bool) {}
 bool CPUIsGBABios(const char*) { return true; }
 const char* elfGetAddressSymbol(uint32_t) { return nullptr; }
 
-int SOUND_CLOCK_TICKS = 0;
+int SOUND_CLOCK_TICKS = kFrameTicks;
 int soundTicks = 0;
 void psoundTickfn() {}
 void soundEvent8(uint32_t, uint8_t) {}
