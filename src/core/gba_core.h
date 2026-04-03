@@ -116,7 +116,7 @@ struct GBASIOPlayer {
 	struct GBASIOPlayerKeyCallback callback;
 	struct GBA* p;
 	int inputsPosted;
-	uint16_t oldCallbackValue;
+	struct mKeyCallback* oldCallback;
 	int txPosition;
 };
 
@@ -124,6 +124,7 @@ struct GBA;
 struct GBASavedata;
 struct GBAHardware;
 struct GBACartEReader;
+struct VFile;
 struct ARMCore;
 struct GBATimer;
 struct GBADMA;
@@ -227,13 +228,13 @@ struct GBASavedata {
 	void* currentBank;
 	int command;
 	int flashState;
-	void* vf;
-	void* realVf;
+	struct VFile* vf;
+	struct VFile* realVf;
 	int mapMode;
 	bool maskWriteback;
 	bool dirty;
 	uint32_t dirtAge;
-	uint32_t dust;
+	struct mTimingEvent dust;
 };
 
 struct GBAHardware {
