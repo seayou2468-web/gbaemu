@@ -21,6 +21,18 @@ static void GBAVideoDummyRendererPutPixels(struct GBAVideoRenderer* renderer, si
 static void _startHblank(struct mTiming*, void* context, uint32_t cyclesLate);
 static void _startHdraw(struct mTiming*, void* context, uint32_t cyclesLate);
 static unsigned _calculateStallMask(struct GBA* gba, unsigned dispcnt);
+static inline unsigned _brighten(unsigned color, int y);
+static inline unsigned _darken(unsigned color, int y);
+void GBAVideoSoftwareRendererDrawBackgroundMode0(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y);
+void GBAVideoSoftwareRendererDrawBackgroundMode2(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y);
+void GBAVideoSoftwareRendererDrawBackgroundMode3(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y);
+void GBAVideoSoftwareRendererDrawBackgroundMode4(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y);
+void GBAVideoSoftwareRendererDrawBackgroundMode5(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y);
+void GBAVideoSoftwareRendererPostprocessSprite(struct GBAVideoSoftwareRenderer* renderer, unsigned priority);
+int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* renderer, struct GBAObj* sprite, int index, int y);
+int GBAVideoRendererCleanOAM(struct GBAObj* oam, struct GBAVideoRendererSprite* sprites, int offsetY);
+
+#define TEST_LAYER_ENABLED(X) (softwareRenderer->bg[(X)].enabled == ENABLED_MAX)
 
 MGBA_EXPORT const int GBAVideoObjSizes[16][2] = {
 	{ 8, 8 },
@@ -1574,10 +1586,12 @@ void _updateFlags(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoft
 }
 
 /* ===== Imported from reference implementation/software-private.c ===== */
+#ifndef VIDEO_CHECKS
 #ifdef NDEBUG
 #define VIDEO_CHECKS false
 #else
 #define VIDEO_CHECKS true
+#endif
 #endif
 
 #define ENABLED_MAX 4
@@ -1772,12 +1786,14 @@ static inline void _compositeNoBlendNoObjwin(struct GBAVideoSoftwareRenderer* re
 	UNUSED(palette);                                                                                                  \
 	PREPARE_OBJWIN;
 
+#ifndef TEST_LAYER_ENABLED
 #define TEST_LAYER_ENABLED(X) \
 	!softwareRenderer->d.disableBG[X] && \
 	(softwareRenderer->bg[X].enabled == ENABLED_MAX && \
 	(GBAWindowControlIsBg ## X ## Enable(softwareRenderer->currentWindow.packed) || \
 	(GBARegisterDISPCNTIsObjwinEnable(softwareRenderer->dispcnt) && GBAWindowControlIsBg ## X ## Enable (softwareRenderer->objwin.packed))) && \
 	softwareRenderer->bg[X].priority == priority)
+#endif
 
 static inline unsigned _brighten(unsigned color, int y) {
 	unsigned c = 0;
@@ -1896,4 +1912,3 @@ int GBAVideoRendererCleanOAM(struct GBAObj* oam, struct GBAVideoRendererSprite* 
 	}
 	return oamMax;
 }
-

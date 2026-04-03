@@ -358,9 +358,11 @@ struct GBAVideoSoftwareBackground {
 	bool mosaic;
 	bool target1;
 	bool target2;
-	bool enabled;
+	int enabled;
 	bool multipalette;
 	bool highlight;
+	bool objwinForceEnable;
+	bool objwinOnly;
 	int yCache;
 	uint32_t flags;
 	uint32_t objwinFlags;
@@ -412,19 +414,26 @@ struct WindowN {
 	bool on;
 };
 
+struct Window {
+	int32_t endX;
+	struct WindowControl control;
+};
+
 struct GBAVideoSoftwareRenderer {
 	struct GBAVideoRenderer d;
 	mColor* outputBuffer;
 	size_t outputBufferStride;
 	struct {
+		uint16_t io[0x80];
 		int32_t scale[2][2];
+		bool windowOn[2];
 	} cache[GBA_VIDEO_VERTICAL_PIXELS];
 	uint16_t nextIo[0x80];
 	bool stereo;
 	int32_t nextY;
 	struct GBAVideoSoftwareBackground bg[4];
 	struct WindowN winN[2];
-	struct WindowN windows[4];
+	struct Window windows[8];
 	int nWindows;
 	int32_t objOffsetX;
 	int32_t objOffsetY;
@@ -1403,6 +1412,24 @@ static inline uint16_t GBASIONormalFillSi(uint16_t v) { return (uint16_t) (v | 0
 #ifndef M_COLOR_WHITE
 #define M_COLOR_WHITE 0x7FFFu
 #endif
+#ifndef M_COLOR_RED
+#define M_COLOR_RED 0x001Fu
+#endif
+#ifndef M_COLOR_GREEN
+#define M_COLOR_GREEN 0x03E0u
+#endif
+#ifndef M_COLOR_BLUE
+#define M_COLOR_BLUE 0x7C00u
+#endif
+#ifndef BYTES_PER_PIXEL
+#define BYTES_PER_PIXEL 2
+#endif
+#ifndef OBJ_LENGTH
+#define OBJ_LENGTH 1210
+#endif
+#ifndef OBJ_HBLANK_FREE_LENGTH
+#define OBJ_HBLANK_FREE_LENGTH 954
+#endif
 
 #ifndef GBA_REG
 #define GBA_REG(x) ((x) >> 1)
@@ -1687,6 +1714,10 @@ static inline int GBAObjAttributesCGetPalette(uint16_t c) { return (c >> 12) & 0
 static inline int GBAObjAttributesCGetPriority(uint16_t c) { UNUSED(c); return 0; }
 static inline bool GBAWindowControlIsBlendEnable(uint16_t control) { UNUSED(control); return false; }
 static inline bool GBAWindowControlIsObjEnable(uint16_t control) { UNUSED(control); return true; }
+static inline bool GBAWindowControlIsBg0Enable(uint16_t control) { return (control & (1u << 0)) != 0; }
+static inline bool GBAWindowControlIsBg1Enable(uint16_t control) { return (control & (1u << 1)) != 0; }
+static inline bool GBAWindowControlIsBg2Enable(uint16_t control) { return (control & (1u << 2)) != 0; }
+static inline bool GBAWindowControlIsBg3Enable(uint16_t control) { return (control & (1u << 3)) != 0; }
 static inline bool GBAWindowControlGetBlendEnable(uint16_t control) { return GBAWindowControlIsBlendEnable(control); }
 static inline bool GBARegisterDISPCNTIsObjCharacterMapping(uint16_t dispcnt) { return (dispcnt & (1 << 6)) != 0; }
 static inline bool GBARegisterDISPCNTIsObjwinEnable(uint16_t dispcnt) { return (dispcnt & (1 << 15)) != 0; }
@@ -2050,6 +2081,7 @@ static inline bool GBARegisterDISPCNTIsBg3Enable(GBARegisterDISPCNT v) { return 
 static inline bool GBARegisterDISPCNTIsObjEnable(GBARegisterDISPCNT v) { return (v & 0x1000) != 0; }
 static inline bool GBARegisterDISPCNTIsWin0Enable(GBARegisterDISPCNT v) { return (v & 0x2000) != 0; }
 static inline bool GBARegisterDISPCNTIsWin1Enable(GBARegisterDISPCNT v) { return (v & 0x4000) != 0; }
+static inline bool GBARegisterDISPCNTIsHblankIntervalFree(GBARegisterDISPCNT v) { return (v & (1u << 5)) != 0; }
 static inline bool GBARegisterDISPCNTGetBg0Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg0Enable(v); }
 static inline bool GBARegisterDISPCNTGetBg1Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg1Enable(v); }
 static inline bool GBARegisterDISPCNTGetBg2Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg2Enable(v); }
@@ -2065,6 +2097,10 @@ static inline int GBARegisterBGCNTGetSize(GBARegisterBGCNT v) { return (v >> 14)
 static inline bool GBAObjAttributesAIsDisable(uint16_t a) { return (a & 0x0200) == 0; }
 static inline int GBAMosaicControlGetObjV(uint16_t mosaic) { return (mosaic >> 12) & 0xF; }
 #define ENABLED_MAX 4
+#define MAX_WINDOW 8
+#ifndef VIDEO_CHECKS
+#define VIDEO_CHECKS 0
+#endif
 
 enum GBAVideoBlendEffect {
 	GBAVIDEO_BLEND_NONE = BLEND_NONE,
