@@ -1,4 +1,4 @@
-#include "src/core/gba_core.h"
+#include "src/core/gba_core.hpp"
 
 #include <cstdio>
 #include <filesystem>
