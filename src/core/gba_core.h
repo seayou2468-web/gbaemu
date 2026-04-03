@@ -148,6 +148,7 @@ struct ARMCore;
 struct GBATimer;
 struct GBADMA;
 struct GBAVideo;
+struct GBAOAM;
 struct GBAVideoSoftwareBackground;
 struct GBAObj;
 struct mCoreSync;
@@ -218,8 +219,16 @@ enum {
 #define BASE_TILE 0x00010000
 #define FLAG_TARGET_1 (1u << 0)
 #define FLAG_OBJWIN (1u << 1)
+#define FLAG_REBLEND (1u << 2)
+#define FLAG_TARGET_2 (1u << 3)
+#define FLAG_PRIORITY (0x3u << 8)
+#define FLAG_ORDER_MASK 0xFFFFu
+#define FLAG_UNWRITTEN 0xFFFFFFFFu
 #define OBJ_MODE_SEMITRANSPARENT 1
 #define OBJ_MODE_OBJWIN 2
+#define BLEND_ALPHA 1
+#define BLEND_BRIGHTEN 2
+#define BLEND_DARKEN 3
 
 enum {
 	mCORE_MEMORY_RW = 1 << 0,
@@ -326,12 +335,13 @@ struct GBAVideoRenderer {
 	void (*saveState)(struct GBAVideoRenderer*, void**, size_t*);
 	uint16_t* palette;
 	uint8_t* vram;
-	void* oam;
+	struct GBAOAM* oam;
 	void* cache;
 	bool disableBG[4];
 	bool disableOBJ;
 	bool disableWIN[2];
 	bool disableOBJWIN;
+	bool highlightOBJ[128];
 	int highlightAmount;
 };
 
@@ -339,7 +349,7 @@ struct GBAVideoSoftwareRenderer {
 	struct GBAVideoRenderer d;
 	mColor* outputBuffer;
 	size_t outputBufferStride;
-	struct { int32_t offsetX; int32_t offsetY; } bg[4];
+	struct { int32_t offsetX; int32_t offsetY; bool target2; bool enabled; } bg[4];
 	struct { int32_t offsetX; int32_t offsetY; } winN[2];
 	int32_t objOffsetX;
 	int32_t objOffsetY;
@@ -349,24 +359,46 @@ struct GBAVideoSoftwareRenderer {
 	uint16_t mosaic;
 	uint16_t blendEffect;
 	uint32_t scanlineDirty[256];
-	uint32_t* normalPalette;
+	mColor* normalPalette;
 	uint8_t* target1Obj;
+	bool target2Obj;
+	bool target2Bd;
+	bool forceTarget1;
+	mColor* highlightPalette;
+	mColor* highlightVariantPalette;
+	mColor* variantPalette;
+	uint32_t* row;
+	uint32_t* spriteLayer;
 	struct { uint16_t packed; int priority; } currentWindow;
-	struct { int priority; } objwin;
+	struct { uint16_t packed; int priority; } objwin;
 	uint16_t dispcnt;
 };
 
-static const int GBAVideoObjSizes[16][2] = {
-	{8, 8}, {16, 16}, {32, 32}, {64, 64},
-	{16, 8}, {32, 8}, {32, 16}, {64, 32},
-	{8, 16}, {8, 32}, {16, 32}, {32, 64},
-	{0, 0}, {0, 0}, {0, 0}, {0, 0}
-};
+extern const int GBAVideoObjSizes[16][2];
 
 struct GBAVideo {
+	struct GBA* p;
+	struct mTimingEvent event;
 	struct GBAVideoRenderer* renderer;
 	uint16_t* palette;
 	uint8_t* vram;
+	struct { uint8_t raw[GBA_SIZE_OAM]; } oam;
+	uint32_t frameCounter;
+	int frameskip;
+	int frameskipCounter;
+	uint32_t stallMask;
+	uint16_t vcount;
+};
+
+struct GBAOAMMatrix {
+	int16_t a;
+	int16_t b;
+	int16_t c;
+	int16_t d;
+};
+
+struct GBAOAM {
+	struct GBAOAMMatrix mat[32];
 };
 
 struct GBAVideoSoftwareBackground {
@@ -1058,16 +1090,7 @@ struct GBA {
 	struct ARMCore* cpu;
 	struct GBATimer timers[4];
 	struct GBASIO sio;
-	struct {
-		struct GBAVideoRenderer* renderer;
-		uint16_t palette[GBA_SIZE_PALETTE_RAM / sizeof(uint16_t)];
-		uint8_t* vram;
-		struct { uint8_t raw[GBA_SIZE_OAM]; } oam;
-		uint32_t frameCounter;
-		int frameskip;
-		uint32_t stallMask;
-		struct mTimingEvent event;
-	} video;
+	struct GBAVideo video;
 	struct {
 		bool enable;
 		int masterVolume;
@@ -1434,6 +1457,9 @@ enum {
 #define GBA_REG_INTERNAL_MAX GBA_REG(INTERNAL_MAX)
 #define GBA_REG_MAX GBA_REG(INTERNAL_MAX)
 #define GBA_REG_STEREOCNT GBA_REG(SOUNDCNT_LO)
+#define GBA_REG_STEREOCNT_ALT GBA_REG(SOUNDCNT_LO)
+#define STEREOCNT SOUNDCNT_LO
+#define VIDEO_VERTICAL_TOTAL_PIXELS 228
 #define GPIO_REG_DATA 0x00C4
 
 #define GBA_REG_TMCNT_LO(id) (0x100 + ((id) * 4))
@@ -1537,11 +1563,23 @@ static inline int GBAObjAttributesAGetMode(uint16_t a) { UNUSED(a); return 0; }
 static inline int GBAObjAttributesAGetShape(uint16_t a) { UNUSED(a); return 0; }
 static inline int GBAObjAttributesBGetSize(uint16_t b) { UNUSED(b); return 0; }
 static inline int GBAObjAttributesBGetX(uint16_t b) { return b & 0x1FF; }
+static inline bool GBAObjAttributesBIsHFlip(uint16_t b) { return (b & 0x1000) != 0; }
+static inline bool GBAObjAttributesBIsVFlip(uint16_t b) { return (b & 0x2000) != 0; }
+static inline int GBAObjAttributesBGetMatIndex(uint16_t b) { return (b >> 9) & 0x1F; }
 static inline bool GBAObjAttributesAIs256Color(uint16_t a) { return (a & 0x2000) != 0; }
+static inline bool GBAObjAttributesAIsTransformed(uint16_t a) { return (a & 0x0100) != 0; }
+static inline bool GBAObjAttributesAIsMosaic(uint16_t a) { return (a & 0x1000) != 0; }
+static inline int GBAObjAttributesAGetDoubleSize(uint16_t a) { return (a & 0x0200) != 0; }
+static inline int GBAObjAttributesAGetY(uint16_t a) { return a & 0xFF; }
 static inline int GBAObjAttributesCGetTile(uint16_t c) { return c & 0x3FF; }
+static inline int GBAObjAttributesCGetPalette(uint16_t c) { return (c >> 12) & 0xF; }
 static inline int GBAObjAttributesCGetPriority(uint16_t c) { UNUSED(c); return 0; }
 static inline bool GBAWindowControlIsBlendEnable(uint16_t control) { UNUSED(control); return false; }
+static inline bool GBAWindowControlIsObjEnable(uint16_t control) { UNUSED(control); return true; }
+static inline bool GBAWindowControlGetBlendEnable(uint16_t control) { return GBAWindowControlIsBlendEnable(control); }
 static inline bool GBARegisterDISPCNTIsObjCharacterMapping(uint16_t dispcnt) { return (dispcnt & (1 << 6)) != 0; }
+static inline bool GBARegisterDISPCNTIsObjwinEnable(uint16_t dispcnt) { return (dispcnt & (1 << 15)) != 0; }
+static inline int GBAMosaicControlGetObjH(uint16_t mosaic) { return mosaic & 0xF; }
 static inline void* anonymousMemoryMap(size_t size) { UNUSED(size); return NULL; }
 static inline void MutexLock(void* m) { UNUSED(m); }
 static inline void MutexUnlock(void* m) { UNUSED(m); }
@@ -1567,8 +1605,8 @@ static inline bool mCoreConfigGetIntValue(const struct mCoreConfig* config, cons
 static inline void mCoreConfigCopyValue(struct mCoreConfig* out, const struct mCoreConfig* in, const char* key) { UNUSED(out); UNUSED(in); UNUSED(key); }
 static inline void GBACreate(struct GBA* gba) { UNUSED(gba); }
 static inline void GBADestroy(struct GBA* gba) { UNUSED(gba); }
-static inline void GBAVideoDummyRendererCreate(struct GBAVideoRenderer* renderer) { UNUSED(renderer); }
-static inline void GBAVideoAssociateRenderer(struct GBAVideo* video, struct GBAVideoRenderer* renderer) { UNUSED(video); UNUSED(renderer); }
+void GBAVideoDummyRendererCreate(struct GBAVideoRenderer* renderer);
+void GBAVideoAssociateRenderer(struct GBAVideo* video, struct GBAVideoRenderer* renderer);
 static inline void GBAVideoSoftwareRendererCreate(struct GBAVideoSoftwareRenderer* renderer) { UNUSED(renderer); }
 static inline void mVideoThreadProxyCreate(struct mVideoThreadProxy* proxy) { UNUSED(proxy); }
 static inline void GBAAudioResizeBuffer(void* audio, size_t samples) { UNUSED(audio); UNUSED(samples); }
@@ -1878,3 +1916,10 @@ private:
 }  // namespace gba
 
 #endif  // __cplusplus
+typedef uint16_t GBARegisterDISPSTAT;
+static inline GBARegisterDISPSTAT GBARegisterDISPSTATClearInHblank(GBARegisterDISPSTAT v) { return (uint16_t) (v & ~0x2); }
+static inline GBARegisterDISPSTAT GBARegisterDISPSTATFillVcounter(GBARegisterDISPSTAT v) { return (uint16_t) (v | 0x4); }
+static inline GBARegisterDISPSTAT GBARegisterDISPSTATClearVcounter(GBARegisterDISPSTAT v) { return (uint16_t) (v & ~0x4); }
+static inline unsigned GBARegisterDISPSTATGetVcountSetting(GBARegisterDISPSTAT v) { return (v >> 8) & 0xFF; }
+static inline bool GBARegisterDISPSTATIsVcounterIRQ(GBARegisterDISPSTAT v) { return (v & 0x20) != 0; }
+#define GBA_IRQ_VCOUNTER 2
