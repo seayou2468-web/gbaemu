@@ -29,6 +29,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <sys/types.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 #ifndef MAX_GBAS
 #define MAX_GBAS 4
@@ -327,8 +329,11 @@ struct GBATimer {
 struct mCoreSync {
 	bool videoFrameWait;
 	bool audioWait;
+	size_t audioHighWater;
+	int videoFramePending;
 	void* videoFrameMutex;
 	void* videoFrameAvailableCond;
+	void* videoFrameRequiredCond;
 	void* audioBufferMutex;
 	void* audioRequiredCond;
 	void* frameMutex;
@@ -344,6 +349,10 @@ struct VFile {
 	off_t (*size)(struct VFile*);
 	void* (*map)(struct VFile*, size_t, int);
 	void (*unmap)(struct VFile*, void*, size_t);
+};
+
+struct mAudioBuffer {
+	size_t _unused;
 };
 
 struct GBAVideoProxyRenderer {
@@ -388,6 +397,12 @@ enum {
 
 void GBASavedataForceType(struct GBASavedata* savedata, int type);
 void GBASavedataRTCRead(struct GBASavedata* savedata);
+size_t GBASavedataSize(const struct GBASavedata* savedata);
+bool GBASavedataLoad(struct GBASavedata* savedata, struct VFile* in);
+void GBASavedataInitFlash(struct GBASavedata* savedata);
+void GBASavedataInitEEPROM(struct GBASavedata* savedata);
+void GBASavedataInitSRAM(struct GBASavedata* savedata);
+void GBASavedataInitSRAM512(struct GBASavedata* savedata);
 void GBAHardwareClear(struct GBAHardware* hw);
 void GBAHardwareInitRTC(struct GBAHardware* hw);
 void GBAHardwareInitGyro(struct GBAHardware* hw);
@@ -662,7 +677,7 @@ enum {
 #define GBA_REG_TMCNT_LO(id) (0x100 + ((id) * 4))
 
 static inline uint32_t hash32(const void* data, size_t size, uint32_t seed) { UNUSED(data); UNUSED(size); return seed; }
-int32_t mTimingCurrentTime(struct mTiming* timing);
+int32_t mTimingCurrentTime(const struct mTiming* timing);
 void GBASIOReset(struct GBASIO* sio);
 static inline void GBARaiseIRQ(struct GBA* gba, int irq, int32_t cyclesLate) { UNUSED(gba); UNUSED(irq); UNUSED(cyclesLate); }
 static inline bool GBATimerFlagsIsCountUp(uint16_t flags) { UNUSED(flags); return false; }
@@ -687,6 +702,7 @@ static inline void MutexLock(void* m) { UNUSED(m); }
 static inline void MutexUnlock(void* m) { UNUSED(m); }
 static inline void ConditionWait(void* c, void* m) { UNUSED(c); UNUSED(m); }
 static inline void ConditionWake(void* c) { UNUSED(c); }
+static inline bool ConditionWaitTimed(void* c, void* m, int timeoutMs) { UNUSED(c); UNUSED(m); UNUSED(timeoutMs); return false; }
 static inline void ARMSelectBank(struct ARMCore* cpu, unsigned mode) { UNUSED(cpu); UNUSED(mode); }
 static inline int GBASIOMultiplayerGetBaud(uint16_t siocnt) { return siocnt & 3; }
 static inline bool GBASIONormalIsInternalSc(uint16_t siocnt) { return (siocnt & 1) != 0; }
@@ -694,6 +710,12 @@ static inline uint16_t GBASIOMultiplayerClearBusy(uint16_t v) { return (uint16_t
 static inline bool GBASIOMultiplayerIsIrq(uint16_t v) { return (v & 0x4000) != 0; }
 static inline uint16_t GBASIONormalClearStart(uint16_t v) { return (uint16_t) (v & ~0x0080); }
 static inline bool GBASIONormalIsIrq(uint16_t v) { return (v & 0x4000) != 0; }
+static inline size_t mAudioBufferAvailable(const struct mAudioBuffer* buf) { UNUSED(buf); return 0; }
+static inline void mappedMemoryFree(void* p, size_t size) { UNUSED(size); free(p); }
+
+#ifndef mCALLBACKS_INVOKE
+#define mCALLBACKS_INVOKE(...)
+#endif
 
 #ifndef MODE_FIQ
 #define MODE_FIQ 0x11
