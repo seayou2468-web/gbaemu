@@ -487,7 +487,16 @@ struct ARMStatusPacked {
 
 union PSR {
 	struct ARMStatusPacked cpsr;
-	uint32_t packed;
+	struct {
+		uint32_t packed;
+		unsigned n;
+		unsigned z;
+		unsigned c;
+		unsigned v;
+		unsigned i;
+		unsigned flags;
+		unsigned priv;
+	};
 };
 
 enum PrivilegeMode {
@@ -537,8 +546,8 @@ struct ARMCore {
 	int cycles;
 	int32_t shifterOperand;
 	unsigned shifterCarryOut;
-	struct ARMStatusPacked cpsr;
-	struct ARMStatusPacked spsr;
+	union PSR cpsr;
+	union PSR spsr;
 	int privilegeMode;
 	int executionMode;
 	uint32_t bankedRegisters[2][7];
@@ -548,10 +557,46 @@ struct ARMCore {
 	struct ARMCoprocessor cp[16];
 	uint32_t prefetch[2];
 	int nextEvent;
-	struct { void (*bkpt32)(struct ARMCore*, uint32_t); void (*swi32)(struct ARMCore*, uint32_t); void (*reset)(struct ARMCore*); } irqh;
+	struct { void (*bkpt32)(struct ARMCore*, uint32_t); void (*swi32)(struct ARMCore*, uint32_t); void (*reset)(struct ARMCore*); void (*processEvents)(struct ARMCore*); } irqh;
 	int halted;
 	size_t numComponents;
 	struct mCPUComponent** components;
+};
+
+enum {
+	ARM_SHIFT_NONE = 0,
+	ARM_SHIFT_LSL,
+	ARM_SHIFT_LSR,
+	ARM_SHIFT_ASR,
+	ARM_SHIFT_ROR,
+	ARM_SHIFT_RRX
+};
+
+enum {
+	ARM_MEMORY_REGISTER_BASE = 1 << 0,
+	ARM_MEMORY_IMMEDIATE_OFFSET = 1 << 1,
+	ARM_MEMORY_REGISTER_OFFSET = 1 << 2,
+	ARM_MEMORY_SHIFTED_OFFSET = 1 << 3,
+	ARM_MEMORY_POST_INCREMENT = 1 << 4,
+	ARM_MEMORY_OFFSET_SUBTRACT = 1 << 5
+};
+
+struct ARMRegisterFile {
+	int32_t gprs[16];
+	union PSR cpsr;
+};
+
+struct ARMInstructionInfo {
+	struct {
+		int format;
+		int baseReg;
+		struct {
+			int immediate;
+			int reg;
+			uint8_t shifterImm;
+			uint8_t shifterOp;
+		} offset;
+	} memory;
 };
 
 enum {
