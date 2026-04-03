@@ -1,3 +1,6 @@
+#ifndef EMBEDDED_INCLUDE_APU_BLARGG_COMMON_H_
+#define EMBEDDED_INCLUDE_APU_BLARGG_COMMON_H_
+
 // Sets up common environment for Shay Green's libraries.
 // To change configuration options, modify blargg_config.h, not this file.
 

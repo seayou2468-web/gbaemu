@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_GBA_GBASOUND_H_
+#define VBAM_CORE_GBA_GBASOUND_H_
+
 
 #if !defined(__LIBRETRO__)
 #include <zlib.h>

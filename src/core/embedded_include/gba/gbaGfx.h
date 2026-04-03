@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_GBA_GBAGFX_H_
+#define VBAM_CORE_GBA_GBAGFX_H_
+
 
 #ifdef TILED_RENDERING
 extern void gfxDrawTextScreen(uint16_t, uint16_t, uint16_t, uint32_t*);

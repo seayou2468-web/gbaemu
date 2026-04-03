@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_GBA_GBAREMOTE_H_
+#define VBAM_CORE_GBA_GBAREMOTE_H_
+
 
 #define BitSet(array, bit) ((uint8_t*)(array))[(bit) >> 3] |= (1 << ((bit)&7))
 

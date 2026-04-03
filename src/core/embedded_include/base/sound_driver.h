@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_BASE_SOUND_DRIVER_H_
+#define VBAM_CORE_BASE_SOUND_DRIVER_H_
+
 // VisualBoyAdvance - Nintendo Gameboy/GameboyAdvance (TM) emulator.
 // Copyright (C) 2015 VBA-M development team
 

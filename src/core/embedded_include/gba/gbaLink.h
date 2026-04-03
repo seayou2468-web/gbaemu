@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_GBA_GBALINK_H_
+#define VBAM_CORE_GBA_GBALINK_H_
+
 
 extern uint16_t IP_LINK_PORT;
 

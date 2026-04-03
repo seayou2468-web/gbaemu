@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_GBA_GBACPUARMDIS_H_
+#define VBAM_CORE_GBA_GBACPUARMDIS_H_
+
 /************************************************************************/
 /* Arm/Thumb command set disassembler                                   */
 /************************************************************************/

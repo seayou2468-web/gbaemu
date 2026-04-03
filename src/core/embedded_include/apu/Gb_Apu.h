@@ -1,3 +1,6 @@
+#ifndef EMBEDDED_INCLUDE_APU_GB_APU_H_
+#define EMBEDDED_INCLUDE_APU_GB_APU_H_
+
 // Nintendo Game Boy sound hardware emulator with save state support
 
 // Gb_Snd_Emu 0.2.0

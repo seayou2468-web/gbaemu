@@ -1,3 +1,6 @@
+#ifndef EMBEDDED_INCLUDE_APU_BLARGG_CONFIG_H_
+#define EMBEDDED_INCLUDE_APU_BLARGG_CONFIG_H_
+
 // $package user configuration file. Don't replace when updating library.
 
 #ifndef BLARGG_CONFIG_H

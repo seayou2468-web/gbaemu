@@ -1,3 +1,6 @@
+#ifndef EMBEDDED_INCLUDE_APU_MULTI_BUFFER_H_
+#define EMBEDDED_INCLUDE_APU_MULTI_BUFFER_H_
+
 // Multi-channel sound buffer interface, and basic mono and stereo buffers
 
 // Blip_Buffer 0.4.1

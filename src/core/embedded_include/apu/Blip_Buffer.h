@@ -1,3 +1,6 @@
+#ifndef EMBEDDED_INCLUDE_APU_BLIP_BUFFER_H_
+#define EMBEDDED_INCLUDE_APU_BLIP_BUFFER_H_
+
 // Band-limited sound synthesis buffer
 
 // Blip_Buffer 0.4.1

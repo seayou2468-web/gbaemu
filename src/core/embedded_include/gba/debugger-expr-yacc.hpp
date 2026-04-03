@@ -1,3 +1,6 @@
+#ifndef EMBEDDED_INCLUDE_GBA_DEBUGGER_EXPR_YACC_HPP_
+#define EMBEDDED_INCLUDE_GBA_DEBUGGER_EXPR_YACC_HPP_
+
 /* A Bison parser, made by GNU Bison 3.8.2.  */
 
 /* Bison interface for Yacc-like parsers in C

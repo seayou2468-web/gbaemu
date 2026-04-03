@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_GBA_GBAINLINE_H_
+#define VBAM_CORE_GBA_GBAINLINE_H_
+
 
 extern const uint32_t objTilesAddress[3];
 

@@ -1,3 +1,6 @@
+#ifndef EMBEDDED_INCLUDE_APU_BLARGG_SOURCE_H_
+#define EMBEDDED_INCLUDE_APU_BLARGG_SOURCE_H_
+
 /* Included at the beginning of library source files, AFTER all other #include lines.
 Sets up helpful macros and services used in my source code. Since this is only "active"
 in my source code, I don't have to worry about polluting the global namespace with

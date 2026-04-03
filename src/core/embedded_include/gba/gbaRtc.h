@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_GBA_GBARTC_H_
+#define VBAM_CORE_GBA_GBARTC_H_
+
 
 uint16_t rtcRead(uint32_t address);
 void rtcUpdateTime(int ticks);

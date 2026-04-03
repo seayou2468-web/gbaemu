@@ -1,3 +1,6 @@
+#ifndef VBAM_CORE_GBA_INTERNAL_GBASOCKCLIENT_H_
+#define VBAM_CORE_GBA_INTERNAL_GBASOCKCLIENT_H_
+
 
 #if defined(NO_LINK)
 #error "This file should not be included with NO_LINK."

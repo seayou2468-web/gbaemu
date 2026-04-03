@@ -1,3 +1,6 @@
+#ifndef EMBEDDED_INCLUDE_APU_GB_OSCS_H_
+#define EMBEDDED_INCLUDE_APU_GB_OSCS_H_
+
 // Private oscillators used by Gb_Apu
 
 // Gb_Snd_Emu 0.2.0
