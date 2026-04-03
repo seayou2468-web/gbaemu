@@ -195,6 +195,31 @@ enum {
 #define GBA_SIZE_FLASH1M 0x00020000u
 #define GBA_SIZE_EEPROM 0x00002000u
 #define GBA_SIZE_EEPROM512 0x00000200u
+#define GBA_SIZE_AGB_PRINT 0x1000u
+#define BASE_OFFSET 24
+#define GBA_BIOS_CHECKSUM 0xBAAE187Fu
+#define GBA_REGION_ROM2_EX 13
+#define GBA_REGION_ROM0_EX 11
+#define GBA_REGION_ROM1_EX 12
+#define OFFSET_MASK 0x00FFFFFF
+#define AGB_PRINT_FLUSH_ADDR 0x00FFFFFE
+#define AGB_PRINT_BASE 0x01FE0000
+#define AGB_PRINT_PROTECT 0x01FE2FFC
+#define AGB_PRINT_TOP 0x01FF0000
+#define AGB_PRINT_STRUCT 0x01FE20F8
+#define IDLE_LOOP_THRESHOLD 10
+#define SAVEDATA_FLASH_BASE 0x0E000000
+#define IS_GPIO_REGISTER(addr) (((addr) & 0x00FFFFFE) >= 0x00C4 && ((addr) & 0x00FFFFFE) <= 0x00C8)
+#define GBA_VSTALL_A3 (1u << 0)
+#define GBA_VSTALL_A2 (1u << 1)
+#define GBA_VSTALL_B (1u << 2)
+#define GBA_VSTALL_T4(i) (1u << (3 + ((i) & 3)))
+#define GBA_VSTALL_T8(i) (1u << (7 + ((i) & 3)))
+#define BASE_TILE 0x00010000
+#define FLAG_TARGET_1 (1u << 0)
+#define FLAG_OBJWIN (1u << 1)
+#define OBJ_MODE_SEMITRANSPARENT 1
+#define OBJ_MODE_OBJWIN 2
 
 enum {
 	mCORE_MEMORY_RW = 1 << 0,
@@ -262,7 +287,9 @@ struct GBASavedata {
 };
 
 struct GBAHardware {
+	struct GBA* p;
 	unsigned devices;
+	uint16_t* gpioBase;
 	struct {
 		uint8_t time[7];
 		uint8_t control;
@@ -272,7 +299,9 @@ struct GBAHardware {
 };
 
 struct GBACartEReader {
-	int _unused;
+	struct GBA* p;
+	void* dots;
+	uint8_t cards[16][0x30];
 };
 
 #define GBA_VIDEO_HORIZONTAL_PIXELS 240u
@@ -322,7 +351,16 @@ struct GBAVideoSoftwareRenderer {
 	uint32_t scanlineDirty[256];
 	uint32_t* normalPalette;
 	uint8_t* target1Obj;
-	int currentWindow;
+	struct { uint16_t packed; int priority; } currentWindow;
+	struct { int priority; } objwin;
+	uint16_t dispcnt;
+};
+
+static const int GBAVideoObjSizes[16][2] = {
+	{8, 8}, {16, 16}, {32, 32}, {64, 64},
+	{16, 8}, {32, 8}, {32, 16}, {64, 32},
+	{8, 16}, {8, 32}, {16, 32}, {32, 64},
+	{0, 0}, {0, 0}, {0, 0}, {0, 0}
 };
 
 struct GBAVideo {
@@ -401,6 +439,8 @@ static inline int GBASerializedSavedataFlagsGetFlashBank(GBASerializedSavedataFl
 
 struct GBASerializedState {
 	uint8_t io[0x400];
+	uint8_t wram[GBA_SIZE_EWRAM];
+	uint8_t iwram[GBA_SIZE_IWRAM];
 	struct {
 		uint16_t reload;
 		uint32_t lastEvent;
@@ -481,6 +521,7 @@ struct ARMStatusPacked {
 	unsigned c;
 	unsigned v;
 	unsigned i;
+	unsigned t;
 	unsigned flags;
 	unsigned priv;
 };
@@ -494,6 +535,7 @@ union PSR {
 		unsigned c;
 		unsigned v;
 		unsigned i;
+		unsigned t;
 		unsigned flags;
 		unsigned priv;
 	};
@@ -518,19 +560,37 @@ enum RegisterBank {
 	BANK_FIQ = 1
 };
 
+enum LSMDirection {
+	LSM_DA = 0,
+	LSM_DB = 1,
+	LSM_IA = 2,
+	LSM_IB = 3
+};
+#define LSM_D 0x1
+#define LSM_B 0x2
+
 struct ARMMemory {
 	uint32_t (*load32)(struct ARMCore*, uint32_t, int32_t*);
-	uint16_t (*load16)(struct ARMCore*, uint32_t, int32_t*);
-	uint8_t (*load8)(struct ARMCore*, uint32_t, int32_t*);
-	uint32_t (*loadMultiple)(struct ARMCore*, uint32_t, int, int, int32_t*);
+	uint32_t (*load16)(struct ARMCore*, uint32_t, int32_t*);
+	uint32_t (*load8)(struct ARMCore*, uint32_t, int32_t*);
+	uint32_t (*loadMultiple)(struct ARMCore*, uint32_t, int, enum LSMDirection, int32_t*);
 	void (*store32)(struct ARMCore*, uint32_t, int32_t, int32_t*);
 	void (*store16)(struct ARMCore*, uint32_t, int16_t, int32_t*);
 	void (*store8)(struct ARMCore*, uint32_t, int8_t, int32_t*);
-	uint32_t (*storeMultiple)(struct ARMCore*, uint32_t, int, int, int32_t*);
+	uint32_t (*storeMultiple)(struct ARMCore*, uint32_t, int, enum LSMDirection, int32_t*);
 	int32_t (*stall)(struct ARMCore*, int32_t);
+	void (*setActiveRegion)(struct ARMCore*, uint32_t);
 	int activeSeqCycles16;
 	int activeSeqCycles32;
+	int activeNonseqCycles16;
 	int activeNonseqCycles32;
+	enum mMemoryAccessSource {
+		mACCESS_UNKNOWN = 0,
+		mACCESS_PROGRAM,
+		mACCESS_SYSTEM,
+		mACCESS_DMA,
+		mACCESS_DECOMPRESS
+	} accessSource;
 	uint32_t activeMask;
 	uint8_t* activeRegion;
 };
@@ -557,7 +617,14 @@ struct ARMCore {
 	struct ARMCoprocessor cp[16];
 	uint32_t prefetch[2];
 	int nextEvent;
-	struct { void (*bkpt32)(struct ARMCore*, uint32_t); void (*swi32)(struct ARMCore*, uint32_t); void (*reset)(struct ARMCore*); void (*processEvents)(struct ARMCore*); } irqh;
+	struct {
+		void (*bkpt16)(struct ARMCore*, uint16_t);
+		void (*bkpt32)(struct ARMCore*, uint32_t);
+		void (*swi16)(struct ARMCore*, uint16_t);
+		void (*swi32)(struct ARMCore*, uint32_t);
+		void (*reset)(struct ARMCore*);
+		void (*processEvents)(struct ARMCore*);
+	} irqh;
 	int halted;
 	size_t numComponents;
 	struct mCPUComponent** components;
@@ -573,12 +640,22 @@ enum {
 };
 
 enum {
+	ARM_MEMORY_LOAD = 0,
 	ARM_MEMORY_REGISTER_BASE = 1 << 0,
 	ARM_MEMORY_IMMEDIATE_OFFSET = 1 << 1,
 	ARM_MEMORY_REGISTER_OFFSET = 1 << 2,
 	ARM_MEMORY_SHIFTED_OFFSET = 1 << 3,
 	ARM_MEMORY_POST_INCREMENT = 1 << 4,
-	ARM_MEMORY_OFFSET_SUBTRACT = 1 << 5
+	ARM_MEMORY_OFFSET_SUBTRACT = 1 << 5,
+	ARM_MEMORY_PRE_INCREMENT = 1 << 6,
+	ARM_MEMORY_WRITEBACK = 1 << 7,
+	ARM_MEMORY_STORE = 1 << 8,
+	ARM_MEMORY_SWAP = 1 << 9,
+	ARM_MEMORY_SPSR_SWAP = 1 << 10,
+	ARM_MEMORY_INCREMENT_AFTER = 0,
+	ARM_MEMORY_INCREMENT_BEFORE = ARM_MEMORY_PRE_INCREMENT,
+	ARM_MEMORY_DECREMENT_AFTER = ARM_MEMORY_OFFSET_SUBTRACT,
+	ARM_MEMORY_DECREMENT_BEFORE = ARM_MEMORY_PRE_INCREMENT | ARM_MEMORY_OFFSET_SUBTRACT
 };
 
 struct ARMRegisterFile {
@@ -586,22 +663,182 @@ struct ARMRegisterFile {
 	union PSR cpsr;
 };
 
-struct ARMInstructionInfo {
+enum ARMCondition {
+	ARM_CONDITION_EQ = 0,
+	ARM_CONDITION_NE,
+	ARM_CONDITION_CS,
+	ARM_CONDITION_CC,
+	ARM_CONDITION_MI,
+	ARM_CONDITION_PL,
+	ARM_CONDITION_VS,
+	ARM_CONDITION_VC,
+	ARM_CONDITION_HI,
+	ARM_CONDITION_LS,
+	ARM_CONDITION_GE,
+	ARM_CONDITION_LT,
+	ARM_CONDITION_GT,
+	ARM_CONDITION_LE,
+	ARM_CONDITION_AL,
+	ARM_CONDITION_NV
+};
+
+enum ARMBranchType {
+	ARM_BRANCH_NONE = 0,
+	ARM_BRANCH,
+	ARM_BRANCH_LINKED,
+	ARM_BRANCH_INDIRECT
+};
+
+enum ARMMnemonic {
+	ARM_MN_ILL = 0,
+	ARM_MN_ADC,
+	ARM_MN_ADD,
+	ARM_MN_AND,
+	ARM_MN_ASR,
+	ARM_MN_B,
+	ARM_MN_BIC,
+	ARM_MN_BKPT,
+	ARM_MN_BL,
+	ARM_MN_BX,
+	ARM_MN_CMN,
+	ARM_MN_CMP,
+	ARM_MN_EOR,
+	ARM_MN_LDM,
+	ARM_MN_LDR,
+	ARM_MN_LSL,
+	ARM_MN_LSR,
+	ARM_MN_MLA,
+	ARM_MN_MOV,
+	ARM_MN_MRS,
+	ARM_MN_MSR,
+	ARM_MN_MUL,
+	ARM_MN_MVN,
+	ARM_MN_NEG,
+	ARM_MN_ORR,
+	ARM_MN_ROR,
+	ARM_MN_RSB,
+	ARM_MN_RSC,
+	ARM_MN_SBC,
+	ARM_MN_SMLAL,
+	ARM_MN_SMULL,
+	ARM_MN_STM,
+	ARM_MN_STR,
+	ARM_MN_SUB,
+	ARM_MN_SWI,
+	ARM_MN_SWP,
+	ARM_MN_TEQ,
+	ARM_MN_TST,
+	ARM_MN_UMLAL,
+	ARM_MN_UMULL
+};
+
+enum ARMMemoryAccessType {
+	ARM_ACCESS_BYTE = 1,
+	ARM_ACCESS_HALFWORD = 2,
+	ARM_ACCESS_WORD = 4,
+	ARM_ACCESS_SIGNED_BYTE = 9,
+	ARM_ACCESS_SIGNED_HALFWORD = 10,
+	ARM_ACCESS_TRANSLATED_BYTE = 17,
+	ARM_ACCESS_TRANSLATED_WORD = 20
+};
+
+enum {
+	ARM_CPSR = 16,
+	ARM_SPSR = 17
+};
+#define LOAD_CYCLES ++info->iCycles
+#define STORE_CYCLES do {} while (0)
+
+enum {
+	ARM_PSR_C = 1 << 0,
+	ARM_PSR_X = 1 << 1,
+	ARM_PSR_S = 1 << 2,
+	ARM_PSR_F = 1 << 3,
+	ARM_PSR_MASK = ARM_PSR_C | ARM_PSR_X | ARM_PSR_S | ARM_PSR_F
+};
+
+enum {
+	ARM_OPERAND_NONE = 0,
+	ARM_OPERAND_REGISTER_1 = 1 << 0,
+	ARM_OPERAND_IMMEDIATE_1 = 1 << 1,
+	ARM_OPERAND_MEMORY_1 = 1 << 2,
+	ARM_OPERAND_SHIFT_REGISTER_1 = 1 << 3,
+	ARM_OPERAND_SHIFT_IMMEDIATE_1 = 1 << 4,
+	ARM_OPERAND_AFFECTED_1 = 1 << 5,
+
+	ARM_OPERAND_REGISTER_2 = 1 << 8,
+	ARM_OPERAND_IMMEDIATE_2 = 1 << 9,
+	ARM_OPERAND_MEMORY_2 = 1 << 10,
+	ARM_OPERAND_SHIFT_REGISTER_2 = 1 << 11,
+	ARM_OPERAND_SHIFT_IMMEDIATE_2 = 1 << 12,
+	ARM_OPERAND_AFFECTED_2 = 1 << 13,
+
+	ARM_OPERAND_REGISTER_3 = 1 << 16,
+	ARM_OPERAND_IMMEDIATE_3 = 1 << 17,
+	ARM_OPERAND_MEMORY_3 = 1 << 18,
+	ARM_OPERAND_SHIFT_REGISTER_3 = 1 << 19,
+	ARM_OPERAND_SHIFT_IMMEDIATE_3 = 1 << 20,
+	ARM_OPERAND_AFFECTED_3 = 1 << 21,
+
+	ARM_OPERAND_REGISTER_4 = 1 << 24,
+	ARM_OPERAND_IMMEDIATE_4 = 1 << 25,
+	ARM_OPERAND_MEMORY_4 = 1 << 26,
+	ARM_OPERAND_SHIFT_REGISTER_4 = 1 << 27,
+	ARM_OPERAND_SHIFT_IMMEDIATE_4 = 1 << 28,
+	ARM_OPERAND_AFFECTED_4 = 1 << 29,
+
+	ARM_OPERAND_2 = 0x0000FF00,
+	ARM_OPERAND_3 = 0x00FF0000,
+	ARM_OPERAND_4 = 0xFF000000
+};
+
+union ARMOperand {
+	int32_t immediate;
+	int reg;
+	int psrBits;
+	uint8_t shifterImm;
+	uint8_t shifterOp;
+	uint8_t shifterReg;
+};
+
+struct ARMMemoryAccess {
+	int format;
+	int baseReg;
+	enum ARMMemoryAccessType width;
 	struct {
-		int format;
-		int baseReg;
-		struct {
-			int immediate;
-			int reg;
-			uint8_t shifterImm;
-			uint8_t shifterOp;
-		} offset;
-	} memory;
+		int immediate;
+		int reg;
+		uint8_t shifterImm;
+		uint8_t shifterOp;
+	} offset;
+};
+
+struct ARMInstructionInfo {
+	uint32_t opcode;
+	enum ARMMnemonic mnemonic;
+	enum ARMCondition condition;
+	enum ARMBranchType branchType;
+	int execMode;
+	int operandFormat;
+	bool affectsCPSR;
+	bool traps;
+	int iCycles;
+	int sDataCycles;
+	int nDataCycles;
+	int sInstructionCycles;
+	int nInstructionCycles;
+	int cCycles;
+	union ARMOperand op1;
+	union ARMOperand op2;
+	union ARMOperand op3;
+	union ARMOperand op4;
+	struct ARMMemoryAccess memory;
 };
 
 enum {
 	GBA_UNL_CART_NONE = 0,
-	GBA_UNL_CART_MULTICART = 1
+	GBA_UNL_CART_MULTICART = 1,
+	GBA_UNL_CART_VFAME = 2
 };
 
 struct GBAUnlCart {
@@ -637,7 +874,7 @@ void GBACartEReaderInit(struct GBACartEReader* ereader);
 
 struct GBAMemoryBusMini {
 	uint16_t io[0x400];
-	uint8_t* bios;
+	uint32_t* bios;
 	uint8_t* wram;
 	uint8_t* iwram;
 	uint8_t* rom;
@@ -649,8 +886,43 @@ struct GBAMemoryBusMini {
 	struct { uint32_t source; uint32_t dest; uint32_t count; uint32_t latch; uint16_t control; } dma[4];
 	int activeDMA;
 	size_t romSize;
+	uint32_t romMask;
 	int activeRegion;
+	bool fullBios;
+	uint32_t biosPrefetch;
+	bool prefetch;
+	uint32_t lastPrefetchedPc;
+	uint8_t waitstatesNonseq16[256];
+	uint8_t waitstatesSeq16[256];
+	uint8_t waitstatesNonseq32[256];
+	uint8_t waitstatesSeq32[256];
+	uint16_t agbPrintProtect;
+	uint32_t agbPrintBase;
+	uint8_t* agbPrintBuffer;
+	uint8_t* agbPrintBufferBackup;
+	struct {
+		uint32_t requestResult;
+		uint16_t request;
+		uint16_t bank;
+		uint16_t ack;
+		uint16_t get;
+		uint16_t put;
+	} agbPrintCtx;
+	uint16_t agbPrintProtectBackup;
+	struct {
+		uint16_t request;
+		uint16_t bank;
+		uint16_t get;
+		uint16_t put;
+	} agbPrintCtxBackup;
+	uint32_t agbPrintFuncBackup;
+	struct {
+		uint16_t size;
+		uint16_t bg[4][2];
+		uint16_t obj[2];
+	} matrix;
 };
+#define GBAMemory GBAMemoryBusMini
 
 struct GBASIO {
 	struct GBA* p;
@@ -663,6 +935,35 @@ struct GBASIO {
 };
 
 void GBASIOSetDriver(struct GBASIO* sio, struct GBASIODriver* driver);
+void GBADMAInit(struct GBA* gba);
+void GBADMAReset(struct GBA* gba);
+void GBAUnlCartInit(struct GBA* gba);
+void GBAUnlCartReset(struct GBA* gba);
+void GBACartEReaderDeinit(struct GBACartEReader* ereader);
+void GBASavedataReset(struct GBASavedata* savedata);
+void GBAHardwareReset(struct GBAHardware* hw);
+void GBAMemoryClearAGBPrint(struct GBA* gba);
+void ARMDecodeThumb(uint16_t opcode, struct ARMInstructionInfo* info);
+bool GBAIOIsReadConstant(uint32_t address);
+uint32_t GBAVFameGetPatternValue(uint32_t address, int bits);
+uint16_t GBASavedataReadEEPROM(struct GBASavedata* savedata);
+uint32_t GBACartEReaderRead(struct GBACartEReader* ereader, uint32_t address);
+uint32_t GBACartEReaderReadFlash(struct GBACartEReader* ereader, uint32_t address);
+uint8_t GBASavedataReadFlash(struct GBASavedata* savedata, uint16_t address);
+uint16_t GBAHardwareTiltRead(struct GBAHardware* hw, uint32_t address);
+void GBAHardwareGPIOWrite(struct GBAHardware* hw, uint32_t reg, uint16_t value);
+void GBAHardwareTiltWrite(struct GBAHardware* hw, uint32_t address, uint8_t value);
+void GBAMatrixWrite(struct GBA* gba, uint32_t reg, uint32_t value);
+void GBAMatrixWrite16(struct GBA* gba, uint32_t reg, uint16_t value);
+void GBAUnlCartWriteROM(struct GBA* gba, uint32_t address, uint16_t value);
+void GBAUnlCartWriteSRAM(struct GBA* gba, uint32_t address, uint8_t value);
+void GBACartEReaderWrite(struct GBACartEReader* ereader, uint32_t address, uint16_t value);
+void GBACartEReaderWriteFlash(struct GBACartEReader* ereader, uint32_t address, uint8_t value);
+void GBASavedataWriteEEPROM(struct GBASavedata* savedata, uint16_t value, uint32_t bits);
+void GBASavedataWriteFlash(struct GBASavedata* savedata, uint16_t address, uint8_t value);
+size_t toPow2(size_t v);
+unsigned popcount32(uint32_t v);
+void GBADMARecalculateCycles(struct GBA* gba);
 
 #ifndef GBA_ARM7TDMI_FREQUENCY
 #define GBA_ARM7TDMI_FREQUENCY 16777216
@@ -699,6 +1000,7 @@ enum GBAHardwareDeviceFlags {
 	HW_LIGHT_SENSOR = 1 << 1,
 	HW_RUMBLE = 1 << 2,
 	HW_GYRO = 1 << 3,
+	HW_GPIO = 1 << 3,
 	HW_TILT = 1 << 4,
 	HW_EREADER = 1 << 5,
 	HW_GB_PLAYER_DETECTION = 1 << 6,
@@ -763,13 +1065,15 @@ struct GBA {
 		struct { uint8_t raw[GBA_SIZE_OAM]; } oam;
 		uint32_t frameCounter;
 		int frameskip;
+		uint32_t stallMask;
+		struct mTimingEvent event;
 	} video;
 	struct {
 		bool enable;
 		int masterVolume;
 		int sampleInterval;
 		size_t samples;
-		struct { struct { int _unused; } buffer; struct { int volume; } ch3; bool forceDisableCh[4]; } psg;
+		struct { struct mAudioBuffer buffer; struct { int volume; uint32_t wavedata32[8]; } ch3; bool forceDisableCh[4]; } psg;
 		int chATimer;
 		int chBTimer;
 		bool chALeft;
@@ -803,6 +1107,47 @@ struct GBA {
 	size_t pristineRomSize;
 	uint32_t romCrc32;
 	uint32_t bus;
+	int biosStall;
+	bool hardCrash;
+	bool performingDMA;
+	int idleDetectionStep;
+	int idleDetectionFailures;
+	uint32_t cachedRegisters[16];
+	bool taintedRegisters[16];
+	uint32_t lastJump;
+	uint32_t dmaPC;
+	size_t yankedRomSize;
+};
+
+enum {
+	GBA_SWI_SOFT_RESET = 0x00,
+	GBA_SWI_REGISTER_RAM_RESET = 0x01,
+	GBA_SWI_HALT = 0x02,
+	GBA_SWI_STOP = 0x03,
+	GBA_SWI_INTR_WAIT = 0x04,
+	GBA_SWI_VBLANK_INTR_WAIT = 0x05,
+	GBA_SWI_DIV = 0x06,
+	GBA_SWI_DIV_ARM = 0x07,
+	GBA_SWI_SQRT = 0x08,
+	GBA_SWI_ARCTAN = 0x09,
+	GBA_SWI_ARCTAN2 = 0x0A,
+	GBA_SWI_CPU_SET = 0x0B,
+	GBA_SWI_CPU_FAST_SET = 0x0C,
+	GBA_SWI_GET_BIOS_CHECKSUM = 0x0D,
+	GBA_SWI_BG_AFFINE_SET = 0x0E,
+	GBA_SWI_OBJ_AFFINE_SET = 0x0F,
+	GBA_SWI_BIT_UNPACK = 0x10,
+	GBA_SWI_LZ77_UNCOMP_WRAM = 0x11,
+	GBA_SWI_LZ77_UNCOMP_VRAM = 0x12,
+	GBA_SWI_HUFFMAN_UNCOMP = 0x13,
+	GBA_SWI_RL_UNCOMP_WRAM = 0x14,
+	GBA_SWI_RL_UNCOMP_VRAM = 0x15,
+	GBA_SWI_DIFF_8BIT_UNFILTER_WRAM = 0x16,
+	GBA_SWI_DIFF_8BIT_UNFILTER_VRAM = 0x17,
+	GBA_SWI_DIFF_16BIT_UNFILTER = 0x18,
+	GBA_SWI_SOUND_BIAS = 0x19,
+	GBA_SWI_SOUND_DRIVER_GET_JUMP_LIST = 0x2A,
+	GBA_SWI_MIDI_KEY_2_FREQ = 0x1F
 };
 
 enum {
@@ -1089,20 +1434,22 @@ enum {
 #define GBA_REG_INTERNAL_MAX GBA_REG(INTERNAL_MAX)
 #define GBA_REG_MAX GBA_REG(INTERNAL_MAX)
 #define GBA_REG_STEREOCNT GBA_REG(SOUNDCNT_LO)
+#define GPIO_REG_DATA 0x00C4
 
 #define GBA_REG_TMCNT_LO(id) (0x100 + ((id) * 4))
 
 static inline uint32_t hash32(const void* data, size_t size, uint32_t seed) { UNUSED(data); UNUSED(size); return seed; }
 int32_t mTimingCurrentTime(const struct mTiming* timing);
+int32_t mTimingUntil(const struct mTiming* timing, const struct mTimingEvent* event);
 bool mTimingIsScheduled(const struct mTiming* timing, const struct mTimingEvent* event);
 static inline bool mSavedataClean(bool* dirty, uint32_t* dirtAge, uint32_t frameCount) { UNUSED(dirtAge); UNUSED(frameCount); return dirty && *dirty; }
 void GBASIOReset(struct GBASIO* sio);
 static inline void GBARaiseIRQ(struct GBA* gba, int irq, int32_t cyclesLate) { UNUSED(gba); UNUSED(irq); UNUSED(cyclesLate); }
 static inline void GBATestKeypadIRQ(struct GBA* gba) { UNUSED(gba); }
-static inline uint32_t GBAView8(struct ARMCore* cpu, uint32_t address) { UNUSED(cpu); UNUSED(address); return 0; }
-static inline uint32_t GBAView16(struct ARMCore* cpu, uint32_t address) { UNUSED(cpu); UNUSED(address); return 0; }
-static inline uint32_t GBAView32(struct ARMCore* cpu, uint32_t address) { UNUSED(cpu); UNUSED(address); return 0; }
-static inline uint16_t GBALoadBad(struct ARMCore* cpu) { UNUSED(cpu); return 0; }
+uint8_t GBAView8(struct ARMCore* cpu, uint32_t address);
+uint16_t GBAView16(struct ARMCore* cpu, uint32_t address);
+uint32_t GBAView32(struct ARMCore* cpu, uint32_t address);
+uint32_t GBALoadBad(struct ARMCore* cpu);
 static inline void GBAWrite8(struct ARMCore* cpu, uint32_t address, uint8_t value) { UNUSED(cpu); UNUSED(address); UNUSED(value); }
 static inline void GBAWrite16(struct ARMCore* cpu, uint32_t address, uint16_t value) { UNUSED(cpu); UNUSED(address); UNUSED(value); }
 static inline void GBAWrite32(struct ARMCore* cpu, uint32_t address, uint32_t value) { UNUSED(cpu); UNUSED(address); UNUSED(value); }
@@ -1172,12 +1519,29 @@ static inline void GBAudioWriteNR43(void* psg, uint8_t value) { UNUSED(psg); UNU
 static inline void GBAudioWriteNR44(void* psg, uint8_t value) { UNUSED(psg); UNUSED(value); }
 static inline int GBAudioRegisterBankVolumeGetVolumeGBA(uint8_t value) { return (value >> 5) & 0x3; }
 void GBAIOWrite32(struct GBA* gba, uint32_t address, uint32_t value);
+uint16_t GBAIORead(struct GBA* gba, uint32_t address);
+void GBAIOWrite(struct GBA* gba, uint32_t address, uint16_t value);
+void GBAIOWrite8(struct GBA* gba, uint32_t address, uint8_t value);
+static inline int GBARegisterDISPCNTGetMode(uint16_t v) { return v & 0x7; }
+uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter);
+uint32_t GBALoad16(struct ARMCore* cpu, uint32_t address, int* cycleCounter);
+uint32_t GBALoad8(struct ARMCore* cpu, uint32_t address, int* cycleCounter);
+uint32_t GBALoadMultiple(struct ARMCore* cpu, uint32_t address, int mask, enum LSMDirection direction, int* cycleCounter);
+void GBAStore32(struct ARMCore* cpu, uint32_t address, int32_t value, int* cycleCounter);
+void GBAStore16(struct ARMCore* cpu, uint32_t address, int16_t value, int* cycleCounter);
+void GBAStore8(struct ARMCore* cpu, uint32_t address, int8_t value, int* cycleCounter);
+uint32_t GBAStoreMultiple(struct ARMCore* cpu, uint32_t address, int mask, enum LSMDirection direction, int* cycleCounter);
+extern const uint8_t hleBios[GBA_SIZE_BIOS];
 static inline int GBAMosaicControlGetBgV(uint16_t mosaic) { UNUSED(mosaic); return 0; }
 static inline int GBAObjAttributesAGetMode(uint16_t a) { UNUSED(a); return 0; }
 static inline int GBAObjAttributesAGetShape(uint16_t a) { UNUSED(a); return 0; }
 static inline int GBAObjAttributesBGetSize(uint16_t b) { UNUSED(b); return 0; }
+static inline int GBAObjAttributesBGetX(uint16_t b) { return b & 0x1FF; }
+static inline bool GBAObjAttributesAIs256Color(uint16_t a) { return (a & 0x2000) != 0; }
+static inline int GBAObjAttributesCGetTile(uint16_t c) { return c & 0x3FF; }
 static inline int GBAObjAttributesCGetPriority(uint16_t c) { UNUSED(c); return 0; }
 static inline bool GBAWindowControlIsBlendEnable(uint16_t control) { UNUSED(control); return false; }
+static inline bool GBARegisterDISPCNTIsObjCharacterMapping(uint16_t dispcnt) { return (dispcnt & (1 << 6)) != 0; }
 static inline void* anonymousMemoryMap(size_t size) { UNUSED(size); return NULL; }
 static inline void MutexLock(void* m) { UNUSED(m); }
 static inline void MutexUnlock(void* m) { UNUSED(m); }
@@ -1191,6 +1555,7 @@ void ARMDeinit(struct ARMCore* cpu);
 void ARMReset(struct ARMCore* cpu);
 void ARMRunLoop(struct ARMCore* cpu);
 void ARMRun(struct ARMCore* cpu);
+void ARMRaiseSWI(struct ARMCore* cpu);
 static inline void mRTCGenericSourceInit(struct mRTCGenericSource* rtc, struct mCore* core) { UNUSED(rtc); UNUSED(core); }
 static inline void mDirectorySetInit(struct mDirectorySet* dirs) { UNUSED(dirs); }
 static inline void mDirectorySetDeinit(struct mDirectorySet* dirs) { UNUSED(dirs); }
@@ -1207,6 +1572,7 @@ static inline void GBAVideoAssociateRenderer(struct GBAVideo* video, struct GBAV
 static inline void GBAVideoSoftwareRendererCreate(struct GBAVideoSoftwareRenderer* renderer) { UNUSED(renderer); }
 static inline void mVideoThreadProxyCreate(struct mVideoThreadProxy* proxy) { UNUSED(proxy); }
 static inline void GBAAudioResizeBuffer(void* audio, size_t samples) { UNUSED(audio); UNUSED(samples); }
+void GBAPrintFlush(struct GBA* gba);
 static inline struct mCoreCallbacks* mCoreCallbacksListAppend(struct mCoreCallbacks* callbacks) { return callbacks; }
 static inline void mCoreCallbacksListClear(struct mCoreCallbacks* callbacks) { UNUSED(callbacks); }
 static inline size_t mCoreCallbacksListSize(struct mCoreCallbacks* callbacks) { return callbacks ? 1 : 0; }
@@ -1265,12 +1631,19 @@ static inline bool GBASIONormalIsIrq(uint16_t v) { return (v & 0x4000) != 0; }
 enum { JOYSTAT_RECV = 0x0004, JOYSTAT_TRANS = 0x0008 };
 static inline size_t mAudioBufferAvailable(const struct mAudioBuffer* buf) { UNUSED(buf); return 0; }
 static inline void mappedMemoryFree(void* p, size_t size) { UNUSED(size); free(p); }
+static inline int clz32(uint32_t v) { return v ? __builtin_clz(v) : 32; }
 #define STORE_32(v, o, p) do { UNUSED(o); uint32_t _tmp = (uint32_t) (v); memcpy((p), &_tmp, sizeof(uint32_t)); } while (0)
 #define LOAD_32(v, o, p) do { UNUSED(o); memcpy(&(v), (p), sizeof(uint32_t)); } while (0)
 #define STORE_16(v, o, p) do { UNUSED(o); uint16_t _tmp = (uint16_t) (v); memcpy((p), &_tmp, sizeof(uint16_t)); } while (0)
 #define LOAD_16(v, o, p) do { UNUSED(o); memcpy(&(v), (p), sizeof(uint16_t)); } while (0)
 #define STORE_64LE(v, o, p) do { UNUSED(o); uint64_t _tmp = (uint64_t) (v); memcpy((p), &_tmp, sizeof(uint64_t)); } while (0)
 #define LOAD_64LE(v, o, p) do { UNUSED(o); memcpy(&(v), (p), sizeof(uint64_t)); } while (0)
+
+#define DECL_BITFIELD(NAME, TYPE) typedef TYPE NAME;
+#define DECL_BITS(NAME, FIELD, SHIFT, WIDTH) \
+	static inline unsigned NAME##Get##FIELD(NAME v) { return (unsigned) (((v) >> (SHIFT)) & ((1u << (WIDTH)) - 1)); }
+#define DECL_BIT(NAME, FIELD, SHIFT) \
+	static inline bool NAME##Is##FIELD(NAME v) { return (((v) >> (SHIFT)) & 1u) != 0; }
 
 #ifndef mCALLBACKS_INVOKE
 #define mCALLBACKS_INVOKE(...)
@@ -1280,6 +1653,9 @@ typedef void (*ARMInstruction)(struct ARMCore*, uint32_t);
 typedef void (*ThumbInstruction)(struct ARMCore*, uint16_t);
 #ifndef DECLARE_ARM_EMITTER_BLOCK
 #define DECLARE_ARM_EMITTER_BLOCK(x)
+#endif
+#ifndef DECLARE_THUMB_EMITTER_BLOCK
+#define DECLARE_THUMB_EMITTER_BLOCK(x)
 #endif
 extern const ARMInstruction _armTable[0x1000];
 extern const ThumbInstruction _thumbTable[0x400];
@@ -1291,6 +1667,21 @@ extern const ThumbInstruction _thumbTable[0x400];
 #ifndef BANK_FIQ
 #define BANK_FIQ 0
 #endif
+
+#define ARM_COND_EQ (cpu->cpsr.z)
+#define ARM_COND_NE (!cpu->cpsr.z)
+#define ARM_COND_CS (cpu->cpsr.c)
+#define ARM_COND_CC (!cpu->cpsr.c)
+#define ARM_COND_MI (cpu->cpsr.n)
+#define ARM_COND_PL (!cpu->cpsr.n)
+#define ARM_COND_VS (cpu->cpsr.v)
+#define ARM_COND_VC (!cpu->cpsr.v)
+#define ARM_COND_HI (cpu->cpsr.c && !cpu->cpsr.z)
+#define ARM_COND_LS (!cpu->cpsr.c || cpu->cpsr.z)
+#define ARM_COND_GE (cpu->cpsr.n == cpu->cpsr.v)
+#define ARM_COND_LT (cpu->cpsr.n != cpu->cpsr.v)
+#define ARM_COND_GT (!cpu->cpsr.z && (cpu->cpsr.n == cpu->cpsr.v))
+#define ARM_COND_LE (cpu->cpsr.z || (cpu->cpsr.n != cpu->cpsr.v))
 
 #ifndef ARM_PC
 #define ARM_PC 15
@@ -1331,13 +1722,6 @@ extern const ThumbInstruction _thumbTable[0x400];
 #ifndef MODE_THUMB
 #define MODE_THUMB 1
 #endif
-
-enum {
-	LSM_DA = 0,
-	LSM_DB = 1,
-	LSM_IA = 2,
-	LSM_IB = 3
-};
 
 static inline uint32_t ROR(uint32_t value, unsigned shift) {
 	shift &= 31;
