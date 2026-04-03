@@ -124,6 +124,13 @@ struct GBA;
 struct GBASavedata;
 struct GBAHardware;
 struct GBACartEReader;
+struct ARMCore;
+struct GBATimer;
+struct GBADMA;
+struct GBAVideo;
+struct GBAVideoSoftwareBackground;
+struct GBAObj;
+struct mCoreSync;
 
 enum {
 	GBA_REGION_BIOS = 0,
@@ -218,6 +225,15 @@ struct GBASavedata {
 	int type;
 	void* data;
 	void* currentBank;
+	int command;
+	int flashState;
+	void* vf;
+	void* realVf;
+	int mapMode;
+	bool maskWriteback;
+	bool dirty;
+	uint32_t dirtAge;
+	uint32_t dust;
 };
 
 struct GBAHardware {
@@ -253,6 +269,7 @@ struct GBAVideoRenderer {
 	bool disableOBJ;
 	bool disableWIN[2];
 	bool disableOBJWIN;
+	int highlightAmount;
 };
 
 struct GBAVideoSoftwareRenderer {
@@ -264,6 +281,33 @@ struct GBAVideoSoftwareRenderer {
 	int32_t objOffsetX;
 	int32_t objOffsetY;
 	int oamDirty;
+	int start;
+	int end;
+	uint16_t mosaic;
+	uint16_t blendEffect;
+	uint32_t* normalPalette;
+	uint8_t* target1Obj;
+	int currentWindow;
+};
+
+struct GBAVideo {
+	struct GBAVideoRenderer* renderer;
+	uint16_t* palette;
+	uint8_t* vram;
+};
+
+struct GBAVideoSoftwareBackground {
+	int x;
+	int y;
+	int offsetX;
+	int offsetY;
+	bool mosaic;
+};
+
+struct GBAObj {
+	uint16_t a;
+	uint16_t b;
+	uint16_t c;
 };
 
 struct GBAVideoProxyRenderer {
@@ -318,11 +362,17 @@ void GBACartEReaderInit(struct GBACartEReader* ereader);
 
 struct GBAMemoryBusMini {
 	uint16_t io[0x400];
+	uint8_t* bios;
+	uint8_t* wram;
+	uint8_t* iwram;
 	uint8_t* rom;
 	struct GBASavedata savedata;
 	struct GBAHardware hw;
 	struct GBACartEReader ereader;
 	struct GBAUnlCart unl;
+	struct mTimingEvent dmaEvent;
+	struct { uint32_t source; uint32_t dest; uint32_t count; uint32_t latch; uint16_t control; } dma[4];
+	int activeDMA;
 };
 
 struct GBASIO {
@@ -423,6 +473,8 @@ struct GBASIODolphin {
 struct GBA {
 	struct mTiming timing;
 	struct GBAMemoryBusMini memory;
+	struct ARMCore* cpu;
+	struct GBATimer* timers;
 	struct GBASIO sio;
 	struct {
 		struct GBAVideoRenderer* renderer;
@@ -432,15 +484,25 @@ struct GBA {
 		uint32_t frameCounter;
 	} video;
 	struct {
+		bool enable;
 		int sampleInterval;
 		size_t samples;
 		struct { struct { int _unused; } buffer; } psg;
+		int chATimer;
+		int chBTimer;
+		bool chALeft;
+		bool chARight;
+		bool chBLeft;
+		bool chBRight;
 	} audio;
 	struct { int _unused; } d;
 	struct { int _unused; } coreCallbacks;
 	void* sync;
 	void* rtcSource;
 	void* stream;
+	struct mKeyCallback* keyCallback;
+	struct { void (*setRumble)(void*, bool, int32_t); }* rumble;
+	int32_t lastRumble;
 	bool vbaBugCompat;
 	uint32_t idleLoop;
 	int idleOptimization;
@@ -472,6 +534,119 @@ static inline uint16_t GBASIOMultiplayerFillReady(uint16_t v) { return (uint16_t
 static inline bool GBASIONormalGetSc(uint16_t v) { return (v & 0x0001) != 0; }
 static inline bool GBASIONormalIsStart(uint16_t v) { return (v & 0x0080) != 0; }
 static inline uint16_t GBASIONormalFillSi(uint16_t v) { return (uint16_t) (v | 0x0004); }
+
+#ifndef MAP_WRITE
+#define MAP_WRITE 1
+#endif
+
+#ifndef EEPROM_COMMAND_NULL
+#define EEPROM_COMMAND_NULL 0
+#endif
+
+#ifndef FLASH_STATE_RAW
+#define FLASH_STATE_RAW 0
+#endif
+
+#ifndef GBA_LAYER_BG0
+#define GBA_LAYER_BG0 0
+#define GBA_LAYER_BG1 1
+#define GBA_LAYER_BG2 2
+#define GBA_LAYER_BG3 3
+#define GBA_LAYER_OBJ 4
+#define GBA_LAYER_WIN0 5
+#define GBA_LAYER_WIN1 6
+#define GBA_LAYER_OBJWIN 7
+#endif
+
+#ifndef mCORE_REGISTER_GPR
+#define mCORE_REGISTER_GPR 1u
+#endif
+
+#ifndef GBA_IRQ_TIMER0
+#define GBA_IRQ_TIMER0 3
+#endif
+
+#ifndef HW_GB_PLAYER
+#define HW_GB_PLAYER (1u << 7)
+#endif
+
+#ifndef VIDEO_HDRAW_LENGTH
+#define VIDEO_HDRAW_LENGTH 1006
+#endif
+
+#ifndef BLEND_ALPHA
+#define BLEND_ALPHA 1
+#endif
+
+#ifndef OFFSET_PRIORITY
+#define OFFSET_PRIORITY 0
+#endif
+
+#ifndef GBA_REG
+#define GBA_REG(x) ((x) >> 1)
+#endif
+
+enum {
+	DISPCNT = 0x000, DISPSTAT = 0x004, VCOUNT = 0x006,
+	BG0CNT = 0x008, BG1CNT = 0x00A, BG2CNT = 0x00C, BG3CNT = 0x00E,
+	BG0HOFS = 0x010, BG0VOFS = 0x012, BG1HOFS = 0x014, BG1VOFS = 0x016,
+	BG2HOFS = 0x018, BG2VOFS = 0x01A, BG2PA = 0x020, BG2PB = 0x022, BG2PC = 0x024,
+	BG3HOFS = 0x028, BG3VOFS = 0x02A,
+	SIOMULTI0 = 0x120, SIOMULTI1 = 0x122, SIOMULTI2 = 0x124, SIOMULTI3 = 0x126,
+	SIODATA32_LO = 0x120, SIODATA32_HI = 0x122, SIODATA8 = 0x12A, SIOCNT = 0x128, RCNT = 0x134,
+	SIOMLT_SEND = 0x12A, JOYCNT = 0x140, JOY_RECV_LO = 0x150, JOY_TRANS_LO = 0x154
+};
+
+#define GBA_REG_DISPCNT GBA_REG(DISPCNT)
+#define GBA_REG_SIODATA8 GBA_REG(SIODATA8)
+#define GBA_REG_SIODATA32_LO GBA_REG(SIODATA32_LO)
+#define GBA_REG_SIODATA32_HI GBA_REG(SIODATA32_HI)
+#define GBA_REG_SIOCNT GBA_REG(SIOCNT)
+#define GBA_REG_RCNT GBA_REG(RCNT)
+#define GBA_REG_SIOMLT_SEND GBA_REG(SIOMLT_SEND)
+#define GBA_REG_JOYCNT GBA_REG(JOYCNT)
+#define GBA_REG_JOY_RECV_LO GBA_REG(JOY_RECV_LO)
+#define GBA_REG_JOY_TRANS_LO GBA_REG(JOY_TRANS_LO)
+
+#define GBA_REG_TMCNT_LO(id) (0x100 + ((id) * 4))
+
+static inline uint32_t hash32(const void* data, size_t size, uint32_t seed) { UNUSED(data); UNUSED(size); return seed; }
+static inline int32_t mTimingCurrentTime(struct mTiming* timing) { return timing ? timing->masterCycles : 0; }
+static inline void GBASIOReset(struct GBASIO* sio) { UNUSED(sio); }
+static inline void GBARaiseIRQ(struct GBA* gba, int irq, int32_t cyclesLate) { UNUSED(gba); UNUSED(irq); UNUSED(cyclesLate); }
+static inline bool GBATimerFlagsIsCountUp(uint16_t flags) { UNUSED(flags); return false; }
+static inline bool GBATimerFlagsIsDoIrq(uint16_t flags) { UNUSED(flags); return false; }
+static inline void GBATimerUpdateRegister(struct GBA* gba, int timerId, int32_t cyclesLate) { UNUSED(gba); UNUSED(timerId); UNUSED(cyclesLate); }
+static inline bool GBADMARegisterIsEnable(uint16_t control) { return (control & 0x8000) != 0; }
+static inline void GBAAudioSampleFIFO(struct GBA* gba, int fifo) { UNUSED(gba); UNUSED(fifo); }
+static inline int GBAMosaicControlGetBgV(uint16_t mosaic) { UNUSED(mosaic); return 0; }
+static inline int GBAObjAttributesAGetMode(uint16_t a) { UNUSED(a); return 0; }
+static inline int GBAObjAttributesAGetShape(uint16_t a) { UNUSED(a); return 0; }
+static inline int GBAObjAttributesBGetSize(uint16_t b) { UNUSED(b); return 0; }
+static inline int GBAObjAttributesCGetPriority(uint16_t c) { UNUSED(c); return 0; }
+static inline bool GBAWindowControlIsBlendEnable(uint16_t control) { UNUSED(control); return false; }
+static inline void* anonymousMemoryMap(size_t size) { UNUSED(size); return NULL; }
+static inline void MutexLock(void* m) { UNUSED(m); }
+static inline void MutexUnlock(void* m) { UNUSED(m); }
+static inline void ConditionWait(void* c, void* m) { UNUSED(c); UNUSED(m); }
+static inline void ConditionWake(void* c) { UNUSED(c); }
+static inline void ARMSelectBank(struct ARMCore* cpu, unsigned mode) { UNUSED(cpu); UNUSED(mode); }
+
+#ifndef MODE_FIQ
+#define MODE_FIQ 0x11
+#endif
+
+#ifndef BANK_FIQ
+#define BANK_FIQ 0
+#endif
+
+#ifndef ARM_PC
+#define ARM_PC 15
+#endif
+
+#ifndef ARM_SIGN
+#define ARM_SIGN(v) (((v) >> 31) & 1)
+#endif
 #endif
 
 #ifdef __cplusplus
