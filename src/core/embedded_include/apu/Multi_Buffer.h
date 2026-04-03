@@ -306,3 +306,4 @@ inline blargg_err_t Multi_Buffer::set_channel_count(int n, int const *types)
 }
 
 #endif
+#endif

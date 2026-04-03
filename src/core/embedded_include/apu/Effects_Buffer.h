@@ -151,3 +151,4 @@ class Simple_Effects_Buffer : public Effects_Buffer
 };
 
 #endif
+#endif

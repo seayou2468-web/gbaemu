@@ -196,3 +196,4 @@ struct gb_apu_state_t {
 };
 
 #endif
+#endif

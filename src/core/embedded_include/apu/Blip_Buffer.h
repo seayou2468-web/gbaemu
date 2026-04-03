@@ -675,3 +675,4 @@ int const blip_max_length = 0;
 int const blip_default_length = 250; // 1/4 second
 
 #endif
+#endif

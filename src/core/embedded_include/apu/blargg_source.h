@@ -111,3 +111,4 @@ typedef unsigned char blargg_byte;
 #endif
 
 #endif
+#endif

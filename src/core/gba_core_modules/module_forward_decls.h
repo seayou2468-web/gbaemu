@@ -8,6 +8,8 @@ void CPUUpdateWindow0();
 void CPUUpdateWindow1();
 bool CPUIsGBABios(const char* file);
 void GBAEmulate(int ticks);
+bool agbPrintWrite(uint32_t address, uint16_t value);
+void soundEvent8(uint32_t address, uint8_t data);
 
 // RTC/Sound declarations used by inline helpers and bootstrap paths.
 uint16_t rtcRead(uint32_t address);

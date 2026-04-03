@@ -5,9 +5,6 @@
 /* Arm/Thumb command set disassembler                                   */
 /************************************************************************/
 
-#ifndef VBAM_CORE_GBA_GBACPUARMDIS_H_
-#define VBAM_CORE_GBA_GBACPUARMDIS_H_
-
 #include <cstdint>
 
 #define DIS_VIEW_ADDRESS 1

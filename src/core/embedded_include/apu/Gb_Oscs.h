@@ -233,3 +233,4 @@ inline void Gb_Wave::write(unsigned addr, uint8_t data)
 }
 
 #endif
+#endif

@@ -18,9 +18,6 @@
 // along with this program; if not, write to the Free Software Foundation,
 // Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-#ifndef VBAM_CORE_BASE_SOUND_DRIVER_H_
-#define VBAM_CORE_BASE_SOUND_DRIVER_H_
-
 #include <cstdint>
 
 // Sound driver abstract interface for the core to use to output sound.
