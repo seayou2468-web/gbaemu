@@ -80,9 +80,6 @@ void GBAMemoryInit(struct GBA* gba) {
 	GBADMAInit(gba);
 	GBAUnlCartInit(gba);
 
-	gba->memory.ereader.p = gba;
-	gba->memory.ereader.dots = NULL;
-	memset(gba->memory.ereader.cards, 0, sizeof(gba->memory.ereader.cards));
 }
 
 void GBAMemoryDeinit(struct GBA* gba) {
@@ -97,7 +94,6 @@ void GBAMemoryDeinit(struct GBA* gba) {
 		mappedMemoryFree(gba->memory.agbPrintBufferBackup, GBA_SIZE_AGB_PRINT);
 	}
 
-	GBACartEReaderDeinit(&gba->memory.ereader);
 }
 
 void GBAMemoryReset(struct GBA* gba) {
@@ -133,7 +129,6 @@ void GBAMemoryReset(struct GBA* gba) {
 	}
 
 	GBASavedataReset(&gba->memory.savedata);
-	GBAHardwareReset(&gba->memory.hw);
 	GBADMAReset(gba);
 	GBAUnlCartReset(gba);
 	memset(&gba->memory.matrix, 0, sizeof(gba->memory.matrix));
@@ -596,8 +591,6 @@ uint32_t GBALoad16(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
 		wait = memory->waitstatesNonseq16[address >> BASE_OFFSET];
 		if (memory->savedata.type == GBA_SAVEDATA_EEPROM || memory->savedata.type == GBA_SAVEDATA_EEPROM512) {
 			value = GBASavedataReadEEPROM(&memory->savedata);
-		} else if ((address & 0x0DFC0000) >= 0x0DF80000 && memory->hw.devices & HW_EREADER) {
-			value = GBACartEReaderRead(&memory->ereader, address);
 		} else if ((address & (GBA_SIZE_ROM0 - 2)) < memory->romSize) {
 			LOAD_16(value, address & (GBA_SIZE_ROM0 - 2), memory->rom);
 		} else if (memory->unl.type == GBA_UNL_CART_VFAME) {
@@ -708,14 +701,10 @@ uint32_t GBALoad8(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
 		if (gba->performingDMA == 1) {
 			break;
 		}
-		if (memory->hw.devices & HW_EREADER && (address & 0xE00FF80) >= 0xE00FF80) {
-			value = GBACartEReaderReadFlash(&memory->ereader, address);
-		} else if (memory->savedata.type == GBA_SAVEDATA_SRAM) {
+		if (memory->savedata.type == GBA_SAVEDATA_SRAM) {
 			value = memory->savedata.data[address & (GBA_SIZE_SRAM - 1)];
 		} else if (memory->savedata.type == GBA_SAVEDATA_FLASH512 || memory->savedata.type == GBA_SAVEDATA_FLASH1M) {
 			value = GBASavedataReadFlash(&memory->savedata, address);
-		} else if (memory->hw.devices & HW_TILT) {
-			value = GBAHardwareTiltRead(&memory->hw, address & OFFSET_MASK);
 		} else if (memory->savedata.type == GBA_SAVEDATA_SRAM512) {
 			value = memory->savedata.data[address & (GBA_SIZE_SRAM512 - 1)];
 		} else {
@@ -912,15 +901,6 @@ void GBAStore16(struct ARMCore* cpu, uint32_t address, int16_t value, int* cycle
 		}
 		break;
 	case GBA_REGION_ROM0:
-		if (IS_GPIO_REGISTER(address & 0xFFFFFE)) {
-			if (!(memory->hw.devices & HW_GPIO)) {
-				mLOG(GBA_HW, WARN, "Write to GPIO address %08X on cartridge without GPIO", address);
-				break;
-			}
-			uint32_t reg = address & 0xFFFFFE;
-			GBAHardwareGPIOWrite(&memory->hw, reg, value);
-			break;
-		}
 		if (memory->matrix.size && (address & 0x01FFFF00) == 0x00800100) {
 			GBAMatrixWrite16(gba, address & 0x3C, value);
 			break;
@@ -968,10 +948,7 @@ void GBAStore16(struct ARMCore* cpu, uint32_t address, int16_t value, int* cycle
 		mLOG(GBA_MEM, GAME_ERROR, "Bad cartridge Store16: 0x%08X", address);
 		break;
 	case GBA_REGION_ROM2_EX:
-		if ((address & 0x0DFC0000) >= 0x0DF80000 && memory->hw.devices & HW_EREADER) {
-			GBACartEReaderWrite(&memory->ereader, address, value);
-			break;
-		} else if (memory->savedata.type == GBA_SAVEDATA_AUTODETECT) {
+		if (memory->savedata.type == GBA_SAVEDATA_AUTODETECT) {
 			mLOG(GBA_MEM, INFO, "Detected EEPROM savegame");
 			GBASavedataInitEEPROM(&memory->savedata);
 		}
@@ -1054,9 +1031,7 @@ void GBAStore8(struct ARMCore* cpu, uint32_t address, int8_t value, int* cycleCo
 				GBASavedataInitSRAM(&memory->savedata);
 			}
 		}
-		if (memory->hw.devices & HW_EREADER && (address & 0xE00FF80) >= 0xE00FF80) {
-			GBACartEReaderWriteFlash(&memory->ereader, address, value);
-		} else if (memory->savedata.type == GBA_SAVEDATA_FLASH512 || memory->savedata.type == GBA_SAVEDATA_FLASH1M) {
+		if (memory->savedata.type == GBA_SAVEDATA_FLASH512 || memory->savedata.type == GBA_SAVEDATA_FLASH1M) {
 			GBASavedataWriteFlash(&memory->savedata, address, value);
 		} else if (memory->savedata.type == GBA_SAVEDATA_SRAM) {
 			if (memory->unl.type) {
@@ -1065,8 +1040,6 @@ void GBAStore8(struct ARMCore* cpu, uint32_t address, int8_t value, int* cycleCo
 				memory->savedata.data[address & (GBA_SIZE_SRAM - 1)] = value;
 			}
 			memory->savedata.dirty |= mSAVEDATA_DIRT_NEW;
-		} else if (memory->hw.devices & HW_TILT) {
-			GBAHardwareTiltWrite(&memory->hw, address & OFFSET_MASK, value);
 		} else if (memory->savedata.type == GBA_SAVEDATA_SRAM512) {
 			memory->savedata.data[address & (GBA_SIZE_SRAM512 - 1)] = value;
 			memory->savedata.dirty |= mSAVEDATA_DIRT_NEW;
@@ -1870,6 +1843,49 @@ int32_t GBAMemoryStallVRAM(struct GBA* gba, int32_t wait, int extra) {
 	return stall;
 }
 
+size_t toPow2(size_t v) {
+	if (!v) {
+		return 1;
+	}
+	--v;
+	for (size_t shift = 1; shift < sizeof(size_t) * 8; shift <<= 1) {
+		v |= v >> shift;
+	}
+	return v + 1;
+}
+
+unsigned popcount32(uint32_t v) {
+	unsigned c = 0;
+	while (v) {
+		c += v & 1U;
+		v >>= 1;
+	}
+	return c;
+}
+
+void GBAMatrixWrite(struct GBA* gba, uint32_t reg, uint32_t value) {
+	if (!gba) {
+		return;
+	}
+	uint32_t masked = reg & 0x3C;
+	uint16_t lo = value & 0xFFFF;
+	uint16_t hi = (value >> 16) & 0xFFFF;
+	GBAMatrixWrite16(gba, masked, lo);
+	GBAMatrixWrite16(gba, masked + 2, hi);
+}
+
+void GBAMatrixWrite16(struct GBA* gba, uint32_t reg, uint16_t value) {
+	if (!gba) {
+		return;
+	}
+	uint32_t offset = (reg & 0x3C) >> 1;
+	uint16_t* matrixBase = &gba->memory.matrix.bg[0][0];
+	size_t entries = sizeof(gba->memory.matrix) / sizeof(uint16_t);
+	if (offset < entries) {
+		matrixBase[offset] = value;
+	}
+}
+
 void GBAMemorySerialize(const struct GBAMemory* memory, struct GBASerializedState* state) {
 	memcpy(state->wram, memory->wram, GBA_SIZE_EWRAM);
 	memcpy(state->iwram, memory->iwram, GBA_SIZE_IWRAM);
@@ -1950,4 +1966,3 @@ static int16_t _agbPrintLoad(struct GBA* gba, uint32_t address) {
 	}
 	return value;
 }
-

@@ -136,10 +136,16 @@ int32_t mTimingCurrentTime(const struct mTiming* timing) {
 	return timing->masterCycles - *timing->relativeCycles;
 }
 
+int32_t mTimingUntil(const struct mTiming* timing, const struct mTimingEvent* event) {
+	if (!timing || !event) {
+		return INT_MAX;
+	}
+	return event->when - mTimingCurrentTime(timing);
+}
+
 int32_t mTimingNextEvent(const struct mTiming* timing) {
 	if (!timing->root) {
 		return INT_MAX;
 	}
 	return timing->root->when - mTimingCurrentTime(timing);
 }
-

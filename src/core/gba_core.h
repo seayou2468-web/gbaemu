@@ -98,15 +98,9 @@ enum GBASIOJOYCommand {
 };
 
 struct GBASIO;
-struct GBASIOPlayer;
 struct mKeyCallback {
 	uint16_t (*readKeys)(struct mKeyCallback*);
 	bool requireOpposingDirections;
-};
-
-struct GBASIOPlayerKeyCallback {
-	struct mKeyCallback d;
-	struct GBASIOPlayer* p;
 };
 
 struct GBASIODriver {
@@ -129,15 +123,6 @@ struct GBASIODriver {
 	uint32_t (*driverId)(struct GBASIODriver*);
 	bool (*loadState)(struct GBASIODriver*, const void*, size_t);
 	void (*saveState)(struct GBASIODriver*, void**, size_t*);
-};
-
-struct GBASIOPlayer {
-	struct GBASIODriver d;
-	struct GBASIOPlayerKeyCallback callback;
-	struct GBA* p;
-	int inputsPosted;
-	struct mKeyCallback* oldCallback;
-	int txPosition;
 };
 
 struct GBA;
@@ -1091,7 +1076,6 @@ struct GBASIO {
 	uint16_t siocnt;
 	enum GBASIOMode mode;
 	struct mTimingEvent completeEvent;
-	struct GBASIOPlayer gbp;
 };
 
 void GBASIOSetDriver(struct GBASIO* sio, struct GBASIODriver* driver);
@@ -1312,9 +1296,6 @@ enum {
 #ifndef RCNT_INITIAL
 #define RCNT_INITIAL 0x8000
 #endif
-
-void GBASIOPlayerInit(struct GBASIOPlayer* player);
-void GBASIOPlayerReset(struct GBASIOPlayer* player);
 
 static inline uint16_t GBASIORegisterRCNTSetSi(uint16_t v, bool si) { return si ? (uint16_t) (v | 0x0004) : (uint16_t) (v & ~0x0004); }
 static inline uint16_t GBASIORegisterRCNTFillSc(uint16_t v) { return (uint16_t) (v | 0x0002); }

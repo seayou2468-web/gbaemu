@@ -88,9 +88,6 @@ void GBASIOInit(struct GBASIO* sio) {
 	sio->completeEvent.callback = _sioFinish;
 	sio->completeEvent.priority = 0x80;
 
-	sio->gbp.p = sio->p;
-	GBASIOPlayerInit(&sio->gbp);
-
 	GBASIOReset(sio);
 }
 
@@ -109,7 +106,6 @@ void GBASIOReset(struct GBASIO* sio) {
 	sio->mode = -1;
 	_switchMode(sio);
 
-	GBASIOPlayerReset(&sio->gbp);
 }
 
 void GBASIOSetDriver(struct GBASIO* sio, struct GBASIODriver* driver) {

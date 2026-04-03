@@ -51,11 +51,6 @@ static const struct GBACartridgeOverride _overrides[] = {
 	{ "V49E", GBA_SAVEDATA_SRAM, HW_RUMBLE, GBA_IDLE_LOOP_NONE },
 	{ "V49P", GBA_SAVEDATA_SRAM, HW_RUMBLE, GBA_IDLE_LOOP_NONE },
 
-	// e-Reader
-	{ "PEAJ", GBA_SAVEDATA_FLASH1M, HW_EREADER, GBA_IDLE_LOOP_NONE },
-	{ "PSAJ", GBA_SAVEDATA_FLASH1M, HW_EREADER, GBA_IDLE_LOOP_NONE },
-	{ "PSAE", GBA_SAVEDATA_FLASH1M, HW_EREADER, GBA_IDLE_LOOP_NONE },
-
 	// Final Fantasy Tactics Advance
 	{ "AFXE", GBA_SAVEDATA_FLASH512, HW_NONE, 0x8000428 },
 
@@ -335,39 +330,7 @@ void GBAOverrideApply(struct GBA* gba, const struct GBACartridgeOverride* overri
 	gba->vbaBugCompat = override->vbaBugCompat;
 
 	if (override->hardware != HW_NO_OVERRIDE) {
-		GBAHardwareClear(&gba->memory.hw);
-		gba->memory.hw.devices &= ~HW_NO_OVERRIDE;
-
-		if (override->hardware & HW_RTC) {
-			GBAHardwareInitRTC(&gba->memory.hw);
-			GBASavedataRTCRead(&gba->memory.savedata);
-		}
-
-		if (override->hardware & HW_GYRO) {
-			GBAHardwareInitGyro(&gba->memory.hw);
-		}
-
-		if (override->hardware & HW_RUMBLE) {
-			GBAHardwareInitRumble(&gba->memory.hw);
-		}
-
-		if (override->hardware & HW_LIGHT_SENSOR) {
-			GBAHardwareInitLight(&gba->memory.hw);
-		}
-
-		if (override->hardware & HW_TILT) {
-			GBAHardwareInitTilt(&gba->memory.hw);
-		}
-
-		if (override->hardware & HW_EREADER) {
-			GBACartEReaderInit(&gba->memory.ereader);
-		}
-
-		if (override->hardware & HW_GB_PLAYER_DETECTION) {
-			gba->memory.hw.devices |= HW_GB_PLAYER_DETECTION;
-		} else {
-			gba->memory.hw.devices &= ~HW_GB_PLAYER_DETECTION;
-		}
+		/* Hardware expansion support removed intentionally. */
 	}
 
 	if (override->idleLoop != GBA_IDLE_LOOP_NONE) {
@@ -440,4 +403,3 @@ void GBAOverrideApplyDefaults(struct GBA* gba, const struct Configuration* overr
 		}
 	}
 }
-
