@@ -1,7 +1,3 @@
-#if !defined(__cplusplus)
-#include "../gba_core.h"
-/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
-#else
 #include "../gba_core.h"
 #include <string.h>
 #include <stdint.h>
@@ -414,4 +410,3 @@ const ThumbInstruction _thumbTable[0x400] = {
 	DECLARE_THUMB_EMITTER_BLOCK(_ThumbInstruction)
 };
 
-#endif

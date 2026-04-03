@@ -1,7 +1,3 @@
-#if !defined(__cplusplus)
-#include "../gba_core.h"
-/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
-#else
 #include "../gba_core.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -83,6 +79,7 @@ static void _switchMode(struct GBASIO* sio) {
 	}
 }
 
+void GBASIOInit(struct GBASIO* sio) {
 	sio->mode = (enum GBASIOMode) -1;
 	sio->driver = NULL;
 
@@ -370,7 +367,8 @@ void GBASIOMultiplayerFinishTransfer(struct GBASIO* sio, uint16_t data[4], uint3
 	sio->p->memory.io[GBA_REG(SIOMULTI2)] = data[2];
 	sio->p->memory.io[GBA_REG(SIOMULTI3)] = data[3];
 
-	struct GBASIO* sio = (struct GBASIO*) user;
+	sio->siocnt = GBASIOMultiplayerClearBusy(sio->siocnt);
+	sio->siocnt = GBASIOMultiplayerSetId(sio->siocnt, id);
 
 	sio->rcnt = GBASIORegisterRCNTFillSc(sio->rcnt);
 
@@ -436,8 +434,5 @@ int GBASIOJOYSendCommand(struct GBASIODriver* sio, enum GBASIOJOYCommand command
 	UNUSED(data);
 	return -1;
 }
-
-#endif
-
 
 #endif

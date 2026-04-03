@@ -1,7 +1,3 @@
-#if !defined(__cplusplus)
-#include "../gba_core.h"
-/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
-#else
 #include "../gba_core.h"
 #include <string.h>
 #include <stdint.h>
@@ -150,4 +146,3 @@ void GBATimerWriteTMCNT_HI(struct GBA* gba, int timer, uint16_t control) {
 	}
 }
 
-#endif

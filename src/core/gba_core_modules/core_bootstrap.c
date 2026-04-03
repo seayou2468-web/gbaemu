@@ -1,7 +1,3 @@
-#if !defined(__cplusplus)
-#include "../gba_core.h"
-/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
-#else
 #include "../gba_core.h"
 #include <string.h>
 #include <stdint.h>
@@ -166,26 +162,13 @@ static const struct mCoreRegisterInfo _GBARegisters[] = {
 	{ "spsr_und", NULL, 4, 0xF00000FF, mCORE_REGISTER_FLAGS },
 };
 
-struct mVideoLogContext;
-
 #define LOGO_CRC32 0xD0BEB55E
 
 struct GBACore {
 	struct mCore d;
 	struct GBAVideoRenderer dummyRenderer;
 	struct GBAVideoSoftwareRenderer renderer;
-#ifdef BUILD_GLES3
-	struct GBAVideoGLRenderer glRenderer;
-#endif
-#ifndef MINIMAL_CORE
-	struct GBAVideoProxyRenderer vlProxy;
-	struct GBAVideoProxyRenderer proxyRenderer;
-	struct mVideoLogContext* logContext;
-#endif
 	struct mCoreCallbacks logCallbacks;
-#ifndef DISABLE_THREADING
-	struct mVideoThreadProxy threadProxy;
-#endif
 	struct mCPUComponent* components[CPU_COMPONENT_MAX];
 	const struct Configuration* overrides;
 	struct GBACartridgeOverride override;
@@ -241,9 +224,6 @@ static bool _GBACoreInit(struct mCore* core) {
 	gbacore->overrides = NULL;
 	gbacore->debuggerPlatform = NULL;
 	gbacore->cheatDevice = NULL;
-#ifndef MINIMAL_CORE
-	gbacore->logContext = NULL;
-#endif
 	gbacore->nMemoryBlocks = 0;
 	gbacore->memoryBlockType = -2;
 
@@ -260,19 +240,6 @@ static bool _GBACoreInit(struct mCore* core) {
 
 	GBAVideoSoftwareRendererCreate(&gbacore->renderer);
 	gbacore->renderer.outputBuffer = NULL;
-
-#ifdef BUILD_GLES3
-	GBAVideoGLRendererCreate(&gbacore->glRenderer);
-	gbacore->glRenderer.outputTex = -1;
-#endif
-
-#ifndef DISABLE_THREADING
-	mVideoThreadProxyCreate(&gbacore->threadProxy);
-#endif
-#ifndef MINIMAL_CORE
-	gbacore->vlProxy.logger = NULL;
-	gbacore->proxyRenderer.logger = NULL;
-#endif
 
 #if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	mDirectorySetInit(&core->dirs);
@@ -303,16 +270,8 @@ static enum mPlatform _GBACorePlatform(const struct mCore* core) {
 
 static bool _GBACoreSupportsFeature(const struct mCore* core, enum mCoreFeature feature) {
 	UNUSED(core);
-	switch (feature) {
-	case mCORE_FEATURE_OPENGL:
-#ifdef BUILD_GLES3
-		return true;
-#else
-		return false;
-#endif
-	default:
-		return false;
-	}
+	UNUSED(feature);
+	return false;
 }
 
 static void _GBACoreSetSync(struct mCore* core, struct mCoreSync* sync) {
@@ -321,142 +280,14 @@ static void _GBACoreSetSync(struct mCore* core, struct mCoreSync* sync) {
 }
 
 static void _GBACoreLoadConfig(struct mCore* core, const struct mCoreConfig* config) {
-	struct GBA* gba = core->board;
-	if (core->opts.mute) {
-		gba->audio.masterVolume = 0;
-	} else {
-		gba->audio.masterVolume = core->opts.volume;
-	}
-	gba->video.frameskip = core->opts.frameskip;
-
-#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
-	struct GBACore* gbacore = (struct GBACore*) core;
-	gbacore->overrides = mCoreConfigGetOverridesConst(config);
-#endif
-
-	const char* idleOptimization = mCoreConfigGetValue(config, "idleOptimization");
-	if (idleOptimization) {
-		if (strcasecmp(idleOptimization, "ignore") == 0) {
-			gba->idleOptimization = IDLE_LOOP_IGNORE;
-		} else if (strcasecmp(idleOptimization, "remove") == 0) {
-			gba->idleOptimization = IDLE_LOOP_REMOVE;
-		} else if (strcasecmp(idleOptimization, "detect") == 0) {
-			if (gba->idleLoop == GBA_IDLE_LOOP_NONE) {
-				gba->idleOptimization = IDLE_LOOP_DETECT;
-			} else {
-				gba->idleOptimization = IDLE_LOOP_REMOVE;
-			}
-		}
-	}
-
-	mCoreConfigGetBoolValue(config, "allowOpposingDirections", &gba->allowOpposingDirections);
-
-	mCoreConfigCopyValue(&core->config, config, "allowOpposingDirections");
-	mCoreConfigCopyValue(&core->config, config, "gba.bios");
-	mCoreConfigCopyValue(&core->config, config, "gba.forceGbp");
-	mCoreConfigCopyValue(&core->config, config, "vbaBugCompat");
-
-#ifndef DISABLE_THREADING
-	mCoreConfigCopyValue(&core->config, config, "threadedVideo");
-#endif
-	mCoreConfigCopyValue(&core->config, config, "hwaccelVideo");
-	mCoreConfigCopyValue(&core->config, config, "videoScale");
+	UNUSED(core);
+	UNUSED(config);
 }
 
 static void _GBACoreReloadConfigOption(struct mCore* core, const char* option, const struct mCoreConfig* config) {
-	struct GBA* gba = core->board;
-	if (!config) {
-		config = &core->config;
-	}
-
-	if (!option) {
-		// Reload options from opts
-		if (core->opts.mute) {
-			gba->audio.masterVolume = 0;
-		} else {
-			gba->audio.masterVolume = core->opts.volume;
-		}
-		gba->video.frameskip = core->opts.frameskip;
-		return;
-	}
-
-	if (strcmp("mute", option) == 0) {
-		if (mCoreConfigGetBoolValue(config, "mute", &core->opts.mute)) {
-			if (core->opts.mute) {
-				gba->audio.masterVolume = 0;
-			} else {
-				gba->audio.masterVolume = core->opts.volume;
-			}
-		}
-		return;
-	}
-	if (strcmp("volume", option) == 0) {
-		if (mCoreConfigGetIntValue(config, "volume", &core->opts.volume) && !core->opts.mute) {
-			gba->audio.masterVolume = core->opts.volume;
-		}
-		return;
-	}
-	if (strcmp("frameskip", option) == 0) {
-		if (mCoreConfigGetIntValue(config, "frameskip", &core->opts.frameskip)) {
-			gba->video.frameskip = core->opts.frameskip;
-		}
-		return;
-	}
-	if (strcmp("allowOpposingDirections", option) == 0) {
-		if (config != &core->config) {
-			mCoreConfigCopyValue(&core->config, config, "allowOpposingDirections");
-		}
-		mCoreConfigGetBoolValue(config, "allowOpposingDirections", &gba->allowOpposingDirections);
-		return;
-	}
-
-	struct GBACore* gbacore = (struct GBACore*) core;
-#ifdef BUILD_GLES3
-	if (strcmp("videoScale", option) == 0) {
-		if (config != &core->config) {
-			mCoreConfigCopyValue(&core->config, config, "videoScale");
-		}
-		bool value;
-		if (gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetBoolValue(&core->config, "hwaccelVideo", &value) && value) {
-			int scale;
-			mCoreConfigGetIntValue(config, "videoScale", &scale);
-			GBAVideoGLRendererSetScale(&gbacore->glRenderer, scale);
-		}
-		return;
-	}
-#endif
-	if (strcmp("hwaccelVideo", option) == 0) {
-		struct GBAVideoRenderer* renderer = NULL;
-		if (gbacore->renderer.outputBuffer) {
-			renderer = &gbacore->renderer.d;
-		}
-#ifdef BUILD_GLES3
-		bool value;
-		if (gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetBoolValue(&core->config, "hwaccelVideo", &value) && value) {
-			mCoreConfigGetIntValue(&core->config, "videoScale", &gbacore->glRenderer.scale);
-			renderer = &gbacore->glRenderer.d;
-		} else {
-			gbacore->glRenderer.scale = 1;
-		}
-#endif
-#ifndef MINIMAL_CORE
-		if (renderer && core->videoLogger) {
-			GBAVideoProxyRendererCreate(&gbacore->proxyRenderer, renderer, core->videoLogger);
-			renderer = &gbacore->proxyRenderer.d;
-		}
-#endif
-		if (renderer) {
-			GBAVideoAssociateRenderer(&gba->video, renderer);
-		}
-	}
-
-#ifndef MINIMAL_CORE
-	if (strcmp("threadedVideo.flushScanline", option) == 0) {
-		int flushScanline = -1;
-		mCoreConfigGetIntValue(config, "threadedVideo.flushScanline", &flushScanline);
-		gbacore->proxyRenderer.flushScanline = flushScanline;
-	}
-#endif
+	UNUSED(core);
+	UNUSED(option);
+	UNUSED(config);
 }
 
 static void _GBACoreSetOverride(struct mCore* core, const void* override) {
@@ -472,29 +303,13 @@ static void _GBACoreBaseVideoSize(const struct mCore* core, unsigned* width, uns
 }
 
 static void _GBACoreCurrentVideoSize(const struct mCore* core, unsigned* width, unsigned* height) {
-	int scale = 1;
-#ifdef BUILD_GLES3
-	const struct GBACore* gbacore = (const struct GBACore*) core;
-	if (gbacore->glRenderer.outputTex != (unsigned) -1) {
-		scale = gbacore->glRenderer.scale;
-	}
-#else
 	UNUSED(core);
-#endif
-
-	*width = GBA_VIDEO_HORIZONTAL_PIXELS * scale;
-	*height = GBA_VIDEO_VERTICAL_PIXELS * scale;
+	*width = GBA_VIDEO_HORIZONTAL_PIXELS;
+	*height = GBA_VIDEO_VERTICAL_PIXELS;
 }
 
 static unsigned _GBACoreVideoScale(const struct mCore* core) {
-#ifdef BUILD_GLES3
-	const struct GBACore* gbacore = (const struct GBACore*) core;
-	if (gbacore->glRenderer.outputTex != (unsigned) -1) {
-		return gbacore->glRenderer.scale;
-	}
-#else
 	UNUSED(core);
-#endif
 	return 1;
 }
 
@@ -512,14 +327,8 @@ static void _GBACoreSetVideoBuffer(struct mCore* core, mColor* buffer, size_t st
 }
 
 static void _GBACoreSetVideoGLTex(struct mCore* core, unsigned texid) {
-#ifdef BUILD_GLES3
-	struct GBACore* gbacore = (struct GBACore*) core;
-	gbacore->glRenderer.outputTex = texid;
-	gbacore->glRenderer.outputTexDirty = true;
-#else
 	UNUSED(core);
 	UNUSED(texid);
-#endif
 }
 
 static void _GBACoreGetPixels(struct mCore* core, const void** buffer, size_t* stride) {
@@ -685,109 +494,17 @@ static void _GBACoreChecksum(const struct mCore* core, void* data, enum mCoreChe
 static void _GBACoreReset(struct mCore* core) {
 	struct GBACore* gbacore = (struct GBACore*) core;
 	struct GBA* gba = (struct GBA*) core->board;
-	bool value;
-	UNUSED(value);
-	if (gbacore->renderer.outputBuffer
-#ifdef BUILD_GLES3
-	    || gbacore->glRenderer.outputTex != (unsigned) -1
-#endif
-	) {
-		struct GBAVideoRenderer* renderer = NULL;
-		if (gbacore->renderer.outputBuffer) {
-			renderer = &gbacore->renderer.d;
-		}
-#ifdef BUILD_GLES3
-		if (gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetBoolValue(&core->config, "hwaccelVideo", &value) && value) {
-			mCoreConfigGetIntValue(&core->config, "videoScale", &gbacore->glRenderer.scale);
-			renderer = &gbacore->glRenderer.d;
-		} else {
-			gbacore->glRenderer.scale = 1;
-		}
-#endif
-#ifndef DISABLE_THREADING
-		if (mCoreConfigGetBoolValue(&core->config, "threadedVideo", &value) && value) {
-			if (!core->videoLogger) {
-				core->videoLogger = &gbacore->threadProxy.d;
-			}
-		}
-#endif
-#ifndef MINIMAL_CORE
-		if (renderer && core->videoLogger) {
-			GBAVideoProxyRendererCreate(&gbacore->proxyRenderer, renderer, core->videoLogger);
-			renderer = &gbacore->proxyRenderer.d;
-
-			int flushScanline = -1;
-			mCoreConfigGetIntValue(&core->config, "threadedVideo.flushScanline", &flushScanline);
-			gbacore->proxyRenderer.flushScanline = flushScanline;
-		}
-#endif
-		if (renderer) {
-			GBAVideoAssociateRenderer(&gba->video, renderer);
-		}
+	if (gbacore->renderer.outputBuffer) {
+		GBAVideoAssociateRenderer(&gba->video, &gbacore->renderer.d);
 	}
 
-	bool forceGbp = false;
-	bool vbaBugCompat = true;
-	mCoreConfigGetBoolValue(&core->config, "gba.forceGbp", &forceGbp);
-	mCoreConfigGetBoolValue(&core->config, "vbaBugCompat", &vbaBugCompat);
-	if (!forceGbp) {
-		gba->memory.hw.devices &= ~HW_GB_PLAYER_DETECTION;
-	}
+	gba->memory.hw.devices &= ~HW_GB_PLAYER_DETECTION;
 	if (gbacore->hasOverride) {
 		GBAOverrideApply(gba, &gbacore->override);
 	} else {
 		GBAOverrideApplyDefaults(gba, gbacore->overrides);
 	}
-	if (forceGbp) {
-		gba->memory.hw.devices |= HW_GB_PLAYER_DETECTION;
-	}
-	if (!vbaBugCompat) {
-		gba->vbaBugCompat = false;
-	}
 	gbacore->memoryBlockType = -2;
-
-#ifdef ENABLE_VFS
-	if (!gba->biosVf && core->opts.useBios) {
-		struct VFile* bios = NULL;
-		bool found = false;
-		if (core->opts.bios) {
-			bios = VFileOpen(core->opts.bios, O_RDONLY);
-			if (bios && GBAIsBIOS(bios)) {
-				found = true;
-			} else if (bios) {
-				bios->close(bios);
-				bios = NULL;
-			}
-		}
-		if (!found) {
-			const char* configPath = mCoreConfigGetValue(&core->config, "gba.bios");
-			if (configPath) {
-				bios = VFileOpen(configPath, O_RDONLY);
-			}
-			if (bios && GBAIsBIOS(bios)) {
-				found = true;
-			} else if (bios) {
-				bios->close(bios);
-				bios = NULL;
-			}
-		}
-		if (!found) {
-			char path[PATH_MAX];
-			mCoreConfigDirectory(path, PATH_MAX);
-			strncat(path, PATH_SEP "gba_bios.bin", PATH_MAX - strlen(path) - 1);
-			bios = VFileOpen(path, O_RDONLY);
-			if (bios && GBAIsBIOS(bios)) {
-				found = true;
-			} else if (bios) {
-				bios->close(bios);
-				bios = NULL;
-			}
-		}
-		if (found && bios) {
-			GBALoadBIOS(gba, bios);
-		}
-	}
-#endif
 
 	ARMReset(core->cpu);
 	bool forceSkip = gba->mbVf || (core->opts.skipBios && (gba->romVf || gba->memory.rom));
@@ -928,14 +645,17 @@ static void _GBACoreAddKeys(struct mCore* core, uint32_t keys) {
 
 static void _GBACoreClearKeys(struct mCore* core, uint32_t keys) {
 	struct GBA* gba = core->board;
-	UNUSED(core);
-	UNUSED(type);
-	UNUSED(periph);
+	gba->keysActive &= ~keys;
+	GBATestKeypadIRQ(gba);
 }
 
-	UNUSED(core);
-	UNUSED(type);
-	return NULL;
+static uint32_t _GBACoreGetKeys(struct mCore* core) {
+	struct GBA* gba = core->board;
+	return gba->keysActive;
+}
+
+static void _GBACoreSetPeripheral(struct mCore* core, int type, void* periph) {
+	struct GBA* gba = core->board;
 	switch (type) {
 	case mPERIPH_ROTATION:
 		gba->rotationSource = periph;
@@ -1008,66 +728,31 @@ static uint32_t _GBACoreRawRead8(struct mCore* core, uint32_t address, int segme
 static uint32_t _GBACoreRawRead16(struct mCore* core, uint32_t address, int segment) {
 	UNUSED(segment);
 	struct ARMCore* cpu = core->cpu;
-	UNUSED(core);
-	*blocks = NULL;
-	return 0;
-	UNUSED(core);
-	UNUSED(id);
-	if (sizeOut) {
-		*sizeOut = 0;
-	return NULL;
-	*list = NULL;
-	return 0;
-	UNUSED(core);
-	UNUSED(name);
-	UNUSED(out);
-	return false;
-	UNUSED(core);
-	UNUSED(name);
-	UNUSED(in);
-	return false;
-		return false;
-	case 's':
-	case 'S':
-		if (strcmp(name, "sp") == 0 || strcmp(name, "SP") == 0) {
-			cpu->gprs[ARM_SP] = value;
-			return true;
-		}
-		// TODO: SPSR
-		return false;
-	case 'l':
-	case 'L':
-		if (strcmp(name, "lr") == 0 || strcmp(name, "LR") == 0) {
-			cpu->gprs[ARM_LR] = value;
-			return true;
-		}
-		return false;
-	case 'p':
-	case 'P':
-		if (strcmp(name, "pc") == 0 || strcmp(name, "PC") == 0) {
-			name = "15";
-			break;
-		}
-		return false;
-	default:
-		return false;
-	}
+	return GBAView16(cpu, address);
+}
 
-	char* parseEnd;
-	errno = 0;
-	unsigned long regId = strtoul(name, &parseEnd, 10);
-	if (errno || regId > 15 || *parseEnd) {
-		return false;
-	}
-	cpu->gprs[regId] = value;
-	if (regId == ARM_PC) {
-		if (cpu->cpsr.t) {
-			ThumbWritePC(cpu);
-		} else {
-			ARMWritePC(cpu);
-		}
-	}
-	return true;
+static uint32_t _GBACoreRawRead32(struct mCore* core, uint32_t address, int segment) {
+	UNUSED(segment);
+	struct ARMCore* cpu = core->cpu;
+	return GBAView32(cpu, address);
+}
+
+static void _GBACoreRawWrite8(struct mCore* core, uint32_t address, int segment, uint8_t value) {
+	UNUSED(segment);
+	struct ARMCore* cpu = core->cpu;
+	GBAWrite8(cpu, address, value);
+}
+
+static void _GBACoreRawWrite16(struct mCore* core, uint32_t address, int segment, uint16_t value) {
+	UNUSED(segment);
+	struct ARMCore* cpu = core->cpu;
+	GBAWrite16(cpu, address, value);
+}
+
+static void _GBACoreRawWrite32(struct mCore* core, uint32_t address, int segment, uint32_t value) {
+	UNUSED(segment);
+	struct ARMCore* cpu = core->cpu;
+	GBAWrite32(cpu, address, value);
 }
 
 static struct mCheatDevice* _GBACoreCheatDevice(struct mCore* core) {
@@ -1186,35 +871,17 @@ static void _GBACoreAdjustVideoLayer(struct mCore* core, size_t id, int32_t x, i
 	case GBA_LAYER_BG3:
 		gbacore->renderer.bg[id].offsetX = x;
 		gbacore->renderer.bg[id].offsetY = y;
-#ifdef BUILD_GLES3
-		gbacore->glRenderer.oamDirty = 1;
-#endif
 		break;
 	case GBA_LAYER_WIN0:
 	case GBA_LAYER_WIN1:
 		gbacore->renderer.winN[id - GBA_LAYER_WIN0].offsetX = x;
 		gbacore->renderer.winN[id - GBA_LAYER_WIN0].offsetY = y;
-#ifdef BUILD_GLES3
-		gbacore->glRenderer.winN[id - GBA_LAYER_WIN0].offsetX = x;
-		gbacore->glRenderer.winN[id - GBA_LAYER_WIN0].offsetY = y;
-#endif
 		break;
 	default:
 		return;
 	}
 	memset(gbacore->renderer.scanlineDirty, 0xFFFFFFFF, sizeof(gbacore->renderer.scanlineDirty));
 }
-
-#ifndef MINIMAL_CORE
-static void _GBACoreStartVideoLog(struct mCore* core, struct mVideoLogContext* context) {
-	UNUSED(core);
-	UNUSED(context);
-}
-
-static void _GBACoreEndVideoLog(struct mCore* core) {
-	UNUSED(core);
-}
-#endif
 
 struct mCore* GBACoreCreate(void) {
 	struct GBACore* gbacore = malloc(sizeof(*gbacore));
@@ -1223,60 +890,7 @@ struct mCore* GBACoreCreate(void) {
 	core->cpu = NULL;
 	core->board = NULL;
 	core->debugger = NULL;
-	core->init = _GBACoreInit;
-	core->deinit = _GBACoreDeinit;
-	core->platform = _GBACorePlatform;
-	core->supportsFeature = _GBACoreSupportsFeature;
-	core->setSync = _GBACoreSetSync;
-	core->loadConfig = _GBACoreLoadConfig;
-	core->reloadConfigOption = _GBACoreReloadConfigOption;
-	core->setOverride = _GBACoreSetOverride;
-	core->baseVideoSize = _GBACoreBaseVideoSize;
-	core->currentVideoSize = _GBACoreCurrentVideoSize;
-	core->videoScale = _GBACoreVideoScale;
-	core->screenRegions = _GBACoreScreenRegions;
-	core->setVideoBuffer = _GBACoreSetVideoBuffer;
-	core->setVideoGLTex = _GBACoreSetVideoGLTex;
-	core->getPixels = _GBACoreGetPixels;
-	core->putPixels = _GBACorePutPixels;
-	core->audioSampleRate = _GBACoreAudioSampleRate;
-	core->getAudioBuffer = _GBACoreGetAudioBuffer;
-	core->setAudioBufferSize = _GBACoreSetAudioBufferSize;
-	core->getAudioBufferSize = _GBACoreGetAudioBufferSize;
-	core->addCoreCallbacks = _GBACoreAddCoreCallbacks;
-	core->clearCoreCallbacks = _GBACoreClearCoreCallbacks;
-	core->setAVStream = _GBACoreSetAVStream;
-	core->isROM = GBAIsROM;
-	core->loadROM = _GBACoreLoadROM;
-	core->loadBIOS = _GBACoreLoadBIOS;
-	core->loadSave = _GBACoreLoadSave;
-	core->loadTemporarySave = _GBACoreLoadTemporarySave;
-	core->loadPatch = _GBACoreLoadPatch;
-	core->unloadROM = _GBACoreUnloadROM;
-	core->romSize = _GBACoreROMSize;
-	core->checksum = _GBACoreChecksum;
-	core->reset = _GBACoreReset;
-	core->runFrame = _GBACoreRunFrame;
-	core->runLoop = _GBACoreRunLoop;
-	core->step = _GBACoreStep;
-	core->stateSize = _GBACoreStateSize;
-	core->loadState = _GBACoreLoadState;
-	core->saveState = _GBACoreSaveState;
-	core->loadExtraState = _GBACoreLoadExtraState;
-	core->saveExtraState = _GBACoreSaveExtraState;
-	core->setKeys = _GBACoreSetKeys;
-	core->addKeys = _GBACoreAddKeys;
-	core->clearKeys = _GBACoreClearKeys;
-	core->getKeys = _GBACoreGetKeys;
-	core->frameCounter = _GBACoreFrameCounter;
-	core->frameCycles = _GBACoreFrameCycles;
-	core->frequency = _GBACoreFrequency;
-	core->getGameInfo = _GBACoreGetGameInfo;
-	core->setPeripheral = _GBACoreSetPeripheral;
-	core->getPeripheral = _GBACoreGetPeripheral;
-	core->busRead8 = _GBACoreBusRead8;
-	core->busRead16 = _GBACoreBusRead16;
-	core->busRead32 = _GBACoreBusRead32;
+	return core;
 }
 
 static bool _GBAVLPInit(struct mCore* core) {
@@ -1307,10 +921,3 @@ static bool _GBAVLPLoadState(struct mCore* core, const void* state) {
 struct mCore* GBAVideoLogPlayerCreate(void) {
 	return false;
 }
-#else
-struct mCore* GBAVideoLogPlayerCreate(void) {
-	return false;
-}
-#endif
-
-#endif

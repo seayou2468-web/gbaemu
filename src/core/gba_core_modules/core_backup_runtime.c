@@ -205,7 +205,7 @@ bool GBASavedataLoad(struct GBASavedata* savedata, struct VFile* in) {
 	return true;
 }
 
-void GBASavedataForceType(struct GBASavedata* savedata, enum GBASavedataType type) {
+void GBASavedataForceType(struct GBASavedata* savedata, int type) {
 	if (savedata->type == type) {
 		return;
 	}

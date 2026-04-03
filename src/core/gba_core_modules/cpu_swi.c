@@ -1,7 +1,3 @@
-#if !defined(__cplusplus)
-#include "../gba_core.h"
-/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
-#else
 #include "../gba_core.h"
 #include <string.h>
 #include <stdint.h>
@@ -1075,4 +1071,3 @@ const uint8_t hleBios[GBA_SIZE_BIOS] = {
 	0x00, 0x7f, 0x00, 0x03, 0xa0, 0x7f, 0x00, 0x03, 0xe0, 0x7f, 0x00, 0x03
 };
 
-#endif
