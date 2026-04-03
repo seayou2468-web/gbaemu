@@ -257,7 +257,7 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         return;
     }
     _renderFrameFromROM(handle);
-    _setError(handle, NULL);
+    _setError(handle, "runtime core is stubbed; full game rendering backend is not linked");
 }
 
 void GBA_SetKeys(GBACoreHandle* handle, uint16_t keysPressedMask) {
