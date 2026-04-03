@@ -701,6 +701,10 @@ static void count(uint32_t opcode, int cond_res)
 #endif // !__POWERPC__
 #endif // !C_CORE
 
+#if !defined(HAVE_X86_ALU_ASM)
+#error "cpu_arm_execute.c no longer provides the C fallback path; build requires x86 ALU asm implementation."
+#endif
+
 // C core
 
 #define C_SETCOND_LOGICAL                       \

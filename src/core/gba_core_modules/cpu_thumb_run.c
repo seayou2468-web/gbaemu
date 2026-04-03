@@ -545,6 +545,10 @@ static INSN_REGPARM void thumbBreakpoint(uint32_t opcode)
 #endif
 #endif
 
+#if !((defined(__GNUC__) && (defined(__POWERPC__) || defined(__i386__) || defined(__x86_64__))) || (defined(_MSC_VER) && defined(_M_IX86)))
+#error "cpu_thumb_run.c no longer provides the C fallback path; build requires architecture-specific asm implementation."
+#endif
+
                              // C core
 #ifndef ADDCARRY
 #define ADDCARRY(a, b, c) \
