@@ -1,4 +1,6 @@
 #if defined(__cplusplus)
+#include "../../../reference implementation/gba/gba.h"
+
 void CPUInterrupt()
 {
     uint32_t PC = reg[15].I;

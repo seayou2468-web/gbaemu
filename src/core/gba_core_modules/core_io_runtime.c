@@ -1,4 +1,6 @@
 #if defined(__cplusplus)
+#include "../../../reference implementation/gba/gba.h"
+
 void gfxUpdateBG2X() {
     gfxBG2X = (BG2X_L) | ((BG2X_H & 0x07FF) << 16);
     if (BG2X_H & 0x0800) gfxBG2X |= 0xF8000000;

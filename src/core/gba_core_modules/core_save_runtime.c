@@ -1,4 +1,6 @@
 #if defined(__cplusplus)
+#include "../../../reference implementation/gba/gba.h"
+
 #ifdef __LIBRETRO__
 #include <stddef.h>
 

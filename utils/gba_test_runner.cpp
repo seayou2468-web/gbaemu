@@ -1,5 +1,6 @@
 #include "src/core/gba_core.h"
 #include <cstdio>
+#include <cstdint>
 #include <fstream>
 #include <vector>
 #include <string>
