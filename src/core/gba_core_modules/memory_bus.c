@@ -1,13 +1,13 @@
 #if defined(__cplusplus)
 // Imported from reference implementation: gbaEeprom.cpp
 /* BEGIN gbaEeprom.cpp */
-#include "../embedded_reference/gba/gbaEeprom.h"
+#include "../embedded_include/gba/gbaEeprom.h"
 
 #include <cstring>
 
-#include "../embedded_reference/base/file_util.h"
-#include "../embedded_reference/gba/gba.h"
-#include "../embedded_reference/gba/gbaEeprom.h"
+#include "../embedded_include/base/file_util.h"
+#include "../embedded_include/gba/gba.h"
+#include "../embedded_include/gba/gbaEeprom.h"
 
 extern int cpuDmaCount;
 
@@ -218,17 +218,17 @@ void eepromWrite(uint32_t /* address */, uint8_t value)
 
 // Imported from reference implementation: gbaFlash.cpp
 /* BEGIN gbaFlash.cpp */
-#include "../embedded_reference/gba/gbaFlash.h"
+#include "../embedded_include/gba/gbaFlash.h"
 
 #include <cstdio>
 #include <cstring>
 
-#include "../embedded_reference/base/file_util.h"
-#include "../embedded_reference/base/port.h"
-#include "../embedded_reference/gba/gba.h"
-#include "../embedded_reference/gba/gbaGlobals.h"
-#include "../embedded_reference/gba/gbaRtc.h"
-#include "../embedded_reference/gba/internal/gbaSram.h"
+#include "../embedded_include/base/file_util.h"
+#include "../embedded_include/base/port.h"
+#include "../embedded_include/gba/gba.h"
+#include "../embedded_include/gba/gbaGlobals.h"
+#include "../embedded_include/gba/gbaRtc.h"
+#include "../embedded_include/gba/internal/gbaSram.h"
 
 #define FLASH_READ_ARRAY 0
 #define FLASH_CMD_1 1

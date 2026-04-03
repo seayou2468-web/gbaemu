@@ -1,16 +1,16 @@
 #if defined(__cplusplus)
 // Imported from reference implementation: internal/gbaEreader.cpp
 /* BEGIN internal/gbaEreader.cpp */
-#include "../embedded_reference/gba/internal/gbaEreader.h"
+#include "../embedded_include/gba/internal/gbaEreader.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-#include "../embedded_reference/base/file_util.h"
-#include "../embedded_reference/gba/gba.h"
-#include "../embedded_reference/gba/gbaInline.h"
-#include "../embedded_reference/gba/gbaGlobals.h"
+#include "../embedded_include/base/file_util.h"
+#include "../embedded_include/gba/gba.h"
+#include "../embedded_include/gba/gbaInline.h"
+#include "../embedded_include/gba/gbaGlobals.h"
 
 char US_Ereader[19] = "CARDE READERPSAE01";
 char JAP_Ereader[19] = "CARDE READERPEAJ01";

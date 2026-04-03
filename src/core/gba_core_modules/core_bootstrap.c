@@ -1,7 +1,7 @@
 #if defined(__cplusplus)
 // Imported from reference implementation: gba.cpp
 /* BEGIN gba.cpp */
-#include "../embedded_reference/gba/gba.h"
+#include "../embedded_include/gba/gba.h"
 
 #include <cmath>
 #include <cstddef>
@@ -13,38 +13,38 @@
 #include <strings.h>
 #endif
 
-#include "../embedded_reference/base/file_util.h"
-#include "../embedded_reference/base/message.h"
-#include "../embedded_reference/base/port.h"
-#include "../embedded_reference/base/sizes.h"
-#include "../embedded_reference/base/system.h"
-#include "../embedded_reference/gba/gbaCheats.h"
-#include "../embedded_reference/gba/gbaCpu.h"
-#include "../embedded_reference/gba/gbaEeprom.h"
-#include "../embedded_reference/gba/gbaFlash.h"
-#include "../embedded_reference/gba/gbaGlobals.h"
-#include "../embedded_reference/gba/gbaGfx.h"
-#include "../embedded_reference/gba/gbaInline.h"
-#include "../embedded_reference/gba/gbaPrint.h"
-#include "../embedded_reference/gba/gbaSound.h"
-#include "../embedded_reference/gba/internal/gbaBios.h"
-#include "../embedded_reference/gba/internal/gbaEreader.h"
-#include "../embedded_reference/gba/internal/gbaSram.h"
+#include "../embedded_include/base/file_util.h"
+#include "../embedded_include/base/message.h"
+#include "../embedded_include/base/port.h"
+#include "../embedded_include/base/sizes.h"
+#include "../embedded_include/base/system.h"
+#include "../embedded_include/gba/gbaCheats.h"
+#include "../embedded_include/gba/gbaCpu.h"
+#include "../embedded_include/gba/gbaEeprom.h"
+#include "../embedded_include/gba/gbaFlash.h"
+#include "../embedded_include/gba/gbaGlobals.h"
+#include "../embedded_include/gba/gbaGfx.h"
+#include "../embedded_include/gba/gbaInline.h"
+#include "../embedded_include/gba/gbaPrint.h"
+#include "../embedded_include/gba/gbaSound.h"
+#include "../embedded_include/gba/internal/gbaBios.h"
+#include "../embedded_include/gba/internal/gbaEreader.h"
+#include "../embedded_include/gba/internal/gbaSram.h"
 
 #if defined(VBAM_ENABLE_DEBUGGER)
-#include "../embedded_reference/gba/gbaElf.h"
+#include "../embedded_include/gba/gbaElf.h"
 #endif  // defined(VBAM_ENABLE_DEBUGGER)
 
 #if !defined(NO_LINK)
-#include "../embedded_reference/gba/gbaLink.h"
+#include "../embedded_include/gba/gbaLink.h"
 #endif  // !defined(NOLINK)
 
 #if !defined(__LIBRETRO__)
-#include "../embedded_reference/base/image_util.h"
+#include "../embedded_include/base/image_util.h"
 #endif // !__LIBRETRO__
 
 #ifdef PROFILING
-#include "../embedded_reference/gba/prof/prof.h"
+#include "../embedded_include/gba/prof/prof.h"
 #endif
 
 #ifdef __GNUC__

@@ -74,16 +74,16 @@ void agbPrintFlush()
 
 // Imported from reference implementation: gbaElf.cpp
 /* BEGIN gbaElf.cpp */
-#include "../embedded_reference/gba/gbaElf.h"
+#include "../embedded_include/gba/gbaElf.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "../embedded_reference/base/message.h"
-#include "../embedded_reference/base/port.h"
-#include "../embedded_reference/gba/gba.h"
-#include "../embedded_reference/gba/gbaGlobals.h"
+#include "../embedded_include/base/message.h"
+#include "../embedded_include/base/port.h"
+#include "../embedded_include/gba/gba.h"
+#include "../embedded_include/gba/gbaGlobals.h"
 
 #define elfReadMemory(addr) \
     READ32LE((&map[(addr) >> 24].address[(addr)&map[(addr) >> 24].mask]))
