@@ -98,7 +98,7 @@ sh, shw, shalfword, int16_t short       --> signed halfword
 w, word, uint2_t                        --> word
 sw, sword, int32_t, int                 --> signed word
 */
-#include "../../../reference implementation/gba/internal/gbaBreakpoint.h"
+#include "../embedded_reference/gba/internal/gbaBreakpoint.h"
 
 #if !defined(VBAM_ENABLE_DEBUGGER)
 #error "This file should only be compiled when VBAM_ENABLE_DEBUGGER is defined."
@@ -109,8 +109,8 @@ sw, sword, int32_t, int                 --> signed word
 #include <cstdlib>
 #include <cstring>
 
-#include "../../../reference implementation/gba/gba.h"
-#include "../../../reference implementation/gba/gbaRemote.h"
+#include "../embedded_reference/gba/gba.h"
+#include "../embedded_reference/gba/gbaRemote.h"
 
 #if (defined __WIN32__ || defined _WIN32)
 #define strdup _strdup

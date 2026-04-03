@@ -1,16 +1,16 @@
 #if defined(__cplusplus)
 // Imported from reference implementation: gbaCpuArmDis.cpp
 /* BEGIN gbaCpuArmDis.cpp */
-#include "../../../reference implementation/gba/gbaCpuArmDis.h"
+#include "../embedded_reference/gba/gbaCpuArmDis.h"
 
 /************************************************************************/
 /* Arm/Thumb command set disassembler                                   */
 /************************************************************************/
 #include <cstring>
 
-#include "../../../reference implementation/base/port.h"
-#include "../../../reference implementation/gba/gba.h"
-#include "../../../reference implementation/gba/gbaElf.h"
+#include "../embedded_reference/base/port.h"
+#include "../embedded_reference/gba/gba.h"
+#include "../embedded_reference/gba/gbaElf.h"
 
 struct Opcodes {
     uint32_t mask;

@@ -1,16 +1,16 @@
 #if defined(__cplusplus)
 // Imported from reference implementation: gbaCheats.cpp
 /* BEGIN gbaCheats.cpp */
-#include "../../../reference implementation/gba/gbaCheats.h"
+#include "../embedded_reference/gba/gbaCheats.h"
 
 #include <cstdio>
 #include <cstring>
 
-#include "../../../reference implementation/base/file_util.h"
-#include "../../../reference implementation/base/message.h"
-#include "../../../reference implementation/gba/gba.h"
-#include "../../../reference implementation/gba/gbaInline.h"
-#include "../../../reference implementation/gba/gbaGlobals.h"
+#include "../embedded_reference/base/file_util.h"
+#include "../embedded_reference/base/message.h"
+#include "../embedded_reference/gba/gba.h"
+#include "../embedded_reference/gba/gbaInline.h"
+#include "../embedded_reference/gba/gbaGlobals.h"
 
 #if __STDC_WANT_SECURE_LIB__
 #define snprintf sprintf_s
@@ -2922,7 +2922,7 @@ void cheatsWriteByte(uint32_t address, uint8_t value)
 
 // Imported from reference implementation: gbaCheatSearch.cpp
 /* BEGIN gbaCheatSearch.cpp */
-#include "../../../reference implementation/gba/gbaCheatSearch.h"
+#include "../embedded_reference/gba/gbaCheatSearch.h"
 
 #include <cstdlib>
 #include <cstring>
