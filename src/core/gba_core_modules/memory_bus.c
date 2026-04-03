@@ -199,6 +199,9 @@ static void _analyzeForIdleLoop(struct GBA* gba, struct ARMCore* cpu, uint32_t a
 						case 4:
 							gba->cachedRegisters[info.op1.reg] = GBALoad32(cpu, loadAddress, 0);
 							break;
+						default:
+							gba->idleDetectionStep = -1;
+							return;
 						}
 					}
 				} else if (info.operandFormat & ARM_OPERAND_AFFECTED_1) {
@@ -281,7 +284,7 @@ static void GBASetActiveRegion(struct ARMCore* cpu, uint32_t address) {
 	switch (newRegion) {
 	case GBA_REGION_BIOS:
 		cpu->memory.accessSource = mACCESS_SYSTEM;
-		cpu->memory.activeRegion = memory->bios;
+		cpu->memory.activeRegion = (uint8_t*) memory->bios;
 		cpu->memory.activeMask = GBA_SIZE_BIOS - 1;
 		break;
 	case GBA_REGION_EWRAM:
@@ -296,22 +299,22 @@ static void GBASetActiveRegion(struct ARMCore* cpu, uint32_t address) {
 		break;
 	case GBA_REGION_PALETTE_RAM:
 		cpu->memory.accessSource = mACCESS_PROGRAM;
-		cpu->memory.activeRegion = (uint32_t*) gba->video.palette;
+		cpu->memory.activeRegion = (uint8_t*) gba->video.palette;
 		cpu->memory.activeMask = GBA_SIZE_PALETTE_RAM - 1;
 		break;
 	case GBA_REGION_VRAM:
 		cpu->memory.accessSource = mACCESS_PROGRAM;
 		if (address & 0x10000) {
-			cpu->memory.activeRegion = (uint32_t*) &gba->video.vram[0x8000];
+			cpu->memory.activeRegion = (uint8_t*) &gba->video.vram[0x8000];
 			cpu->memory.activeMask = 0x00007FFF;
 		} else {
-			cpu->memory.activeRegion = (uint32_t*) gba->video.vram;
+			cpu->memory.activeRegion = (uint8_t*) gba->video.vram;
 			cpu->memory.activeMask = 0x0000FFFF;
 		}
 		break;
 	case GBA_REGION_OAM:
 		cpu->memory.accessSource = mACCESS_PROGRAM;
-		cpu->memory.activeRegion = (uint32_t*) gba->video.oam.raw;
+		cpu->memory.activeRegion = (uint8_t*) gba->video.oam.raw;
 		cpu->memory.activeMask = GBA_SIZE_OAM - 1;
 		break;
 	case GBA_REGION_ROM0:
@@ -327,7 +330,7 @@ static void GBASetActiveRegion(struct ARMCore* cpu, uint32_t address) {
 			break;
 		}
 		if ((address & 0x00FFFFFE) == AGB_PRINT_FLUSH_ADDR && memory->agbPrintProtect == 0x20) {
-			cpu->memory.activeRegion = &_agbPrintFunc;
+			cpu->memory.activeRegion = (uint8_t*) &_agbPrintFunc;
 			cpu->memory.activeMask = sizeof(_agbPrintFunc) - 1;
 			break;
 		}
@@ -335,7 +338,7 @@ static void GBASetActiveRegion(struct ARMCore* cpu, uint32_t address) {
 	default:
 		cpu->memory.accessSource = mACCESS_UNKNOWN;
 		memory->activeRegion = -1;
-		cpu->memory.activeRegion = (uint32_t*) _deadbeef;
+		cpu->memory.activeRegion = (uint8_t*) _deadbeef;
 		cpu->memory.activeMask = 0;
 
 		if (!gba->yankedRomSize && mCoreCallbacksListSize(&gba->coreCallbacks)) {
@@ -457,7 +460,7 @@ uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
 	struct GBAMemory* memory = &gba->memory;
 	uint32_t value = 0;
 	int wait = 0;
-	char* waitstatesRegion = memory->waitstatesNonseq32;
+	uint8_t* waitstatesRegion = memory->waitstatesNonseq32;
 
 	switch (address >> BASE_OFFSET) {
 	case GBA_REGION_BIOS:
@@ -800,7 +803,7 @@ void GBAStore32(struct ARMCore* cpu, uint32_t address, int32_t value, int* cycle
 	struct GBAMemory* memory = &gba->memory;
 	int wait = 0;
 	int32_t oldValue;
-	char* waitstatesRegion = memory->waitstatesNonseq32;
+	uint8_t* waitstatesRegion = memory->waitstatesNonseq32;
 
 	switch (address >> BASE_OFFSET) {
 	case GBA_REGION_EWRAM:
@@ -1442,7 +1445,7 @@ uint32_t GBALoadMultiple(struct ARMCore* cpu, uint32_t address, int mask, enum L
 	struct GBA* gba = (struct GBA*) cpu->master;
 	struct GBAMemory* memory = &gba->memory;
 	uint32_t value;
-	char* waitstatesRegion = memory->waitstatesSeq32;
+	uint8_t* waitstatesRegion = memory->waitstatesSeq32;
 
 	int i;
 	int offset = 4;
@@ -1564,7 +1567,7 @@ uint32_t GBAStoreMultiple(struct ARMCore* cpu, uint32_t address, int mask, enum 
 	struct GBAMemory* memory = &gba->memory;
 	uint32_t value;
 	uint32_t oldValue;
-	char* waitstatesRegion = memory->waitstatesSeq32;
+	uint8_t* waitstatesRegion = memory->waitstatesSeq32;
 
 	int i;
 	int offset = 4;

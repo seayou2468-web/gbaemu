@@ -178,7 +178,8 @@ int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* re
 	int32_t x = (uint32_t) GBAObjAttributesBGetX(sprite->b) << 23;
 	x >>= 23;
 	x += renderer->objOffsetX;
-	uint16_t* vramBase = &renderer->d.vram[BASE_TILE >> 1];
+	uint16_t* vramBase = (uint16_t*) renderer->d.vram;
+	vramBase += BASE_TILE >> 1;
 	unsigned align = GBAObjAttributesAIs256Color(sprite->a) && !GBARegisterDISPCNTIsObjCharacterMapping(renderer->dispcnt);
 	unsigned charBase = (GBAObjAttributesCGetTile(sprite->c) & ~align) * 0x20;
 	unsigned maskLo = GBARegisterDISPCNTIsObjCharacterMapping(renderer->dispcnt) ? 0x7FFE : 0x3FE;

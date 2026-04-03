@@ -763,7 +763,7 @@ void GBAVideoSoftwareRendererDrawBackgroundMode0(struct GBAVideoSoftwareRenderer
 	int paletteData;
 	int tileX;
 	int tileEnd = ((length + inX) >> 3) - (inX >> 3);
-	uint16_t* vram = renderer->d.vram;
+	uint16_t* vram = (uint16_t*) renderer->d.vram;
 
 	if (background->yCache != inY >> 3) {
 		localX = 0;

@@ -451,15 +451,15 @@ void GBASwi16(struct ARMCore* cpu, int immediate) {
 		break;
 	case GBA_SWI_SQRT:
 		useStall = true;
-		cpu->gprs[0] = _Sqrt(cpu->gprs[0], &gba->biosStall);
+		cpu->gprs[0] = _Sqrt(cpu->gprs[0], (uint32_t*) &gba->biosStall);
 		break;
 	case GBA_SWI_ARCTAN:
 		useStall = true;
-		cpu->gprs[0] = _ArcTan(cpu->gprs[0], &cpu->gprs[1], &cpu->gprs[3], &gba->biosStall);
+		cpu->gprs[0] = _ArcTan(cpu->gprs[0], &cpu->gprs[1], &cpu->gprs[3], (uint32_t*) &gba->biosStall);
 		break;
 	case GBA_SWI_ARCTAN2:
 		useStall = true;
-		cpu->gprs[0] = (uint16_t) _ArcTan2(cpu->gprs[0], cpu->gprs[1], &cpu->gprs[1], &gba->biosStall);
+		cpu->gprs[0] = (uint16_t) _ArcTan2(cpu->gprs[0], cpu->gprs[1], &cpu->gprs[1], (uint32_t*) &gba->biosStall);
 		cpu->gprs[3] = 0x170;
 		break;
 	case GBA_SWI_CPU_SET:

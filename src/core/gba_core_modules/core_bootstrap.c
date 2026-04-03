@@ -599,7 +599,7 @@ static bool _GBACoreSaveExtraState(struct mCore* core, struct mStateExtdata* ext
 		item.data = malloc(item.size);
 		item.clean = free;
 		uint32_t type = gba->video.renderer->rendererId(gba->video.renderer);
-		STORE_32(type, 0, item.data);
+		STORE_32(type, 0, (void*) item.data);
 		memcpy((void*) ((uintptr_t) item.data + sizeof(uint32_t)), buffer, size);
 		mStateExtdataPut(extdata, EXTDATA_SUBSYSTEM_START + GBA_SUBSYSTEM_VIDEO_RENDERER, &item);
 	}
@@ -617,7 +617,7 @@ static bool _GBACoreSaveExtraState(struct mCore* core, struct mStateExtdata* ext
 			item.data = malloc(item.size);
 			item.clean = free;
 			uint32_t type = gba->sio.driver->driverId(gba->sio.driver);
-			STORE_32(type, 0, item.data);
+			STORE_32(type, 0, (void*) item.data);
 			memcpy((void*) ((uintptr_t) item.data + sizeof(uint32_t)), buffer, size);
 			mStateExtdataPut(extdata, EXTDATA_SUBSYSTEM_START + GBA_SUBSYSTEM_SIO_DRIVER, &item);
 		}

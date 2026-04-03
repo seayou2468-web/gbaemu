@@ -81,7 +81,7 @@ void GBAVideoReset(struct GBAVideo* video) {
 	video->frameskipCounter = 0;
 	video->stallMask = 0;
 
-	memset(video->palette, 0, sizeof(video->palette));
+	memset(video->palette, 0, GBA_SIZE_PALETTE_RAM);
 	memset(video->oam.raw, 0, sizeof(video->oam.raw));
 	memset(video->vram, 0, GBA_SIZE_VRAM);
 
