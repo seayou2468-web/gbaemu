@@ -1,4 +1,7 @@
 #include "../gba_core.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 /*
  * Compatibility shim:

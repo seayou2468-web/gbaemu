@@ -1,6 +1,9 @@
 #pragma once
 
 #include "./gba_core_c_api.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 #ifndef MGBA_EXPORT
 #define MGBA_EXPORT

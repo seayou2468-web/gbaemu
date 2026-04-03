@@ -1,5 +1,7 @@
 #include "../gba_core.h"
 #include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 /* ===== Imported/adapted from tv/unlicensed.c + tv/vfame.c ===== */
 
