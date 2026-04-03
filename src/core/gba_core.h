@@ -1775,7 +1775,12 @@ static inline bool GBAWindowControlGetBlendEnable(uint16_t control) { return GBA
 static inline bool GBARegisterDISPCNTIsObjCharacterMapping(uint16_t dispcnt) { return (dispcnt & (1 << 6)) != 0; }
 static inline bool GBARegisterDISPCNTIsObjwinEnable(uint16_t dispcnt) { return (dispcnt & (1 << 15)) != 0; }
 static inline int GBAMosaicControlGetObjH(uint16_t mosaic) { return mosaic & 0xF; }
-static inline void* anonymousMemoryMap(size_t size) { UNUSED(size); return NULL; }
+static inline void* anonymousMemoryMap(size_t size) {
+	if (size == 0) {
+		return NULL;
+	}
+	return calloc(1, size);
+}
 static inline void MutexLock(void* m) { UNUSED(m); }
 static inline void MutexUnlock(void* m) { UNUSED(m); }
 static inline void ConditionWait(void* c, void* m) { UNUSED(c); UNUSED(m); }
