@@ -13,8 +13,9 @@
 #include "./embedded_include/base/message.h"
 #include "./embedded_include/base/system.h"
 #include "./embedded_include/gba/gba.h"
-
-#include "./gba_core.cpp"
+#include "./embedded_include/gba/gbaGlobals.h"
+#include "./embedded_include/gba/gbaLink.h"
+#include "./gba_core_modules/module_forward_decls.h"
 
 namespace {
 constexpr int kFrameTicks = 280896;
