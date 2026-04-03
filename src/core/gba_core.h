@@ -1832,10 +1832,15 @@ static inline void _GBAStubProcessEvents(struct ARMCore* cpu) {
 		gba = (struct GBA*) ((uint8_t*) cpu->master - offsetof(struct GBA, d));
 	}
 	if (gba) {
-		++gba->video.frameCounter;
+		int32_t next = mTimingTick(&gba->timing, 1);
+		if (next > 0) {
+			cpu->nextEvent = next;
+		}
 	}
 	++cpu->cycles;
-	cpu->nextEvent = cpu->cycles + 1;
+	if (cpu->nextEvent <= cpu->cycles) {
+		cpu->nextEvent = cpu->cycles + 1;
+	}
 }
 static inline void _GBAMasterComponentInit(struct ARMCore* cpu, struct mCPUComponent* component) {
 	if (!cpu || !component) {

@@ -469,12 +469,7 @@ void GBA_StepFrame(GBACoreHandle* handle) {
     while (handle->gba->video.frameCounter == frameCounter &&
            mTimingCurrentTime(&handle->gba->timing) - startCycle < VIDEO_TOTAL_LENGTH + VIDEO_HORIZONTAL_LENGTH &&
            safety < 500000) {
-        if (handle->cpu->irqh.processEvents) {
-            handle->cpu->irqh.processEvents(handle->cpu);
-        } else {
-            _setError(handle, "cpu processEvents callback is not initialized");
-            return;
-        }
+        ARMRun(handle->cpu);
         ++safety;
     }
     if (safety >= 500000) {

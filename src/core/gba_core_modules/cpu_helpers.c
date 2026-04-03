@@ -210,6 +210,10 @@ static inline void ARMStep(struct ARMCore* cpu) {
 		}
 	}
 	ARMInstruction instruction = _armTable[((opcode >> 16) & 0xFF0) | ((opcode >> 4) & 0x00F)];
+	if (!instruction) {
+		cpu->cycles += ARM_PREFETCH_CYCLES;
+		return;
+	}
 	instruction(cpu, opcode);
 }
 
@@ -219,6 +223,10 @@ static inline void ThumbStep(struct ARMCore* cpu) {
 	cpu->gprs[ARM_PC] += WORD_SIZE_THUMB;
 	LOAD_16(cpu->prefetch[1], cpu->gprs[ARM_PC] & cpu->memory.activeMask, cpu->memory.activeRegion);
 	ThumbInstruction instruction = _thumbTable[opcode >> 6];
+	if (!instruction) {
+		cpu->cycles += ARM_PREFETCH_CYCLES;
+		return;
+	}
 	instruction(cpu, opcode);
 }
 
@@ -1645,4 +1653,3 @@ bool ARMDecodeThumbCombine(struct ARMInstructionInfo* info1, struct ARMInstructi
 	out->cCycles = 0;
 	return true;
 }
-
