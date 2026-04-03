@@ -53,8 +53,14 @@ public:
 
     void StepFrame() {
         ++frame_counter_;
-        if (!framebuffer_.empty()) {
-            framebuffer_[0] = 0xFF000000u | static_cast<uint32_t>(frame_counter_ & 0x00FFFFFFu);
+        for (int y = 0; y < kScreenHeight; ++y) {
+            for (int x = 0; x < kScreenWidth; ++x) {
+                const uint32_t r = static_cast<uint32_t>((x + frame_counter_) & 0xFFu);
+                const uint32_t g = static_cast<uint32_t>((y * 2 + frame_counter_) & 0xFFu);
+                const uint32_t b = static_cast<uint32_t>(((x ^ y) + (frame_counter_ * 3)) & 0xFFu);
+                framebuffer_[static_cast<size_t>(y) * static_cast<size_t>(kScreenWidth) + static_cast<size_t>(x)] =
+                    0xFF000000u | (r << 16) | (g << 8) | b;
+            }
         }
     }
 

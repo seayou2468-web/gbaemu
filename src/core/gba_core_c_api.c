@@ -113,9 +113,17 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         return;
     }
     ++handle->frame_counter;
-    if (handle->framebuffer_size > 0) {
-        uint32_t key_mix = (uint32_t)(handle->keys_pressed & 0x03FFu) << 8;
-        handle->framebuffer[0] = 0xFF000000u | ((handle->frame_counter + key_mix) & 0x00FFFFFFu);
+
+    const uint32_t key_mix = (uint32_t)(handle->keys_pressed & 0x03FFu);
+    const size_t width = 240u;
+    const size_t height = 160u;
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            const uint32_t r = (uint32_t)((x + handle->frame_counter + key_mix) & 0xFFu);
+            const uint32_t g = (uint32_t)(((y * 2u) + handle->frame_counter) & 0xFFu);
+            const uint32_t b = (uint32_t)(((x ^ y) + (handle->frame_counter * 3u) + key_mix) & 0xFFu);
+            handle->framebuffer[y * width + x] = 0xFF000000u | (r << 16) | (g << 8) | b;
+        }
     }
 }
 
