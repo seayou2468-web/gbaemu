@@ -1,7 +1,3 @@
-#if !defined(__cplusplus)
-#include "../gba_core.h"
-/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
-#else
 #include "../gba_core.h"
 #include <string.h>
 #include <stdint.h>
@@ -1036,4 +1032,3 @@ void GBAIODeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 	GBAHardwareDeserialize(&gba->memory.hw, state);
 }
 
-#endif
