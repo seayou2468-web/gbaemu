@@ -488,7 +488,7 @@ void GBAVideoDeserialize(struct GBAVideo* video, const struct GBASerializedState
 static void GBAVideoSoftwareRendererInit(struct GBAVideoRenderer* renderer);
 static void GBAVideoSoftwareRendererDeinit(struct GBAVideoRenderer* renderer);
 static void GBAVideoSoftwareRendererReset(struct GBAVideoRenderer* renderer);
-static uint32_t GBAVideoSoftwareRendererId(const struct GBAVideoRenderer* renderer);
+static uint32_t GBAVideoSoftwareRendererId(struct GBAVideoRenderer* renderer);
 static bool GBAVideoSoftwareRendererLoadState(struct GBAVideoRenderer* renderer, const void* state, size_t size);
 static void GBAVideoSoftwareRendererSaveState(struct GBAVideoRenderer* renderer, void** state, size_t* size);
 static void GBAVideoSoftwareRendererWriteVRAM(struct GBAVideoRenderer* renderer, uint32_t address);
@@ -632,7 +632,7 @@ static void GBAVideoSoftwareRendererDeinit(struct GBAVideoRenderer* renderer) {
 	UNUSED(softwareRenderer);
 }
 
-static uint32_t GBAVideoSoftwareRendererId(const struct GBAVideoRenderer* renderer) {
+static uint32_t GBAVideoSoftwareRendererId(struct GBAVideoRenderer* renderer) {
 	UNUSED(renderer);
 	return SOFTWARE_MAGIC;
 }

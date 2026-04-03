@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 
 /* ===== Imported from reference implementation/dma.c ===== */
 mLOG_DEFINE_CATEGORY(GBA_DMA, "GBA DMA", "gba.dma");
@@ -424,4 +425,3 @@ void GBADMADeserialize(struct GBA* gba, const struct GBASerializedState* state) 
 	GBADMARecalculateCycles(gba);
 	GBADMAUpdate(gba);
 }
-

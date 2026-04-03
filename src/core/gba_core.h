@@ -82,6 +82,7 @@ struct mTiming {
 void mTimingSchedule(struct mTiming* timing, struct mTimingEvent* event, int32_t when);
 void mTimingScheduleAbsolute(struct mTiming* timing, struct mTimingEvent* event, int32_t when);
 void mTimingDeschedule(struct mTiming* timing, struct mTimingEvent* event);
+void mTimingClear(struct mTiming* timing);
 
 enum GBASIOMode {
 	GBA_SIO_NORMAL_8 = 0,
@@ -146,7 +147,20 @@ struct GBACartEReader;
 struct VFile;
 struct ARMCore;
 struct GBATimer;
-struct GBADMA;
+struct GBADMA {
+	uint32_t source;
+	uint32_t dest;
+	uint32_t nextSource;
+	uint32_t nextDest;
+	uint32_t count;
+	uint32_t nextCount;
+	int32_t sourceOffset;
+	int32_t destOffset;
+	int32_t when;
+	uint16_t reg;
+	uint32_t latch;
+	int cycles;
+};
 struct GBAVideo;
 struct GBAOAM;
 struct GBAVideoSoftwareBackground;
@@ -364,6 +378,7 @@ struct GBAVideoSoftwareBackground {
 	bool objwinForceEnable;
 	bool objwinOnly;
 	int yCache;
+	uint16_t mapCache[64];
 	uint32_t flags;
 	uint32_t objwinFlags;
 	bool variant;
@@ -410,6 +425,7 @@ struct WindowN {
 	struct WindowDimension h;
 	struct WindowDimension v;
 	struct WindowControl control;
+	int32_t offsetX;
 	int32_t offsetY;
 	bool on;
 };
@@ -587,6 +603,15 @@ struct GBASerializedState {
 		uint8_t writeAddress[4];
 		uint8_t settlingSector[2];
 	} savedata;
+	struct {
+		uint32_t nextSource;
+		uint32_t nextDest;
+		uint32_t nextCount;
+		uint32_t when;
+	} dma[4];
+	uint32_t dmaTransferRegister;
+	uint32_t dmaLatch[3];
+	uint32_t dmaBlockPC;
 };
 
 struct GBAVideoProxyRenderer {
@@ -1011,7 +1036,7 @@ struct GBAMemoryBusMini {
 	struct GBACartEReader ereader;
 	struct GBAUnlCart unl;
 	struct mTimingEvent dmaEvent;
-	struct { uint32_t source; uint32_t dest; uint32_t count; uint32_t latch; uint16_t control; } dma[4];
+	struct GBADMA dma[4];
 	int activeDMA;
 	size_t romSize;
 	uint32_t romMask;
@@ -1229,6 +1254,7 @@ struct GBA {
 	int biosStall;
 	bool hardCrash;
 	bool performingDMA;
+	bool cpuBlocked;
 	int idleDetectionStep;
 	int idleDetectionFailures;
 	uint32_t cachedRegisters[16];
@@ -1380,6 +1406,9 @@ static inline uint16_t GBASIONormalFillSi(uint16_t v) { return (uint16_t) (v | 0
 #endif
 #ifndef GBA_IRQ_VCOUNTER
 #define GBA_IRQ_VCOUNTER 2
+#endif
+#ifndef GBA_IRQ_DMA0
+#define GBA_IRQ_DMA0 8
 #endif
 
 #ifndef HW_GB_PLAYER
@@ -1626,11 +1655,33 @@ static inline uint16_t GBATimerFlagsTestFillCountUp(uint16_t flags, bool v) { re
 static inline uint16_t GBATimerFlagsTestFillDoIrq(uint16_t flags, bool v) { return v ? (uint16_t) (flags | 0x0040) : (uint16_t) (flags & ~0x0040); }
 static inline uint16_t GBATimerFlagsTestFillEnable(uint16_t flags, bool v) { return v ? (uint16_t) (flags | 0x0080) : (uint16_t) (flags & ~0x0080); }
 void GBATimerUpdateRegister(struct GBA* gba, int timerId, int32_t cyclesLate);
+enum {
+	GBA_DMA_TIMING_NOW = 0,
+	GBA_DMA_TIMING_VBLANK = 1,
+	GBA_DMA_TIMING_HBLANK = 2,
+	GBA_DMA_TIMING_CUSTOM = 3
+};
+enum {
+	GBA_DMA_INCREMENT = 0,
+	GBA_DMA_DECREMENT = 1,
+	GBA_DMA_FIXED = 2,
+	GBA_DMA_INCREMENT_RELOAD = 3
+};
 static inline bool GBADMARegisterIsEnable(uint16_t control) { return (control & 0x8000) != 0; }
+static inline bool GBADMARegisterIsRepeat(uint16_t control) { return (control & 0x0200) != 0; }
+static inline bool GBADMARegisterIsDoIRQ(uint16_t control) { return (control & 0x4000) != 0; }
+static inline bool GBADMARegisterIsDRQ(uint16_t control) { return (control & 0x0800) != 0; }
+static inline uint16_t GBADMARegisterClearEnable(uint16_t control) { return (uint16_t) (control & ~0x8000); }
+static inline unsigned GBADMARegisterGetTiming(uint16_t control) { return (control >> 12) & 0x3; }
+static inline unsigned GBADMARegisterGetWidth(uint16_t control) { return (control >> 10) & 0x1; }
+static inline unsigned GBADMARegisterGetSrcControl(uint16_t control) { return (control >> 7) & 0x3; }
+static inline unsigned GBADMARegisterGetDestControl(uint16_t control) { return (control >> 5) & 0x3; }
 void GBADMAWriteCNT_LO(struct GBA* gba, int dma, uint16_t count);
 uint16_t GBADMAWriteCNT_HI(struct GBA* gba, int dma, uint16_t control);
 uint32_t GBADMAWriteSAD(struct GBA* gba, int dma, uint32_t address);
 uint32_t GBADMAWriteDAD(struct GBA* gba, int dma, uint32_t address);
+void GBADMASchedule(struct GBA* gba, int number, struct GBADMA* info);
+void GBADMAUpdate(struct GBA* gba);
 void GBATimerWriteTMCNT_LO(struct GBA* gba, int timer, uint16_t reload);
 void GBATimerWriteTMCNT_HI(struct GBA* gba, int timer, uint16_t control);
 void GBASIOWriteSIOCNT(struct GBASIO* sio, uint16_t value);
@@ -1638,15 +1689,16 @@ void GBASIOWriteRCNT(struct GBASIO* sio, uint16_t value);
 uint16_t GBASIOWriteRegister(struct GBASIO* sio, uint32_t address, uint16_t value);
 void GBAAdjustWaitstates(struct GBA* gba, uint16_t parameters);
 void GBAAdjustEWRAMWaitstates(struct GBA* gba, uint16_t parameters);
-static inline void GBADMASerialize(struct GBA* gba, struct GBASerializedState* state) { UNUSED(gba); UNUSED(state); }
-static inline void GBADMADeserialize(struct GBA* gba, const struct GBASerializedState* state) { UNUSED(gba); UNUSED(state); }
-static inline void GBAHardwareSerialize(const struct GBAHardware* hw, struct GBASerializedState* state) { UNUSED(hw); UNUSED(state); }
-static inline void GBAHardwareDeserialize(struct GBAHardware* hw, const struct GBASerializedState* state) { UNUSED(hw); UNUSED(state); }
+void GBADMASerialize(const struct GBA* gba, struct GBASerializedState* state);
+void GBADMADeserialize(struct GBA* gba, const struct GBASerializedState* state);
+void GBAHardwareSerialize(const struct GBAHardware* hw, struct GBASerializedState* state);
+void GBAHardwareDeserialize(struct GBAHardware* hw, const struct GBASerializedState* state);
 static inline void GBATestIRQ(struct GBA* gba, int32_t cyclesLate) { UNUSED(gba); UNUSED(cyclesLate); }
 static inline void GBAHalt(struct GBA* gba) { UNUSED(gba); }
 static inline void GBAStop(struct GBA* gba) { UNUSED(gba); }
 static inline void GBAAudioSampleFIFO(void* audio, int fifo, uint32_t cyclesLate) { UNUSED(audio); UNUSED(fifo); UNUSED(cyclesLate); }
 static inline void GBAAudioSample(void* audio, int32_t cyclesLate) { UNUSED(audio); UNUSED(cyclesLate); }
+static inline void GBAAudioScheduleFifoDma(void* audio, int channel, struct GBADMA* dma) { UNUSED(audio); UNUSED(channel); UNUSED(dma); }
 uint16_t GBAVideoWriteDISPSTAT(struct GBAVideo* video, uint16_t value);
 static inline void GBAAudioWriteSOUND1CNT_LO(void* audio, uint16_t value) { UNUSED(audio); UNUSED(value); }
 static inline void GBAAudioWriteSOUND1CNT_HI(void* audio, uint16_t value) { UNUSED(audio); UNUSED(value); }
@@ -1697,6 +1749,11 @@ void GBAStore8(struct ARMCore* cpu, uint32_t address, int8_t value, int* cycleCo
 uint32_t GBAStoreMultiple(struct ARMCore* cpu, uint32_t address, int mask, enum LSMDirection direction, int* cycleCounter);
 extern const uint8_t hleBios[GBA_SIZE_BIOS];
 static inline int GBAMosaicControlGetBgV(uint16_t mosaic) { UNUSED(mosaic); return 0; }
+static inline int GBAMosaicControlGetBgH(uint16_t mosaic) { return mosaic & 0xF; }
+static inline bool GBA_TEXT_MAP_HFLIP(uint16_t mapData) { return (mapData & 0x0400) != 0; }
+static inline bool GBA_TEXT_MAP_VFLIP(uint16_t mapData) { return (mapData & 0x0800) != 0; }
+static inline uint16_t GBA_TEXT_MAP_TILE(uint16_t mapData) { return mapData & 0x03FF; }
+static inline uint16_t GBA_TEXT_MAP_PALETTE(uint16_t mapData) { return (mapData >> 12) & 0xF; }
 static inline int GBAObjAttributesAGetMode(uint16_t a) { UNUSED(a); return 0; }
 static inline int GBAObjAttributesAGetShape(uint16_t a) { UNUSED(a); return 0; }
 static inline int GBAObjAttributesBGetSize(uint16_t b) { UNUSED(b); return 0; }
@@ -1786,6 +1843,8 @@ static inline void sha1File(struct VFile* vf, void* out) { UNUSED(vf); memset(ou
 static inline void sha1Buffer(const void* buf, size_t size, void* out) { UNUSED(buf); UNUSED(size); memset(out, 0, 20); }
 bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state);
 void GBASerialize(struct GBA* gba, struct GBASerializedState* state);
+extern const uint32_t GBASavestateMagic;
+extern const uint32_t GBASavestateVersion;
 
 enum {
 	EXTDATA_SUBSYSTEM_START = 0x1000,
@@ -1816,6 +1875,12 @@ static inline int clz32(uint32_t v) { return v ? __builtin_clz(v) : 32; }
 #define LOAD_32(v, o, p) do { UNUSED(o); memcpy(&(v), (p), sizeof(uint32_t)); } while (0)
 #define STORE_16(v, o, p) do { UNUSED(o); uint16_t _tmp = (uint16_t) (v); memcpy((p), &_tmp, sizeof(uint16_t)); } while (0)
 #define LOAD_16(v, o, p) do { UNUSED(o); memcpy(&(v), (p), sizeof(uint16_t)); } while (0)
+#define LOAD_32BE(v, o, p) do { \
+	UNUSED(o); \
+	uint32_t _tmp; \
+	memcpy(&_tmp, (p), sizeof(uint32_t)); \
+	(v) = __builtin_bswap32(_tmp); \
+} while (0)
 #define STORE_64LE(v, o, p) do { UNUSED(o); uint64_t _tmp = (uint64_t) (v); memcpy((p), &_tmp, sizeof(uint64_t)); } while (0)
 #define LOAD_64LE(v, o, p) do { UNUSED(o); memcpy(&(v), (p), sizeof(uint64_t)); } while (0)
 
@@ -1883,6 +1948,12 @@ extern const ThumbInstruction _thumbTable[0x400];
 
 #ifndef UNLIKELY
 #define UNLIKELY(x) (x)
+#endif
+#ifndef LIKELY
+#define LIKELY(x) (x)
+#endif
+#ifndef IS_WRITABLE
+#define IS_WRITABLE(current) (((current) & FLAG_ORDER_MASK) > flags)
 #endif
 
 #ifndef ARM_PREFETCH_CYCLES
@@ -2081,6 +2152,7 @@ static inline bool GBARegisterDISPCNTIsBg3Enable(GBARegisterDISPCNT v) { return 
 static inline bool GBARegisterDISPCNTIsObjEnable(GBARegisterDISPCNT v) { return (v & 0x1000) != 0; }
 static inline bool GBARegisterDISPCNTIsWin0Enable(GBARegisterDISPCNT v) { return (v & 0x2000) != 0; }
 static inline bool GBARegisterDISPCNTIsWin1Enable(GBARegisterDISPCNT v) { return (v & 0x4000) != 0; }
+static inline bool GBARegisterDISPCNTIsFrameSelect(GBARegisterDISPCNT v) { return (v & 0x0010) != 0; }
 static inline bool GBARegisterDISPCNTIsHblankIntervalFree(GBARegisterDISPCNT v) { return (v & (1u << 5)) != 0; }
 static inline bool GBARegisterDISPCNTGetBg0Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg0Enable(v); }
 static inline bool GBARegisterDISPCNTGetBg1Enable(GBARegisterDISPCNT v) { return GBARegisterDISPCNTIsBg1Enable(v); }
@@ -2127,6 +2199,16 @@ static inline bool GBARegisterBLDCNTGetTarget2Bd(GBARegisterBLDCNT v) { return (
 
 void GBAFrameStarted(struct GBA* gba);
 void GBAFrameEnded(struct GBA* gba);
+void GBAMemorySerialize(const struct GBAMemoryBusMini* memory, struct GBASerializedState* state);
+void GBAMemoryDeserialize(struct GBAMemoryBusMini* memory, const struct GBASerializedState* state);
+void GBAIOSerialize(struct GBA* gba, struct GBASerializedState* state);
+void GBAIODeserialize(struct GBA* gba, const struct GBASerializedState* state);
+void GBAVideoSerialize(const struct GBAVideo* video, struct GBASerializedState* state);
+void GBAVideoDeserialize(struct GBAVideo* video, const struct GBASerializedState* state);
+void GBAAudioSerialize(const void* audio, struct GBASerializedState* state);
+void GBAAudioDeserialize(void* audio, const struct GBASerializedState* state);
+void GBASavedataSerialize(const struct GBASavedata* savedata, struct GBASerializedState* state);
+void GBASavedataDeserialize(struct GBASavedata* savedata, const struct GBASerializedState* state);
 void mCoreSyncPostFrame(struct mCoreSync* sync);
 void GBAInterrupt(struct GBA* gba);
 void GBADMARunVblank(struct GBA* gba, int32_t cyclesLate);
