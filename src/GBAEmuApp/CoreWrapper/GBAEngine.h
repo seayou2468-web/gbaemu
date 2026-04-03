@@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, nonatomic, readonly) NSInteger screenHeight;
 
 - (void)loadBuiltInBIOS;
+- (BOOL)loadBIOSAtPath:(NSString *)path error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)loadROMAtPath:(NSString *)path error:(NSError * _Nullable * _Nullable)error;
 - (void)reset;
 - (void)stepFrame;

@@ -85,7 +85,9 @@ struct mTiming {
 void mTimingSchedule(struct mTiming* timing, struct mTimingEvent* event, int32_t when);
 void mTimingScheduleAbsolute(struct mTiming* timing, struct mTimingEvent* event, int32_t when);
 void mTimingDeschedule(struct mTiming* timing, struct mTimingEvent* event);
+void mTimingInit(struct mTiming* timing, int32_t* relativeCycles, int32_t* nextEvent);
 void mTimingClear(struct mTiming* timing);
+int32_t mTimingTick(struct mTiming* timing, int32_t cycles);
 
 enum GBASIOMode {
 	GBA_SIO_NORMAL_8 = 0,
@@ -1082,6 +1084,14 @@ struct GBASIO {
 };
 
 void GBASIOSetDriver(struct GBASIO* sio, struct GBASIODriver* driver);
+void GBAMemoryInit(struct GBA* gba);
+void GBAMemoryDeinit(struct GBA* gba);
+void GBAMemoryReset(struct GBA* gba);
+void GBAIOInit(struct GBA* gba);
+void GBATimerInit(struct GBA* gba);
+void GBASIOInit(struct GBASIO* sio);
+void GBAVideoInit(struct GBAVideo* video);
+void GBAVideoDeinit(struct GBAVideo* video);
 void GBADMAInit(struct GBA* gba);
 void GBADMAReset(struct GBA* gba);
 void GBAUnlCartInit(struct GBA* gba);
@@ -1775,7 +1785,12 @@ static inline bool GBAWindowControlGetBlendEnable(uint16_t control) { return GBA
 static inline bool GBARegisterDISPCNTIsObjCharacterMapping(uint16_t dispcnt) { return (dispcnt & (1 << 6)) != 0; }
 static inline bool GBARegisterDISPCNTIsObjwinEnable(uint16_t dispcnt) { return (dispcnt & (1 << 15)) != 0; }
 static inline int GBAMosaicControlGetObjH(uint16_t mosaic) { return mosaic & 0xF; }
-static inline void* anonymousMemoryMap(size_t size) { UNUSED(size); return NULL; }
+static inline void* anonymousMemoryMap(size_t size) {
+	if (size == 0) {
+		return NULL;
+	}
+	return calloc(1, size);
+}
 static inline void MutexLock(void* m) { UNUSED(m); }
 static inline void MutexUnlock(void* m) { UNUSED(m); }
 static inline void ConditionWait(void* c, void* m) { UNUSED(c); UNUSED(m); }
@@ -1798,8 +1813,84 @@ static inline const char* mCoreConfigGetValue(const struct mCoreConfig* config, 
 static inline bool mCoreConfigGetBoolValue(const struct mCoreConfig* config, const char* key, bool* out) { UNUSED(config); UNUSED(key); if (out) *out = false; return false; }
 static inline bool mCoreConfigGetIntValue(const struct mCoreConfig* config, const char* key, int* out) { UNUSED(config); UNUSED(key); if (out) *out = 0; return false; }
 static inline void mCoreConfigCopyValue(struct mCoreConfig* out, const struct mCoreConfig* in, const char* key) { UNUSED(out); UNUSED(in); UNUSED(key); }
-static inline void GBACreate(struct GBA* gba) { UNUSED(gba); }
-static inline void GBADestroy(struct GBA* gba) { UNUSED(gba); }
+static inline void _GBAStubBkpt16(struct ARMCore* cpu, uint16_t imm) { UNUSED(cpu); UNUSED(imm); }
+static inline void _GBAStubBkpt32(struct ARMCore* cpu, uint32_t imm) { UNUSED(cpu); UNUSED(imm); }
+static inline void _GBAStubSwi16(struct ARMCore* cpu, uint16_t imm) { UNUSED(cpu); UNUSED(imm); }
+static inline void _GBAStubSwi32(struct ARMCore* cpu, uint32_t imm) { UNUSED(cpu); UNUSED(imm); }
+static inline void _GBAStubResetCpu(struct ARMCore* cpu) {
+	if (!cpu) {
+		return;
+	}
+	cpu->nextEvent = cpu->cycles + 1;
+}
+static inline void _GBAStubProcessEvents(struct ARMCore* cpu) {
+	if (!cpu) {
+		return;
+	}
+	struct GBA* gba = NULL;
+	if (cpu->master) {
+		gba = (struct GBA*) ((uint8_t*) cpu->master - offsetof(struct GBA, d));
+	}
+	if (gba) {
+		++gba->video.frameCounter;
+	}
+	++cpu->cycles;
+	cpu->nextEvent = cpu->cycles + 1;
+}
+static inline void _GBAMasterComponentInit(struct ARMCore* cpu, struct mCPUComponent* component) {
+	if (!cpu || !component) {
+		return;
+	}
+	struct GBA* gba = (struct GBA*) ((uint8_t*) component - offsetof(struct GBA, d));
+	memset(gba, 0, sizeof(*gba));
+	gba->d.init = _GBAMasterComponentInit;
+	gba->cpu = cpu;
+	mTimingInit(&gba->timing, &cpu->cycles, &cpu->nextEvent);
+	gba->video.p = gba;
+	gba->video.palette = (uint16_t*) anonymousMemoryMap(GBA_SIZE_PALETTE_RAM);
+	gba->sio.p = gba;
+	GBAMemoryInit(gba);
+	GBAIOInit(gba);
+	GBATimerInit(gba);
+	GBASIOInit(&gba->sio);
+	GBAVideoInit(&gba->video);
+	cpu->irqh.bkpt16 = _GBAStubBkpt16;
+	cpu->irqh.bkpt32 = _GBAStubBkpt32;
+	cpu->irqh.swi16 = _GBAStubSwi16;
+	cpu->irqh.swi32 = _GBAStubSwi32;
+	cpu->irqh.reset = _GBAStubResetCpu;
+	cpu->irqh.processEvents = _GBAStubProcessEvents;
+}
+static inline void _GBAMasterComponentDeinit(struct mCPUComponent* component) {
+	if (!component) {
+		return;
+	}
+	struct GBA* gba = (struct GBA*) ((uint8_t*) component - offsetof(struct GBA, d));
+	if (gba->video.renderer) {
+		GBAVideoDeinit(&gba->video);
+	}
+	if (gba->video.palette) {
+		free(gba->video.palette);
+		gba->video.palette = NULL;
+	}
+	if (gba->memory.wram || gba->memory.rom) {
+		GBAMemoryDeinit(gba);
+	}
+}
+static inline void GBACreate(struct GBA* gba) {
+	if (!gba) {
+		return;
+	}
+	memset(gba, 0, sizeof(*gba));
+	gba->d.init = _GBAMasterComponentInit;
+	gba->d.deinit = _GBAMasterComponentDeinit;
+}
+static inline void GBADestroy(struct GBA* gba) {
+	if (!gba) {
+		return;
+	}
+	_GBAMasterComponentDeinit(&gba->d);
+}
 void GBAVideoDummyRendererCreate(struct GBAVideoRenderer* renderer);
 void GBAVideoAssociateRenderer(struct GBAVideo* video, struct GBAVideoRenderer* renderer);
 void GBAVideoInit(struct GBAVideo* video);
