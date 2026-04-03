@@ -15,6 +15,7 @@
 #include "./embedded_include/gba/gba.h"
 
 #define GBA_CORE_USE_AGGREGATED_MODULES 1
+#define C_CORE 1
 #include "./gba_core.cpp"
 
 namespace {
