@@ -110,30 +110,10 @@ static bool _loadBlobFromMemory(GBABlob* out, const uint8_t* data, size_t size, 
     return true;
 }
 
-static inline uint32_t _rgba(uint8_t r, uint8_t g, uint8_t b) {
-    return 0xFF000000u | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
-}
-
-static inline uint32_t _bgr555ToRgba(uint16_t color) {
-    uint8_t r = (uint8_t) ((color & 0x1F) << 3);
-    uint8_t g = (uint8_t) (((color >> 5) & 0x1F) << 3);
-    uint8_t b = (uint8_t) (((color >> 10) & 0x1F) << 3);
-    return _rgba(r, g, b);
-}
-
 static void _renderFrameFromROM(GBACoreHandle* h) {
-    size_t srcWords = h->rom.size / 2;
-    if (!srcWords) {
-        return;
-    }
     for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
-        size_t srcIndex = i % srcWords;
-        h->frame16[i] = (uint16_t) h->rom.data[srcIndex * 2] |
-                        (uint16_t) (h->rom.data[srcIndex * 2 + 1] << 8);
-    }
-
-    for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
-        h->frame[i] = _bgr555ToRgba(h->frame16[i]);
+        h->frame16[i] = 0;
+        h->frame[i] = 0xFF000000u;
     }
 }
 
