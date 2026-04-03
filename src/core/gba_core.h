@@ -51,7 +51,7 @@ struct mTiming;
 typedef void (*mTimingCallback)(struct mTiming* timing, void* context, uint32_t cyclesLate);
 
 enum mPlatform { mPLATFORM_GBA = 1 };
-enum mCoreFeature { mCORE_FEATURE_OPENGL = 1 };
+enum mCoreFeature { mCORE_FEATURE_NONE = 0 };
 enum mCoreChecksumType { mCHECKSUM_CRC32 = 0, mCHECKSUM_MD5 = 1, mCHECKSUM_SHA1 = 2 };
 
 struct Configuration;
