@@ -188,3 +188,120 @@ void GBAVideoCacheWriteVideoRegister(void* cache, uint32_t address, uint16_t val
 	UNUSED(cache);
 	_fallbackCacheMirror.videoRegs[(address >> 1) & 0xFF] = value;
 }
+
+bool GBAIsMB(struct VFile* vf) {
+	UNUSED(vf);
+	return false;
+}
+
+struct VFile* VFileFromMemory(void* data, size_t size) {
+	UNUSED(data);
+	UNUSED(size);
+	return NULL;
+}
+
+struct VFile* VFileMemChunk(const void* data, size_t size) {
+	UNUSED(data);
+	UNUSED(size);
+	return NULL;
+}
+
+static bool _readWholeVFile(struct VFile* vf, uint8_t** outData, size_t* outSize) {
+	if (!vf || !outData || !outSize || !vf->size || !vf->seek || !vf->read) {
+		return false;
+	}
+	off_t fileSize = vf->size(vf);
+	if (fileSize <= 0) {
+		return false;
+	}
+	if (vf->seek(vf, 0, SEEK_SET) < 0) {
+		return false;
+	}
+	uint8_t* buf = anonymousMemoryMap((size_t) fileSize);
+	if (!buf) {
+		return false;
+	}
+	size_t total = 0;
+	while (total < (size_t) fileSize) {
+		ssize_t n = vf->read(vf, buf + total, (size_t) fileSize - total);
+		if (n <= 0) {
+			mappedMemoryFree(buf, (size_t) fileSize);
+			return false;
+		}
+		total += (size_t) n;
+	}
+	*outData = buf;
+	*outSize = (size_t) fileSize;
+	return true;
+}
+
+bool GBALoadMB(void* board, struct VFile* vf) {
+	UNUSED(board);
+	UNUSED(vf);
+	return false;
+}
+
+bool GBALoadROM(void* board, struct VFile* vf) {
+	struct GBA* gba = board;
+	if (!gba || !vf) {
+		return false;
+	}
+	uint8_t* romData = NULL;
+	size_t romSize = 0;
+	if (!_readWholeVFile(vf, &romData, &romSize)) {
+		return false;
+	}
+	if (gba->memory.rom) {
+		mappedMemoryFree(gba->memory.rom, gba->memory.romSize);
+	}
+	gba->memory.rom = romData;
+	gba->memory.romSize = romSize;
+	gba->memory.romMask = (uint32_t) (toPow2(romSize) - 1);
+	gba->pristineRomSize = romSize;
+	gba->isPristine = true;
+	return true;
+}
+
+bool GBAIsBIOS(struct VFile* vf) {
+	if (!vf || !vf->size) {
+		return false;
+	}
+	return vf->size(vf) == GBA_SIZE_BIOS;
+}
+
+void GBALoadBIOS(void* board, struct VFile* vf) {
+	struct GBA* gba = board;
+	if (!gba || !vf) {
+		return;
+	}
+	uint8_t* biosData = NULL;
+	size_t biosSize = 0;
+	if (!_readWholeVFile(vf, &biosData, &biosSize) || biosSize != GBA_SIZE_BIOS) {
+		return;
+	}
+	if (gba->memory.bios && (uint8_t*) gba->memory.bios != hleBios) {
+		mappedMemoryFree(gba->memory.bios, GBA_SIZE_BIOS);
+	}
+	gba->memory.bios = (uint32_t*) biosData;
+	gba->memory.fullBios = true;
+}
+
+void GBAUnloadROM(void* board) {
+	struct GBA* gba = board;
+	if (!gba || !gba->memory.rom) {
+		return;
+	}
+	mappedMemoryFree(gba->memory.rom, gba->memory.romSize);
+	gba->memory.rom = NULL;
+	gba->memory.romSize = 0;
+	gba->memory.romMask = 0;
+}
+
+void GBASkipBIOS(void* board) {
+	struct GBA* gba = board;
+	if (!gba || !gba->cpu) {
+		return;
+	}
+	gba->memory.io[GBA_REG(POSTFLG)] = 1;
+	gba->cpu->gprs[ARM_PC] = GBA_BASE_ROM0;
+}

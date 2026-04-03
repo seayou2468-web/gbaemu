@@ -1916,17 +1916,17 @@ struct mAVStream {
 	void (*videoDimensionsChanged)(struct mAVStream*, unsigned, unsigned);
 	void (*audioRateChanged)(struct mAVStream*, unsigned);
 };
-static inline bool GBAIsMB(struct VFile* vf) { UNUSED(vf); return false; }
-static inline struct VFile* VFileFromMemory(void* data, size_t size) { UNUSED(data); UNUSED(size); return NULL; }
-static inline struct VFile* VFileMemChunk(const void* data, size_t size) { UNUSED(data); UNUSED(size); return NULL; }
-static inline bool GBALoadMB(void* board, struct VFile* vf) { UNUSED(board); UNUSED(vf); return false; }
-static inline bool GBALoadROM(void* board, struct VFile* vf) { UNUSED(board); UNUSED(vf); return false; }
+bool GBAIsMB(struct VFile* vf);
+struct VFile* VFileFromMemory(void* data, size_t size);
+struct VFile* VFileMemChunk(const void* data, size_t size);
+bool GBALoadMB(void* board, struct VFile* vf);
+bool GBALoadROM(void* board, struct VFile* vf);
 static inline bool GBALoadSave(void* board, struct VFile* vf) { UNUSED(board); UNUSED(vf); return false; }
 bool GBASavedataClone(struct GBASavedata* savedata, struct VFile* vf);
-static inline bool GBAIsBIOS(struct VFile* vf) { UNUSED(vf); return false; }
-static inline void GBALoadBIOS(void* board, struct VFile* vf) { UNUSED(board); UNUSED(vf); }
-static inline void GBAUnloadROM(void* board) { UNUSED(board); }
-static inline void GBASkipBIOS(void* board) { UNUSED(board); }
+bool GBAIsBIOS(struct VFile* vf);
+void GBALoadBIOS(void* board, struct VFile* vf);
+void GBAUnloadROM(void* board);
+void GBASkipBIOS(void* board);
 void GBASavedataMask(struct GBASavedata* savedata, struct VFile* vf, bool writeback);
 void GBAOverrideApply(struct GBA* gba, const struct GBACartridgeOverride* ov);
 void GBAOverrideApplyDefaults(struct GBA* gba, const struct Configuration* cfg);
