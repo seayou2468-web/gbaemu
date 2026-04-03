@@ -1,8 +1,55 @@
 #include "./gba_core_c_api.h"
+#include "./gba_core.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// Embed runtime modules directly so the C API can run even when the full
+// top-level core wiring is not linked by the host target yet.
+#include "./gba_core_modules/core_input_runtime.c"
+#include "./gba_core_modules/core_overrides_runtime.c"
+#include "./gba_core_modules/core_bootstrap.c"
+#include "./gba_core_modules/core_io_runtime.c"
+#include "./gba_core_modules/core_reset_state.c"
+#include "./gba_core_modules/core_timing_runtime.c"
+#include "./gba_core_modules/core_sync_runtime.c"
+#include "./gba_core_modules/core_save_runtime.c"
+#include "./gba_core_modules/core_backup_runtime.c"
+#include "./gba_core_modules/core_link_stubs.c"
+#include "./gba_core_modules/core_unlicensed_runtime.c"
+#include "./gba_core_modules/cpu_helpers.c"
+#include "./gba_core_modules/cpu_swi.c"
+#include "./gba_core_modules/cpu_arm_execute.c"
+#include "./gba_core_modules/cpu_thumb_run.c"
+#include "./gba_core_modules/memory_bus.c"
+#include "./gba_core_modules/ppu_common.c"
+#include "./gba_core_modules/timing_dma.c"
+#include "./gba_core_modules/apu_interrupts.c"
+
+// Temporary bridge stubs for renderer split functions that are referenced by
+// ppu_common in this trimmed tree but not linked automatically here.
+void GBAVideoSoftwareRendererDrawBackgroundMode0(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y) {
+    UNUSED(renderer); UNUSED(background); UNUSED(y);
+}
+void GBAVideoSoftwareRendererDrawBackgroundMode2(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y) {
+    UNUSED(renderer); UNUSED(background); UNUSED(y);
+}
+void GBAVideoSoftwareRendererDrawBackgroundMode3(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y) {
+    UNUSED(renderer); UNUSED(background); UNUSED(y);
+}
+void GBAVideoSoftwareRendererDrawBackgroundMode4(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y) {
+    UNUSED(renderer); UNUSED(background); UNUSED(y);
+}
+void GBAVideoSoftwareRendererDrawBackgroundMode5(struct GBAVideoSoftwareRenderer* renderer, struct GBAVideoSoftwareBackground* background, int y) {
+    UNUSED(renderer); UNUSED(background); UNUSED(y);
+}
+int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* renderer, struct GBAObj* sprite, int index, int y) {
+    UNUSED(renderer); UNUSED(sprite); UNUSED(index); UNUSED(y); return 0;
+}
+void GBAVideoSoftwareRendererPostprocessSprite(struct GBAVideoSoftwareRenderer* renderer, unsigned priority) {
+    UNUSED(renderer); UNUSED(priority);
+}
 
 #define GBA_SCREEN_WIDTH 240
 #define GBA_SCREEN_HEIGHT 160
@@ -16,14 +63,18 @@ typedef struct {
 
 struct GBACoreHandle {
     uint32_t frame[GBA_PIXEL_COUNT];
-    uint16_t frame16[GBA_PIXEL_COUNT];
+    mColor frame16[GBA_PIXEL_COUNT];
     GBABlob rom;
     GBABlob bios;
     char lastError[256];
     uint16_t keys;
     bool hasRom;
     bool hasBios;
-    bool videoReady;
+
+    struct ARMCore* cpu;
+    struct GBA* gba;
+    struct GBAVideoSoftwareRenderer renderer;
+    bool runtimeReady;
 };
 
 static void _setError(GBACoreHandle* h, const char* msg) {
@@ -110,28 +161,94 @@ static bool _loadBlobFromMemory(GBABlob* out, const uint8_t* data, size_t size, 
     return true;
 }
 
-static void _renderFrameFromROM(GBACoreHandle* h) {
+static inline uint32_t _bgr555ToRgba(mColor color) {
+    uint8_t r = (uint8_t) ((color & 0x1F) << 3);
+    uint8_t g = (uint8_t) (((color >> 5) & 0x1F) << 3);
+    uint8_t b = (uint8_t) (((color >> 10) & 0x1F) << 3);
+    return 0xFF000000u | ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
+}
+
+static void _clearFrame(GBACoreHandle* h) {
     for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
         h->frame16[i] = 0;
         h->frame[i] = 0xFF000000u;
     }
 }
 
-static bool _initVideo(GBACoreHandle* h) {
-    if (!h || h->videoReady) {
+static bool _initRuntime(GBACoreHandle* h) {
+    if (!h || h->runtimeReady) {
         return h != NULL;
     }
-    h->videoReady = true;
+
+    h->cpu = (struct ARMCore*) anonymousMemoryMap(sizeof(struct ARMCore));
+    h->gba = (struct GBA*) anonymousMemoryMap(sizeof(struct GBA));
+    if (!h->cpu || !h->gba) {
+        _setError(h, "failed to allocate core runtime state");
+        return false;
+    }
+
+    GBACreate(h->gba);
+    ARMSetComponents(h->cpu, &h->gba->d, 0, NULL);
+    ARMInit(h->cpu);
+
+    GBAVideoSoftwareRendererCreate(&h->renderer);
+    h->renderer.outputBuffer = h->frame16;
+    h->renderer.outputBufferStride = GBA_SCREEN_WIDTH;
+    GBAVideoAssociateRenderer(&h->gba->video, &h->renderer.d);
+
+    h->runtimeReady = true;
+    _setError(h, NULL);
+    return true;
+}
+
+static bool _syncRuntimeROM(GBACoreHandle* h) {
+    if (!h || !h->gba || !h->rom.data || h->rom.size == 0) {
+        return false;
+    }
+    if (h->gba->memory.rom) {
+        mappedMemoryFree(h->gba->memory.rom, h->gba->memory.romSize);
+        h->gba->memory.rom = NULL;
+        h->gba->memory.romSize = 0;
+    }
+    h->gba->memory.rom = (uint8_t*) anonymousMemoryMap(h->rom.size);
+    if (!h->gba->memory.rom) {
+        _setError(h, "failed to map runtime ROM buffer");
+        return false;
+    }
+    memcpy(h->gba->memory.rom, h->rom.data, h->rom.size);
+    h->gba->memory.romSize = h->rom.size;
+    h->gba->memory.romMask = (uint32_t) (toPow2(h->gba->memory.romSize) - 1);
+    h->gba->pristineRomSize = h->rom.size;
+    h->gba->isPristine = true;
+    return true;
+}
+
+static bool _syncRuntimeBIOS(GBACoreHandle* h) {
+    if (!h || !h->gba || !h->bios.data || h->bios.size != GBA_BIOS_SIZE) {
+        return false;
+    }
+    if (h->gba->memory.bios && h->gba->memory.bios != (uint32_t*) h->bios.data) {
+        mappedMemoryFree(h->gba->memory.bios, GBA_BIOS_SIZE);
+    }
+    h->gba->memory.bios = (uint32_t*) anonymousMemoryMap(GBA_BIOS_SIZE);
+    if (!h->gba->memory.bios) {
+        _setError(h, "failed to map runtime BIOS buffer");
+        return false;
+    }
+    memcpy(h->gba->memory.bios, h->bios.data, GBA_BIOS_SIZE);
+    h->gba->memory.fullBios = true;
     return true;
 }
 
 GBACoreHandle* GBA_Create(void) {
     GBACoreHandle* h = (GBACoreHandle*) calloc(1, sizeof(GBACoreHandle));
-    if (h) {
-        for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
-            h->frame[i] = 0xFF000000u;
-        }
-        _initVideo(h);
+    if (!h) {
+        return NULL;
+    }
+    _clearFrame(h);
+    if (!_initRuntime(h)) {
+        // Keep handle alive for error reporting and fallback behavior.
+        _clearFrame(h);
     }
     return h;
 }
@@ -140,7 +257,16 @@ void GBA_Destroy(GBACoreHandle* handle) {
     if (!handle) {
         return;
     }
-    handle->videoReady = false;
+    if (handle->gba) {
+        GBADestroy(handle->gba);
+        mappedMemoryFree(handle->gba, sizeof(struct GBA));
+    }
+    if (handle->cpu) {
+        mappedMemoryFree(handle->cpu, sizeof(struct ARMCore));
+    }
+    handle->runtimeReady = false;
+    handle->gba = NULL;
+    handle->cpu = NULL;
     _freeBlob(&handle->rom);
     _freeBlob(&handle->bios);
     free(handle);
@@ -157,6 +283,10 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
         return false;
     }
     handle->hasRom = true;
+    if (handle->runtimeReady && !_syncRuntimeROM(handle)) {
+        handle->hasRom = false;
+        return false;
+    }
     _setError(handle, NULL);
     return true;
 }
@@ -172,6 +302,10 @@ bool GBA_LoadROMFromBuffer(GBACoreHandle* handle, const uint8_t* data, size_t si
         return false;
     }
     handle->hasRom = true;
+    if (handle->runtimeReady && !_syncRuntimeROM(handle)) {
+        handle->hasRom = false;
+        return false;
+    }
     _setError(handle, NULL);
     return true;
 }
@@ -192,6 +326,10 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
         return false;
     }
     handle->hasBios = true;
+    if (handle->runtimeReady && !_syncRuntimeBIOS(handle)) {
+        handle->hasBios = false;
+        return false;
+    }
     _setError(handle, NULL);
     return true;
 }
@@ -212,6 +350,10 @@ bool GBA_LoadBIOSFromBuffer(GBACoreHandle* handle, const uint8_t* data, size_t s
         return false;
     }
     handle->hasBios = true;
+    if (handle->runtimeReady && !_syncRuntimeBIOS(handle)) {
+        handle->hasBios = false;
+        return false;
+    }
     _setError(handle, NULL);
     return true;
 }
@@ -224,20 +366,35 @@ void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
     handle->bios.data = (uint8_t*) calloc(GBA_BIOS_SIZE, 1);
     handle->bios.size = handle->bios.data ? GBA_BIOS_SIZE : 0;
     handle->hasBios = handle->bios.data != NULL;
-    _setError(handle, handle->hasBios ? NULL : "failed to allocate built-in BIOS");
+    if (!handle->hasBios) {
+        _setError(handle, "failed to allocate built-in BIOS");
+        return;
+    }
+    if (handle->runtimeReady && !_syncRuntimeBIOS(handle)) {
+        handle->hasBios = false;
+        return;
+    }
+    _setError(handle, NULL);
 }
 
 void GBA_Reset(GBACoreHandle* handle) {
     if (!handle) {
         return;
     }
-    if (!handle->videoReady && !_initVideo(handle)) {
+    if (!_initRuntime(handle)) {
+        _clearFrame(handle);
         return;
     }
-    for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
-        handle->frame[i] = 0xFF000000u;
-        handle->frame16[i] = 0;
+    if (handle->hasRom && !_syncRuntimeROM(handle)) {
+        return;
     }
+    if (handle->hasBios && !_syncRuntimeBIOS(handle)) {
+        return;
+    }
+    GBAMemoryReset(handle->gba);
+    GBAVideoReset(&handle->gba->video);
+    ARMReset(handle->cpu);
+    mTimingInterrupt(&handle->gba->timing);
     _setError(handle, NULL);
 }
 
@@ -253,11 +410,32 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         _setError(handle, "BIOS is not loaded");
         return;
     }
-    if (!handle->videoReady && !_initVideo(handle)) {
+    if (!_initRuntime(handle)) {
+        _setError(handle, "runtime init failed");
         return;
     }
-    _renderFrameFromROM(handle);
-    _setError(handle, "runtime core is stubbed; full game rendering backend is not linked");
+    if (!_syncRuntimeROM(handle) || !_syncRuntimeBIOS(handle)) {
+        return;
+    }
+
+    uint32_t frameCounter = handle->gba->video.frameCounter;
+    int32_t startCycle = mTimingCurrentTime(&handle->gba->timing);
+    int safety = 0;
+    while (handle->gba->video.frameCounter == frameCounter &&
+           mTimingCurrentTime(&handle->gba->timing) - startCycle < VIDEO_TOTAL_LENGTH + VIDEO_HORIZONTAL_LENGTH &&
+           safety < 200000) {
+        ARMRunLoop(handle->cpu);
+        ++safety;
+    }
+    if (safety >= 200000) {
+        _setError(handle, "frame step timeout");
+        return;
+    }
+
+    for (size_t i = 0; i < GBA_PIXEL_COUNT; ++i) {
+        handle->frame[i] = _bgr555ToRgba(handle->frame16[i]);
+    }
+    _setError(handle, NULL);
 }
 
 void GBA_SetKeys(GBACoreHandle* handle, uint16_t keysPressedMask) {
@@ -265,6 +443,10 @@ void GBA_SetKeys(GBACoreHandle* handle, uint16_t keysPressedMask) {
         return;
     }
     handle->keys = keysPressedMask;
+    if (handle->gba) {
+        // KEYINPUT is active-low.
+        handle->gba->memory.io[GBA_REG(KEYINPUT)] = (uint16_t) ~keysPressedMask;
+    }
 }
 
 const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* pixelCount) {
