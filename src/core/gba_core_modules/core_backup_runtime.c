@@ -1,3 +1,7 @@
+#if !defined(__cplusplus)
+#include "../gba_core.h"
+/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
+#else
 #include "../gba_core.h"
 #include <string.h>
 #include <stdint.h>
@@ -778,3 +782,4 @@ void _flashEraseSector(struct GBASavedata* savedata, uint16_t sectorStart) {
 	mTimingSchedule(&savedata->p->timing, &savedata->dust, FLASH_ERASE_CYCLES);
 	memset(&savedata->currentBank[sectorStart & ~(size - 1)], 0xFF, size);
 }
+#endif

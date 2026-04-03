@@ -1,3 +1,7 @@
+#if !defined(__cplusplus)
+#include "../gba_core.h"
+/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
+#else
 #include "../gba_core.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -142,3 +146,5 @@ int32_t mTimingNextEvent(const struct mTiming* timing) {
 	}
 	return timing->root->when - mTimingCurrentTime(timing);
 }
+
+#endif

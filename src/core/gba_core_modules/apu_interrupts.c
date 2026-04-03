@@ -1,3 +1,7 @@
+#if !defined(__cplusplus)
+#include "../gba_core.h"
+/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
+#else
 #include "../gba_core.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -436,3 +440,5 @@ int GBASIOJOYSendCommand(struct GBASIODriver* sio, enum GBASIOJOYCommand command
 
 #endif
 
+
+#endif

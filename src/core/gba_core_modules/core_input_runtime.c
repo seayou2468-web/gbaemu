@@ -1,3 +1,7 @@
+#if !defined(__cplusplus)
+#include "../gba_core.h"
+/* C-only builds use the C++ aggregated core path; module implementation is intentionally disabled here. */
+#else
 #include "../gba_core.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -54,3 +58,5 @@ GBA_EXPORT const struct InputPlatformInfo GBAInputInfo = {
 		.right = GBA_KEY_RIGHT
 	}
 };
+
+#endif
