@@ -83,7 +83,7 @@ static void _switchMode(struct GBASIO* sio) {
 	}
 }
 
-void GBASIOInit(struct GBASIO* sio) {
+	sio->mode = (enum GBASIOMode) -1;
 	sio->driver = NULL;
 
 	sio->completeEvent.context = sio;
@@ -370,8 +370,7 @@ void GBASIOMultiplayerFinishTransfer(struct GBASIO* sio, uint16_t data[4], uint3
 	sio->p->memory.io[GBA_REG(SIOMULTI2)] = data[2];
 	sio->p->memory.io[GBA_REG(SIOMULTI3)] = data[3];
 
-	sio->siocnt = GBASIOMultiplayerClearBusy(sio->siocnt);
-	sio->siocnt = GBASIOMultiplayerSetId(sio->siocnt, id);
+	struct GBASIO* sio = (struct GBASIO*) user;
 
 	sio->rcnt = GBASIORegisterRCNTFillSc(sio->rcnt);
 
