@@ -171,6 +171,15 @@ struct _CoreVideoCacheMirror {
 	uint32_t recentWritePos;
 };
 
+struct _MemoryVFile {
+	struct VFile d;
+	uint8_t* data;
+	size_t size;
+	size_t cursor;
+	bool owned;
+	bool writable;
+};
+
 static struct _CoreVideoCacheMirror _fallbackCacheMirror;
 
 void mCacheSetWriteVRAM(void* cache, uint32_t address) {
@@ -194,16 +203,142 @@ bool GBAIsMB(struct VFile* vf) {
 	return false;
 }
 
-struct VFile* VFileFromMemory(void* data, size_t size) {
-	UNUSED(data);
+static void _memoryVFileClose(struct VFile* vf) {
+	if (!vf) {
+		return;
+	}
+	struct _MemoryVFile* mvf = (struct _MemoryVFile*) vf;
+	if (mvf->owned) {
+		free(mvf->data);
+	}
+	free(mvf);
+}
+
+static ssize_t _memoryVFileRead(struct VFile* vf, void* out, size_t size) {
+	struct _MemoryVFile* mvf = (struct _MemoryVFile*) vf;
+	if (!mvf || !out || size == 0) {
+		return 0;
+	}
+	size_t remain = mvf->size > mvf->cursor ? mvf->size - mvf->cursor : 0;
+	size_t n = size < remain ? size : remain;
+	if (n == 0) {
+		return 0;
+	}
+	memcpy(out, mvf->data + mvf->cursor, n);
+	mvf->cursor += n;
+	return (ssize_t) n;
+}
+
+static ssize_t _memoryVFileWrite(struct VFile* vf, const void* in, size_t size) {
+	struct _MemoryVFile* mvf = (struct _MemoryVFile*) vf;
+	if (!mvf || !in || size == 0 || !mvf->writable) {
+		return 0;
+	}
+	size_t remain = mvf->size > mvf->cursor ? mvf->size - mvf->cursor : 0;
+	size_t n = size < remain ? size : remain;
+	if (n == 0) {
+		return 0;
+	}
+	memcpy(mvf->data + mvf->cursor, in, n);
+	mvf->cursor += n;
+	return (ssize_t) n;
+}
+
+static off_t _memoryVFileSeek(struct VFile* vf, off_t offset, int whence) {
+	struct _MemoryVFile* mvf = (struct _MemoryVFile*) vf;
+	if (!mvf) {
+		return -1;
+	}
+	off_t base = 0;
+	switch (whence) {
+	case SEEK_SET: base = 0; break;
+	case SEEK_CUR: base = (off_t) mvf->cursor; break;
+	case SEEK_END: base = (off_t) mvf->size; break;
+	default: return -1;
+	}
+	off_t pos = base + offset;
+	if (pos < 0 || (size_t) pos > mvf->size) {
+		return -1;
+	}
+	mvf->cursor = (size_t) pos;
+	return pos;
+}
+
+static off_t _memoryVFileSize(struct VFile* vf) {
+	struct _MemoryVFile* mvf = (struct _MemoryVFile*) vf;
+	return mvf ? (off_t) mvf->size : 0;
+}
+
+static void _memoryVFileTruncate(struct VFile* vf, size_t size) {
+	UNUSED(vf);
 	UNUSED(size);
-	return NULL;
+}
+
+static bool _memoryVFileSync(struct VFile* vf, const void* in, size_t size) {
+	UNUSED(vf);
+	UNUSED(in);
+	UNUSED(size);
+	return true;
+}
+
+static void* _memoryVFileMap(struct VFile* vf, size_t size, int mode) {
+	UNUSED(mode);
+	struct _MemoryVFile* mvf = (struct _MemoryVFile*) vf;
+	if (!mvf || size > mvf->size) {
+		return NULL;
+	}
+	return mvf->data;
+}
+
+static void _memoryVFileUnmap(struct VFile* vf, void* memory, size_t size) {
+	UNUSED(vf);
+	UNUSED(memory);
+	UNUSED(size);
+}
+
+static struct _MemoryVFile* _memoryVFileCreate(uint8_t* data, size_t size, bool owned, bool writable) {
+	if (!data || size == 0) {
+		return NULL;
+	}
+	struct _MemoryVFile* mvf = calloc(1, sizeof(*mvf));
+	if (!mvf) {
+		if (owned) {
+			free(data);
+		}
+		return NULL;
+	}
+	mvf->data = data;
+	mvf->size = size;
+	mvf->owned = owned;
+	mvf->writable = writable;
+	mvf->d.close = _memoryVFileClose;
+	mvf->d.read = _memoryVFileRead;
+	mvf->d.write = _memoryVFileWrite;
+	mvf->d.seek = _memoryVFileSeek;
+	mvf->d.size = _memoryVFileSize;
+	mvf->d.truncate = _memoryVFileTruncate;
+	mvf->d.sync = _memoryVFileSync;
+	mvf->d.map = _memoryVFileMap;
+	mvf->d.unmap = _memoryVFileUnmap;
+	return mvf;
+}
+
+struct VFile* VFileFromMemory(void* data, size_t size) {
+	struct _MemoryVFile* mvf = _memoryVFileCreate((uint8_t*) data, size, false, true);
+	return mvf ? &mvf->d : NULL;
 }
 
 struct VFile* VFileMemChunk(const void* data, size_t size) {
-	UNUSED(data);
-	UNUSED(size);
-	return NULL;
+	if (!data || size == 0) {
+		return NULL;
+	}
+	uint8_t* copy = malloc(size);
+	if (!copy) {
+		return NULL;
+	}
+	memcpy(copy, data, size);
+	struct _MemoryVFile* mvf = _memoryVFileCreate(copy, size, true, false);
+	return mvf ? &mvf->d : NULL;
 }
 
 static bool _readWholeVFile(struct VFile* vf, uint8_t** outData, size_t* outSize) {

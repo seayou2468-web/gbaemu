@@ -243,40 +243,35 @@ static bool _syncRuntimeROM(GBACoreHandle* h) {
     if (!h || !h->gba || !h->rom.data || h->rom.size == 0) {
         return false;
     }
-    if (h->gba->memory.rom) {
-        mappedMemoryFree(h->gba->memory.rom, h->gba->memory.romSize);
-        h->gba->memory.rom = NULL;
-        h->gba->memory.romSize = 0;
-    }
-    h->gba->memory.rom = (uint8_t*) anonymousMemoryMap(h->rom.size);
-    if (!h->gba->memory.rom) {
-        _setError(h, "failed to map runtime ROM buffer");
+    struct VFile* vf = VFileMemChunk(h->rom.data, h->rom.size);
+    if (!vf) {
+        _setError(h, "failed to create ROM VFile");
         return false;
     }
-    memcpy(h->gba->memory.rom, h->rom.data, h->rom.size);
-    h->gba->memory.romSize = h->rom.size;
-    h->gba->memory.romMask = (uint32_t) (toPow2(h->gba->memory.romSize) - 1);
-    h->gba->pristineRomSize = h->rom.size;
-    h->gba->isPristine = true;
-    return true;
+    bool ok = GBALoadROM(h->gba, vf);
+    vf->close(vf);
+    if (!ok) {
+        _setError(h, "failed to load ROM into runtime");
+        return false;
+    }
+    return h->gba->memory.rom && h->gba->memory.romSize > 0;
 }
 
 static bool _syncRuntimeBIOS(GBACoreHandle* h) {
     if (!h || !h->gba || !h->bios.data || h->bios.size != GBA_BIOS_SIZE) {
         return false;
     }
-    if (h->gba->memory.bios &&
-        h->gba->memory.bios != (uint32_t*) h->bios.data &&
-        (uint8_t*) h->gba->memory.bios != hleBios) {
-        mappedMemoryFree(h->gba->memory.bios, GBA_BIOS_SIZE);
-    }
-    h->gba->memory.bios = (uint32_t*) anonymousMemoryMap(GBA_BIOS_SIZE);
-    if (!h->gba->memory.bios) {
-        _setError(h, "failed to map runtime BIOS buffer");
+    struct VFile* vf = VFileMemChunk(h->bios.data, h->bios.size);
+    if (!vf) {
+        _setError(h, "failed to create BIOS VFile");
         return false;
     }
-    memcpy(h->gba->memory.bios, h->bios.data, GBA_BIOS_SIZE);
-    h->gba->memory.fullBios = true;
+    GBALoadBIOS(h->gba, vf);
+    vf->close(vf);
+    if (!h->gba->memory.bios || !h->gba->memory.fullBios) {
+        _setError(h, "failed to load BIOS into runtime");
+        return false;
+    }
     return true;
 }
 
