@@ -1,10 +1,11 @@
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
+
+#include "./gba_core_c_api.h"
 
 namespace gba {
 
@@ -14,53 +15,62 @@ public:
     static constexpr int kScreenHeight = 160;
 
     GBACore()
-        : framebuffer_(static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight), 0xFF000000u),
-          frame_counter_(0) {}
+        : handle_(GBA_Create()), framebuffer_(static_cast<size_t>(kScreenWidth) * static_cast<size_t>(kScreenHeight), 0) {}
 
-    bool LoadBIOS(const std::vector<uint8_t>& bios, std::string* error) {
-        bios_ = bios;
-        if (bios_.empty()) {
-            if (error) {
-                *error = "empty bios";
-            }
-            return false;
+    ~GBACore() {
+        if (handle_) {
+            GBA_Destroy(handle_);
+            handle_ = nullptr;
         }
-        return true;
+    }
+
+    bool LoadBIOS(const std::vector<uint8_t>&, std::string* error) {
+        if (error) {
+            *error = "LoadBIOS(buffer) is not supported; use GBA_LoadBIOSFromPath in host";
+        }
+        return false;
     }
 
     void LoadBuiltInBIOS() {
-        bios_.assign(16, 0);
+        if (handle_) {
+            GBA_LoadBuiltInBIOS(handle_);
+        }
     }
 
-    bool LoadROM(const std::vector<uint8_t>& rom, std::string* warning) {
-        rom_ = rom;
-        if (rom_.empty()) {
-            if (warning) {
-                *warning = "empty rom";
-            }
+    bool LoadROM(const std::vector<uint8_t>&, std::string* warning) {
+        if (warning) {
+            *warning = "LoadROM(buffer) is not supported in this adapter";
+        }
+        return false;
+    }
+
+    bool LoadROMFromPath(const std::string& path, std::string* warning) {
+        if (!handle_) {
+            if (warning) *warning = "core handle is null";
             return false;
         }
-        if (warning) {
+        const bool ok = GBA_LoadROMFromPath(handle_, path.c_str());
+        if (!ok && warning) {
+            *warning = GBA_GetLastError(handle_);
+        } else if (warning) {
             warning->clear();
         }
-        return true;
+        return ok;
     }
 
     void Reset() {
-        frame_counter_ = 0;
-        std::fill(framebuffer_.begin(), framebuffer_.end(), 0xFF000000u);
+        if (handle_) {
+            GBA_Reset(handle_);
+        }
     }
 
     void StepFrame() {
-        ++frame_counter_;
-        for (int y = 0; y < kScreenHeight; ++y) {
-            for (int x = 0; x < kScreenWidth; ++x) {
-                const uint32_t r = static_cast<uint32_t>((x + frame_counter_) & 0xFFu);
-                const uint32_t g = static_cast<uint32_t>((y * 2 + frame_counter_) & 0xFFu);
-                const uint32_t b = static_cast<uint32_t>(((x ^ y) + (frame_counter_ * 3)) & 0xFFu);
-                framebuffer_[static_cast<size_t>(y) * static_cast<size_t>(kScreenWidth) + static_cast<size_t>(x)] =
-                    0xFF000000u | (r << 16) | (g << 8) | b;
-            }
+        if (!handle_) return;
+        GBA_StepFrame(handle_);
+        size_t n = 0;
+        const uint32_t* src = GBA_GetFrameBufferRGBA(handle_, &n);
+        if (src && n >= framebuffer_.size()) {
+            framebuffer_.assign(src, src + framebuffer_.size());
         }
     }
 
@@ -78,10 +88,8 @@ public:
     }
 
 private:
-    std::vector<uint8_t> bios_;
-    std::vector<uint8_t> rom_;
+    GBACoreHandle* handle_;
     std::vector<uint32_t> framebuffer_;
-    uint64_t frame_counter_;
 };
 
 }  // namespace gba

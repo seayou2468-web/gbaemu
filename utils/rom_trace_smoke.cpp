@@ -31,16 +31,10 @@ int main() {
   }
 
   for (const auto& path : roms) {
-    const std::vector<uint8_t> rom = LoadFile(path);
-    if (rom.empty()) {
-      std::printf("%s: load_error=empty\n", path.c_str());
-      continue;
-    }
-
     gba::GBACore core;
     core.LoadBuiltInBIOS();
     std::string warning;
-    if (!core.LoadROM(rom, &warning)) {
+    if (!core.LoadROMFromPath(path, &warning)) {
       std::printf("%s: load_error=%s\n", path.c_str(), warning.c_str());
       continue;
     }

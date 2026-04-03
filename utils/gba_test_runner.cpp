@@ -25,12 +25,6 @@ int main(int argc, char** argv) {
     std::string output_path = argv[3];
     std::string bios_path = (argc >= 5) ? argv[4] : "";
 
-    std::vector<uint8_t> rom = LoadFile(rom_path);
-    if (rom.empty()) {
-        std::printf("Failed to load ROM: %s\n", rom_path.c_str());
-        return 1;
-    }
-
     gba::GBACore core;
     if (!bios_path.empty()) {
         std::vector<uint8_t> bios = LoadFile(bios_path);
@@ -44,8 +38,9 @@ int main(int argc, char** argv) {
         core.LoadBuiltInBIOS();
     }
     std::string warning;
-    if (!core.LoadROM(rom, &warning)) {
+    if (!core.LoadROMFromPath(rom_path, &warning)) {
         std::printf("Warning/Error loading ROM: %s\n", warning.c_str());
+        return 1;
     }
 
     for (int i = 0; i < frames; ++i) {

@@ -5,13 +5,9 @@
 // Order matters: bootstrap/types first, then globals/IO/runtime dependencies.
 #include "./gba_core_modules/core_bootstrap.c"
 #include "./gba_core_modules/core_input_runtime.c"
-#include "./gba_core_modules/core_overrides_runtime.c"
-#include "./gba_core_modules/core_backup_runtime.c"
-#include "./gba_core_modules/core_reset_state.c"
 #include "./gba_core_modules/core_unlicensed_runtime.c"
 #include "./gba_core_modules/cpu_helpers.c"
 #include "./gba_core_modules/cpu_swi.c"
-#include "./gba_core_modules/apu_interrupts.c"
 #define clockTicks clockTicksArmExecute
 #include "./gba_core_modules/cpu_arm_execute.c"
 #undef clockTicks
@@ -21,7 +17,6 @@
 #include "./gba_core_modules/core_timing_runtime.c"
 #include "./gba_core_modules/timing_dma.c"
 #include "./gba_core_modules/core_sync_runtime.c"
-#include "./gba_core_modules/core_save_runtime.c"
 #include "./gba_core_modules/ppu_common.c"
 #include "./gba_core_modules/ppu_bitmap_obj.c"
 #include "./gba_core_modules/ppu_tile_modes.c"
