@@ -182,6 +182,29 @@ struct _MemoryVFile {
 
 static struct _CoreVideoCacheMirror _fallbackCacheMirror;
 
+void* anonymousMemoryMap(size_t size) {
+	if (size == 0) {
+		return NULL;
+	}
+	return calloc(1, size);
+}
+
+void GBACreate(struct GBA* gba) {
+	if (!gba) {
+		return;
+	}
+	memset(gba, 0, sizeof(*gba));
+	gba->d.init = _GBAMasterComponentInit;
+	gba->d.deinit = _GBAMasterComponentDeinit;
+}
+
+void GBADestroy(struct GBA* gba) {
+	if (!gba) {
+		return;
+	}
+	_GBAMasterComponentDeinit(&gba->d);
+}
+
 void mCacheSetWriteVRAM(void* cache, uint32_t address) {
 	UNUSED(cache);
 	uint32_t pos = _fallbackCacheMirror.recentWritePos++ & 63;
