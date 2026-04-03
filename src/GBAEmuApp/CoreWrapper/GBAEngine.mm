@@ -1,6 +1,7 @@
 #import "GBAEngine.h"
 
 #include <cstdint>
+#include <cstring>
 
 #import "../../core/gba_core_c_api.h"
 
@@ -120,6 +121,13 @@
         return NO;
     }
     GBA_StepFrame(_handle);
+    const char *lastError = GBA_GetLastError(_handle);
+    if (lastError != NULL && std::strlen(lastError) > 0) {
+        if (pixelCount != NULL) {
+            *pixelCount = 0;
+        }
+        return NO;
+    }
     const uint32_t *frame = GBA_GetFrameBufferRGBA(_handle, pixelCount);
     if (frame == NULL) {
         return NO;

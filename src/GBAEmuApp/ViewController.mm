@@ -126,7 +126,20 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 
 - (void)presentDocumentPickerForType:(GBADocumentSelectionType)selectionType {
     self.documentSelectionType = selectionType;
-    NSArray<UTType *> *types = @[UTTypeData];
+    NSMutableArray<UTType *> *types = [NSMutableArray array];
+    if (selectionType == GBADocumentSelectionTypeROM) {
+        [types addObject:UTTypeData];
+        UTType *gbaType = [UTType typeWithFilenameExtension:@"gba"];
+        if (gbaType != nil) {
+            [types addObject:gbaType];
+        }
+    } else {
+        UTType *binType = [UTType typeWithFilenameExtension:@"bin"];
+        if (binType != nil) {
+            [types addObject:binType];
+        }
+        [types addObject:UTTypeData];
+    }
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
@@ -209,6 +222,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
     size_t pixelCount = 0;
     if (![self.engine stepFrameAndGetPointer:&pixels pixelCount:&pixelCount] ||
         pixels == NULL || pixelCount == 0) {
+        self.statusLabel.text = [NSString stringWithFormat:@"描画失敗: %@", self.engine.lastErrorMessage];
         return;
     }
     [self presentFramePixels:pixels pixelCount:pixelCount];
@@ -235,7 +249,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
         [self.engine stepFrame];
         pixels = [self.engine currentFramePointerWithPixelCount:&pixelCount];
         if (pixels == NULL || pixelCount == 0) {
-            self.statusLabel.text = @"フレーム取得に失敗しました（ROM/BIOS状態を確認）";
+            self.statusLabel.text = [NSString stringWithFormat:@"フレーム取得に失敗: %@", self.engine.lastErrorMessage];
             return;
         }
     }

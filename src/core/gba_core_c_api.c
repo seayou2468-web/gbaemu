@@ -7,6 +7,7 @@
 #define GBA_SCREEN_WIDTH 240
 #define GBA_SCREEN_HEIGHT 160
 #define GBA_PIXEL_COUNT (GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT)
+#define GBA_BIOS_SIZE (16 * 1024)
 
 typedef struct {
     uint8_t* data;
@@ -205,6 +206,11 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
         handle->hasBios = false;
         return false;
     }
+    if (handle->bios.size != GBA_BIOS_SIZE) {
+        _setError(handle, "invalid BIOS size (expected 16384 bytes)");
+        handle->hasBios = false;
+        return false;
+    }
     handle->hasBios = true;
     _setError(handle, NULL);
     return true;
@@ -220,6 +226,11 @@ bool GBA_LoadBIOSFromBuffer(GBACoreHandle* handle, const uint8_t* data, size_t s
         handle->hasBios = false;
         return false;
     }
+    if (handle->bios.size != GBA_BIOS_SIZE) {
+        _setError(handle, "invalid BIOS size (expected 16384 bytes)");
+        handle->hasBios = false;
+        return false;
+    }
     handle->hasBios = true;
     _setError(handle, NULL);
     return true;
@@ -230,8 +241,8 @@ void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
         return;
     }
     _freeBlob(&handle->bios);
-    handle->bios.data = (uint8_t*) calloc(16 * 1024, 1);
-    handle->bios.size = handle->bios.data ? 16 * 1024 : 0;
+    handle->bios.data = (uint8_t*) calloc(GBA_BIOS_SIZE, 1);
+    handle->bios.size = handle->bios.data ? GBA_BIOS_SIZE : 0;
     handle->hasBios = handle->bios.data != NULL;
     _setError(handle, handle->hasBios ? NULL : "failed to allocate built-in BIOS");
 }
