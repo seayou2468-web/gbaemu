@@ -183,6 +183,9 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
             [self.engine reset];
             [self.engine setKeysPressedMask:0x0000];
             [self renderCurrentFrame];
+            if (self.displayLink == nil) {
+                [self togglePlayback];
+            }
             self.statusLabel.text = @"ROMを読み込みました";
         } else {
             self.romLoaded = NO;
@@ -242,16 +245,14 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 }
 
 - (void)renderCurrentFrame {
+    // Always advance at least one frame before first present to avoid initial black frame.
+    [self.engine stepFrame];
+
     size_t pixelCount = 0;
     const uint32_t *pixels = [self.engine currentFramePointerWithPixelCount:&pixelCount];
     if (pixels == NULL || pixelCount == 0) {
-        // Retry once after advancing one frame to avoid startup black screen.
-        [self.engine stepFrame];
-        pixels = [self.engine currentFramePointerWithPixelCount:&pixelCount];
-        if (pixels == NULL || pixelCount == 0) {
-            self.statusLabel.text = [NSString stringWithFormat:@"フレーム取得に失敗: %@", self.engine.lastErrorMessage];
-            return;
-        }
+        self.statusLabel.text = [NSString stringWithFormat:@"フレーム取得に失敗: %@", self.engine.lastErrorMessage];
+        return;
     }
     [self presentFramePixels:pixels pixelCount:pixelCount];
 }

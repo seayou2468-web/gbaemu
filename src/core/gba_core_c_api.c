@@ -103,6 +103,7 @@ void GBA_Reset(GBACoreHandle* handle) {
         return;
     }
     handle->frame_counter = 0;
+    SetLastError(handle, "");
     for (size_t i = 0; i < handle->framebuffer_size; ++i) {
         handle->framebuffer[i] = 0xFF000000u;
     }
@@ -110,9 +111,14 @@ void GBA_Reset(GBACoreHandle* handle) {
 
 void GBA_StepFrame(GBACoreHandle* handle) {
     if (!handle || !handle->has_rom) {
+        if (handle) {
+            SetLastError(handle, "rom not loaded");
+        }
         return;
     }
     ++handle->frame_counter;
+
+    SetLastError(handle, "");
 
     const uint32_t key_mix = (uint32_t)(handle->keys_pressed & 0x03FFu);
     const size_t width = 240u;
