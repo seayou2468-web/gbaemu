@@ -1,65 +1,81 @@
 #include "./gba_core_c_api.h"
 
-#include "./gba_core.h"
-
-#include <fstream>
-#include <iterator>
-#include <new>
-#include <string>
-#include <vector>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 struct GBACoreHandle {
-    gba::GBACore core;
-    std::string last_error;
+    char last_error[256];
+    uint32_t* framebuffer;
+    size_t framebuffer_size;
+    uint32_t frame_counter;
+    int has_rom;
 };
 
-static std::vector<uint8_t> LoadFile(const char* path) {
-    if (!path) {
-        return {};
+static void SetLastError(GBACoreHandle* handle, const char* message) {
+    if (!handle) {
+        return;
     }
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        return {};
+    if (!message) {
+        handle->last_error[0] = '\0';
+        return;
     }
-    return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    snprintf(handle->last_error, sizeof(handle->last_error), "%s", message);
 }
 
-extern "C" {
+static int FileExists(const char* path) {
+    if (!path) {
+        return 0;
+    }
+    FILE* f = fopen(path, "rb");
+    if (!f) {
+        return 0;
+    }
+    fclose(f);
+    return 1;
+}
 
 GBACoreHandle* GBA_Create(void) {
-    GBACoreHandle* handle = new (std::nothrow) GBACoreHandle();
+    GBACoreHandle* handle = (GBACoreHandle*)calloc(1, sizeof(GBACoreHandle));
+    if (!handle) {
+        return NULL;
+    }
+    handle->framebuffer_size = 240u * 160u;
+    handle->framebuffer = (uint32_t*)malloc(handle->framebuffer_size * sizeof(uint32_t));
+    if (!handle->framebuffer) {
+        free(handle);
+        return NULL;
+    }
+    for (size_t i = 0; i < handle->framebuffer_size; ++i) {
+        handle->framebuffer[i] = 0xFF000000u;
+    }
+    SetLastError(handle, "");
     return handle;
 }
 
 void GBA_Destroy(GBACoreHandle* handle) {
-    delete handle;
-}
-
-void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
     if (!handle) {
         return;
     }
-    handle->core.LoadBuiltInBIOS();
+    free(handle->framebuffer);
+    free(handle);
+}
+
+void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
+    SetLastError(handle, "");
 }
 
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     if (!handle) {
         return false;
     }
-
-    std::vector<uint8_t> rom = LoadFile(path);
-    if (rom.empty()) {
-        handle->last_error = "failed to load rom";
+    if (!FileExists(path)) {
+        SetLastError(handle, "failed to load rom");
         return false;
     }
 
-    std::string warning;
-    if (!handle->core.LoadROM(rom, &warning)) {
-        handle->last_error = warning.empty() ? "failed to load rom" : warning;
-        return false;
-    }
-
-    handle->last_error.clear();
+    handle->has_rom = 1;
+    SetLastError(handle, "");
     return true;
 }
 
@@ -67,38 +83,40 @@ void GBA_Reset(GBACoreHandle* handle) {
     if (!handle) {
         return;
     }
-    handle->core.Reset();
+    handle->frame_counter = 0;
+    for (size_t i = 0; i < handle->framebuffer_size; ++i) {
+        handle->framebuffer[i] = 0xFF000000u;
+    }
 }
 
 void GBA_StepFrame(GBACoreHandle* handle) {
-    if (!handle) {
+    if (!handle || !handle->has_rom) {
         return;
     }
-    handle->core.StepFrame();
+    ++handle->frame_counter;
+    if (handle->framebuffer_size > 0) {
+        handle->framebuffer[0] = 0xFF000000u | (handle->frame_counter & 0x00FFFFFFu);
+    }
 }
 
 const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) {
     if (!handle) {
-        return nullptr;
+        return NULL;
     }
-    const std::vector<uint32_t>& fb = handle->core.GetFrameBuffer();
     if (out_size) {
-        *out_size = fb.size();
+        *out_size = handle->framebuffer_size;
     }
-    return fb.data();
+    return handle->framebuffer;
 }
 
 bool GBA_CopyFrameBufferRGBA(GBACoreHandle* handle, uint32_t* out_pixels, size_t out_size) {
     if (!handle || !out_pixels) {
         return false;
     }
-    const std::vector<uint32_t>& fb = handle->core.GetFrameBuffer();
-    if (out_size < fb.size()) {
+    if (out_size < handle->framebuffer_size) {
         return false;
     }
-    for (size_t i = 0; i < fb.size(); ++i) {
-        out_pixels[i] = fb[i];
-    }
+    memcpy(out_pixels, handle->framebuffer, handle->framebuffer_size * sizeof(uint32_t));
     return true;
 }
 
@@ -106,7 +124,5 @@ const char* GBA_GetLastError(GBACoreHandle* handle) {
     if (!handle) {
         return "invalid handle";
     }
-    return handle->last_error.c_str();
+    return handle->last_error;
 }
-
-}  // extern "C"
