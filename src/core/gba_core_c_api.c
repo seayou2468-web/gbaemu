@@ -423,11 +423,11 @@ void GBA_StepFrame(GBACoreHandle* handle) {
     int safety = 0;
     while (handle->gba->video.frameCounter == frameCounter &&
            mTimingCurrentTime(&handle->gba->timing) - startCycle < VIDEO_TOTAL_LENGTH + VIDEO_HORIZONTAL_LENGTH &&
-           safety < 200000) {
-        ARMRunLoop(handle->cpu);
+           safety < 500000) {
+        ARMRun(handle->cpu);
         ++safety;
     }
-    if (safety >= 200000) {
+    if (safety >= 500000) {
         _setError(handle, "frame step timeout");
         return;
     }

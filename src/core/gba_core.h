@@ -1836,7 +1836,7 @@ static inline void _GBAMasterComponentInit(struct ARMCore* cpu, struct mCPUCompo
 	if (!cpu || !component) {
 		return;
 	}
-	struct GBA* gba = (struct GBA*) component;
+	struct GBA* gba = (struct GBA*) ((uint8_t*) component - offsetof(struct GBA, d));
 	memset(gba, 0, sizeof(*gba));
 	gba->d.init = _GBAMasterComponentInit;
 	gba->cpu = cpu;
@@ -1858,7 +1858,7 @@ static inline void _GBAMasterComponentDeinit(struct mCPUComponent* component) {
 	if (!component) {
 		return;
 	}
-	struct GBA* gba = (struct GBA*) component;
+	struct GBA* gba = (struct GBA*) ((uint8_t*) component - offsetof(struct GBA, d));
 	if (gba->video.renderer) {
 		GBAVideoDeinit(&gba->video);
 	}
