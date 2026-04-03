@@ -15,7 +15,7 @@ extern char *strdup(const char *);
 #include <zlib.h>
 #endif  // defined(__LIBRETRO__)
 
-#include "core/base/system.h"
+#include "system.h"
 
 #define FREAD_UNCHECKED(A,B,C,D) (void)(fread(A,B,C,D) + 1)
 

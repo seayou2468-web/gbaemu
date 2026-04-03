@@ -5,7 +5,7 @@
 #include <iterator>
 #include <cstddef>
 
-#include "core/base/array.h"
+#include "array.h"
 
 template <typename T> class RingBuffer
 {

@@ -3,9 +3,9 @@
 
 #include <cstdint>
 
-#include "core/base/system.h"
-#include "core/gba/gbaCheats.h"
-#include "core/gba/gbaGlobals.h"
+#include "../base/system.h"
+#include "gbaCheats.h"
+#include "gbaGlobals.h"
 
 extern int armExecute();
 extern int thumbExecute();

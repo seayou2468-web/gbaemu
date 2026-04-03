@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "core/base/sound_driver.h"
+#include "sound_driver.h"
 
 enum IMAGE_TYPE {
     IMAGE_UNKNOWN = -1,
