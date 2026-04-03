@@ -5,16 +5,24 @@
 
 #import "./CoreWrapper/GBAEngine.h"
 
+typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
+    GBADocumentSelectionTypeROM = 0,
+    GBADocumentSelectionTypeBIOS = 1,
+};
+
 @interface ViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UILabel *romStatusLabel;
+@property (nonatomic, strong) UILabel *biosStatusLabel;
 @property (nonatomic, strong) UIButton *loadROMButton;
+@property (nonatomic, strong) UIButton *loadBIOSButton;
 @property (nonatomic, strong) UIButton *playPauseButton;
 @property (nonatomic, strong) UIImageView *screenView;
 @property (nonatomic, strong) GBAEngine *engine;
 @property (nonatomic, strong, nullable) CADisplayLink *displayLink;
 @property (nonatomic, assign) BOOL romLoaded;
 @property (nonatomic, assign) CGColorSpaceRef frameColorSpace;
+@property (nonatomic, assign) GBADocumentSelectionType documentSelectionType;
 @end
 
 @implementation ViewController
@@ -29,6 +37,7 @@
     [self setupUI];
     [self refreshPlayState];
     self.statusLabel.text = @"ROMを選択してください";
+    self.biosStatusLabel.text = @"BIOS: 内蔵BIOS";
 }
 
 - (void)dealloc {
@@ -52,6 +61,12 @@
     self.romStatusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     self.romStatusLabel.numberOfLines = 0;
 
+    self.biosStatusLabel = [[UILabel alloc] init];
+    self.biosStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.biosStatusLabel.text = @"BIOS: 内蔵BIOS";
+    self.biosStatusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    self.biosStatusLabel.numberOfLines = 0;
+
     self.screenView = [[UIImageView alloc] init];
     self.screenView.translatesAutoresizingMaskIntoConstraints = NO;
     self.screenView.backgroundColor = UIColor.blackColor;
@@ -66,6 +81,11 @@
     [self.loadROMButton setTitle:@"ROMを選択" forState:UIControlStateNormal];
     [self.loadROMButton addTarget:self action:@selector(selectROM) forControlEvents:UIControlEventTouchUpInside];
 
+    self.loadBIOSButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.loadBIOSButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.loadBIOSButton setTitle:@"BIOSを選択" forState:UIControlStateNormal];
+    [self.loadBIOSButton addTarget:self action:@selector(selectBIOS) forControlEvents:UIControlEventTouchUpInside];
+
     self.playPauseButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.playPauseButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self.playPauseButton setTitle:@"再生" forState:UIControlStateNormal];
@@ -75,7 +95,9 @@
         self.screenView,
         self.statusLabel,
         self.romStatusLabel,
+        self.biosStatusLabel,
         self.loadROMButton,
+        self.loadBIOSButton,
         self.playPauseButton
     ]];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -95,10 +117,15 @@
 }
 
 - (void)selectROM {
-    [self presentDocumentPicker];
+    [self presentDocumentPickerForType:GBADocumentSelectionTypeROM];
 }
 
-- (void)presentDocumentPicker {
+- (void)selectBIOS {
+    [self presentDocumentPickerForType:GBADocumentSelectionTypeBIOS];
+}
+
+- (void)presentDocumentPickerForType:(GBADocumentSelectionType)selectionType {
+    self.documentSelectionType = selectionType;
     NSArray<UTType *> *types = @[UTTypeData];
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
     picker.delegate = self;
@@ -119,19 +146,37 @@
 
     BOOL scoped = [url startAccessingSecurityScopedResource];
     NSError *error = nil;
-    BOOL loaded = [self.engine loadROMAtPath:url.path error:&error];
-    if (loaded) {
-        self.romLoaded = YES;
-        self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
-        [self.engine reset];
-        [self.engine setKeysPressedMask:0x0000];
-        [self renderCurrentFrame];
-        self.statusLabel.text = @"ROMを読み込みました";
+    (void)controller;
+    BOOL isBIOSSelection = (self.documentSelectionType == GBADocumentSelectionTypeBIOS);
+    if (isBIOSSelection) {
+        BOOL biosLoaded = [self.engine loadBIOSAtPath:url.path error:&error];
+        if (biosLoaded) {
+            self.biosStatusLabel.text = [NSString stringWithFormat:@"BIOS: %@", url.lastPathComponent ?: @"(不明)"];
+            self.statusLabel.text = @"BIOSを読み込みました";
+            if (self.romLoaded) {
+                [self.engine reset];
+                [self.engine setKeysPressedMask:0x0000];
+                [self renderCurrentFrame];
+            }
+        } else {
+            self.biosStatusLabel.text = @"BIOS: 読み込み失敗";
+            self.statusLabel.text = error.localizedDescription ?: @"BIOSロード失敗";
+        }
     } else {
-        self.romLoaded = NO;
-        self.romStatusLabel.text = @"ROM: 読み込み失敗";
-        self.statusLabel.text = error.localizedDescription ?: @"ROMロード失敗";
-        [self stopPlayback];
+        BOOL loaded = [self.engine loadROMAtPath:url.path error:&error];
+        if (loaded) {
+            self.romLoaded = YES;
+            self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
+            [self.engine reset];
+            [self.engine setKeysPressedMask:0x0000];
+            [self renderCurrentFrame];
+            self.statusLabel.text = @"ROMを読み込みました";
+        } else {
+            self.romLoaded = NO;
+            self.romStatusLabel.text = @"ROM: 読み込み失敗";
+            self.statusLabel.text = error.localizedDescription ?: @"ROMロード失敗";
+            [self stopPlayback];
+        }
     }
 
     if (scoped) {
