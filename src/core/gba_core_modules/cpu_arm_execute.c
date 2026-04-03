@@ -278,6 +278,7 @@ static void count(uint32_t opcode, int cond_res)
 // We use GNU assembler syntax: "op src, dest" rather than "op dest, src"
 
 #if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
+#define HAVE_X86_ALU_ASM 1
 #define ALU_HEADER           asm("mov %%ecx, %%edi; "
 #define ALU_TRAILER          : "=D" (opcode) : "c" (opcode) : "eax", "ebx", "edx", "esi")
 #define EMIT0(op) #op "; "
@@ -312,6 +313,7 @@ static void count(uint32_t opcode, int cond_res)
 #define edi "%%edi"
 #define movzx movzb
 #elif defined(_MSC_VER) && defined(_M_IX86)
+#define HAVE_X86_ALU_ASM 1
 #define ALU_HEADER __asm { __asm mov ecx, opcode
 #define ALU_TRAILER }
 #define EMIT0(op) __asm op
@@ -326,6 +328,7 @@ static void count(uint32_t opcode, int cond_res)
 #define LABELREF(n, dir) l##n
 #endif
 
+#if defined(HAVE_X86_ALU_ASM)
 //X//#ifndef _MSC_VER
 // ALU op register usage:
 //    EAX -> 2nd operand value, result (RSB/RSC)
@@ -654,6 +657,7 @@ static void count(uint32_t opcode, int cond_res)
 
 // End of ALU macros
 //X//#endif //_MSC_VER
+#endif // HAVE_X86_ALU_ASM
 
 #if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
 
