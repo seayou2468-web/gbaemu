@@ -95,7 +95,7 @@ static void count(uint32_t opcode, int cond_res)
             dbgOutput((a), (b));                                  \
         }                                                         \
         while (0)
-#else
+#elif defined(_MSC_VER) && defined(_M_IX86)
 #define CONSOLE_OUTPUT(a, b) /* nothing */
 #endif
 
@@ -311,7 +311,7 @@ static void count(uint32_t opcode, int cond_res)
 #define esi "%%esi"
 #define edi "%%edi"
 #define movzx movzb
-#else
+#elif defined(_MSC_VER) && defined(_M_IX86)
 #define ALU_HEADER __asm { __asm mov ecx, opcode
 #define ALU_TRAILER }
 #define EMIT0(op) __asm op
@@ -672,7 +672,7 @@ static void count(uint32_t opcode, int cond_res)
         : "=r"(offset)                                 \
         : "0"(offset));
 
-#else // !__GNUC__, i.e. Visual C++
+#elif defined(_MSC_VER) && defined(_M_IX86) // Visual C++ x86
 
 #define ROR_IMM_MSR                                                                                             \
     __asm {                             \

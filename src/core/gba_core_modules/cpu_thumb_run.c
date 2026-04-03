@@ -453,7 +453,7 @@ static INSN_REGPARM void thumbBreakpoint(uint32_t opcode)
     EMIT2(movb, KONST(1), VAR(C_FLAG)) \
     "sub $0,%%ecx;" EMIT2(movb, KONST(0), VAR(V_FLAG))
 #endif
-#else // !__GNUC__
+#elif defined(_MSC_VER) && defined(_M_IX86)
 #define ADD_RD_RS_RN(N)                                                                                                                                                                                                                                                                                  \
     {                                                                                                                                                                                                                                                                                                    \
         __asm mov eax, source __asm mov ebx, dword ptr[OFFSET reg + 4 * eax] __asm add ebx, dword ptr[OFFSET reg + 4 * N] __asm mov eax, dest __asm mov dword ptr[OFFSET reg + 4 * eax], ebx __asm sets byte ptr N_FLAG __asm setz byte ptr Z_FLAG __asm setc byte ptr C_FLAG __asm seto byte ptr V_FLAG \
