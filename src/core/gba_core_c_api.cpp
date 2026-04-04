@@ -67,9 +67,9 @@ bool FileExists(const char* path) {
 // ---- frontend stubs required by embedded core ----
 CoreOptions coreOptions;
 int emulating = 0;
-int systemRedShift = 0;
-int systemGreenShift = 0;
-int systemBlueShift = 0;
+int systemRedShift = 19;
+int systemGreenShift = 11;
+int systemBlueShift = 3;
 int systemColorDepth = 32;
 int systemVerbose = 0;
 int systemFrameSkip = 0;
@@ -343,47 +343,73 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         if (out_size) *out_size = 0;
         return nullptr;
     }
-    // Keep this path intentionally simple (no switch/case nesting) to avoid
-    // parser-fragile merge states and match VBA-M row layout addressing.
-    const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
-    for (int y = 0; y < 160; ++y) {
-        const uint32_t* row = src + (kFrameStride32 * (y + kFrameOffset32));
+
+    switch (systemColorDepth) {
+    case 8: {
+        const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
+#ifdef __LIBRETRO__
+        constexpr int kStride = 240;
+#else
+        constexpr int kStride = 244;
+#endif
+        for (int y = 0; y < 160; ++y) {
+            const uint8_t* row = src + (kStride * (y + kFrameOffset32));
+            for (int x = 0; x < 240; ++x) {
+                const uint8_t v = row[x];
+                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(v) << 16) |
+                    (static_cast<uint32_t>(v) << 8) | v;
+            }
+        }
+        break;
+    }
+    case 16: {
+        const uint16_t* src = reinterpret_cast<const uint16_t*>(g_pix);
+#ifdef __LIBRETRO__
+        constexpr int kStride = 240;
+#else
+        constexpr int kStride = 242;
+#endif
+        for (int y = 0; y < 160; ++y) {
+            const uint16_t* row = src + (kStride * (y + kFrameOffset32));
+            for (int x = 0; x < 240; ++x) {
+                const uint16_t c = row[x];
                 const uint8_t r = static_cast<uint8_t>((c & 0x1F) << 3);
                 const uint8_t g = static_cast<uint8_t>(((c >> 5) & 0x1F) << 3);
                 const uint8_t b = static_cast<uint8_t>(((c >> 10) & 0x1F) << 3);
-                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b;
+                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+                    (static_cast<uint32_t>(g) << 8) | b;
             }
-            break;
         }
-        case 24: {
-            const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
-            const uint8_t* row = src + (240 * 3 * y);
+        break;
+    }
+    case 24: {
+        const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
+        constexpr int kStride = 240 * 3;
+        for (int y = 0; y < 160; ++y) {
+            const uint8_t* row = src + (kStride * (y + kFrameOffset32));
             for (int x = 0; x < 240; ++x) {
                 const uint8_t b = row[x * 3 + 0];
                 const uint8_t g = row[x * 3 + 1];
                 const uint8_t r = row[x * 3 + 2];
-                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b;
+                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+                    (static_cast<uint32_t>(g) << 8) | b;
             }
-            break;
         }
-        case 8: {
-            const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
-            const uint8_t* row = src + (240 * y);
-            for (int x = 0; x < 240; ++x) {
-                const uint8_t v = row[x];
-                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(v) << 16) | (static_cast<uint32_t>(v) << 8) | v;
-            }
-            break;
-        }
-        case 32:
-        default: {
-            const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
-            const uint32_t* row = src + (240 * y);
-            std::memcpy(&handle->frame_cache[y * 240], row, 240 * sizeof(uint32_t));
-            break;
-        }
-        }
+        break;
     }
+    case 32:
+    default: {
+        const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
+        for (int y = 0; y < 160; ++y) {
+            const uint32_t* row = src + (kFrameStride32 * (y + kFrameOffset32));
+            for (int x = 0; x < 240; ++x) {
+                handle->frame_cache[y * 240 + x] = 0xFF000000u | (row[x] & 0x00FFFFFFu);
+            }
+        }
+        break;
+    }
+    }
+
     if (out_size) *out_size = kPixelCount;
     return handle->frame_cache;
 }
