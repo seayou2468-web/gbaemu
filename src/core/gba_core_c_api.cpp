@@ -216,6 +216,8 @@ struct GBACoreHandle {
     bool has_rom;
     bool bios_boot_watchdog;
     int bios_boot_frames;
+    int startup_blank_frames;
+    bool startup_recovery_done;
     uint32_t frame_cache[240 * 160];
 };
 
@@ -301,6 +303,8 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     CPUReset();
     handle->bios_boot_watchdog = use_bios_file;
     handle->bios_boot_frames = 0;
+    handle->startup_blank_frames = 0;
+    handle->startup_recovery_done = false;
 
     std::snprintf(handle->rom_path, sizeof(handle->rom_path), "%s", path);
     handle->has_rom = true;
@@ -334,6 +338,36 @@ void GBA_StepFrame(GBACoreHandle* handle) {
             CPUReset();
             handle->bios_boot_watchdog = false;
         }
+    }
+
+    if (!handle->startup_recovery_done &&
+        (DISPCNT & 0x80) &&
+        reg[15].I >= 0x08000000u &&
+        reg[15].I < 0x08010000u) {
+        size_t n = 0;
+        const uint32_t* frame = GBA_GetFrameBufferRGBA(handle, &n);
+        if (frame && n >= kPixelCount) {
+            const uint32_t p0 = frame[0] & 0x00FFFFFFu;
+            const uint32_t p1 = frame[(80 * 240) + 120] & 0x00FFFFFFu;
+            const uint32_t p2 = frame[(159 * 240) + 239] & 0x00FFFFFFu;
+            const bool likely_forced_blank = (p0 == 0x00F8F8F8u) && (p1 == 0x00F8F8F8u) && (p2 == 0x00F8F8F8u);
+            if (likely_forced_blank) {
+                if (++handle->startup_blank_frames >= 180) {
+                    std::fprintf(stderr,
+                        "[gba_core] startup recovery: persistent forced-blank at PC=%08X; retrying clean no-BIOS reset\n",
+                        reg[15].I);
+                    coreOptions.useBios = false;
+                    coreOptions.skipBios = true;
+                    CPUReset();
+                    handle->startup_recovery_done = true;
+                    handle->startup_blank_frames = 0;
+                }
+            } else {
+                handle->startup_blank_frames = 0;
+            }
+        }
+    } else {
+        handle->startup_blank_frames = 0;
     }
 
     SetError(handle, "");
