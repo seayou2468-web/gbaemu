@@ -220,9 +220,7 @@ void CPULoop(int ticks)
                     } else {
                         if (frameCount >= framesToSkip) {
                             (*renderLine)();
-                            // Defensive checks: skip rendering if g_pix is NULL or VCOUNT is out of range
-                            // This can happen during panel transitions or if state is corrupted
-                            if (g_pix && VCOUNT < 160) switch (systemColorDepth) {
+                            switch (systemColorDepth) {
                             case 8: {
 #ifdef __LIBRETRO__
                                 uint8_t* dest = (uint8_t*)g_pix + 240 * VCOUNT;
