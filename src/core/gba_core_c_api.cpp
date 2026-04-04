@@ -325,25 +325,11 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         if (out_size) *out_size = 0;
         return nullptr;
     }
-    const bool has_non_libretro_padding_32bpp = [&]() -> bool {
-        const uint32_t* src32 = reinterpret_cast<const uint32_t*>(g_pix);
-        int non_zero_padding_slots = 0;
-        for (int y = 0; y < 4; ++y) {
-            const size_t idx = static_cast<size_t>(241 * (y + 1) + 240);
-            if (src32[idx] != 0) ++non_zero_padding_slots;
-        }
-        return non_zero_padding_slots <= 1;
-    }();
-
     for (int y = 0; y < 160; ++y) {
         switch (systemColorDepth) {
         case 16: {
             const uint16_t* src = reinterpret_cast<const uint16_t*>(g_pix);
-#if defined(__LIBRETRO__)
             const uint16_t* row = src + (240 * y);
-#else
-            const uint16_t* row = src + (242 * (y + 1));
-#endif
             for (int x = 0; x < 240; ++x) {
                 const uint16_t c = row[x];
                 const uint8_t r = static_cast<uint8_t>((c & 0x1F) << 3);
@@ -355,11 +341,7 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         }
         case 24: {
             const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
-#if defined(__LIBRETRO__)
             const uint8_t* row = src + (240 * 3 * y);
-#else
-            const uint8_t* row = src + (240 * 3 * (y + 1));
-#endif
             for (int x = 0; x < 240; ++x) {
                 const uint8_t b = row[x * 3 + 0];
                 const uint8_t g = row[x * 3 + 1];
@@ -370,11 +352,7 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         }
         case 8: {
             const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
-#if defined(__LIBRETRO__)
             const uint8_t* row = src + (240 * y);
-#else
-            const uint8_t* row = src + (244 * (y + 1));
-#endif
             for (int x = 0; x < 240; ++x) {
                 const uint8_t v = row[x];
                 handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(v) << 16) | (static_cast<uint32_t>(v) << 8) | v;
@@ -384,7 +362,7 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         case 32:
         default: {
             const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
-            const uint32_t* row = has_non_libretro_padding_32bpp ? (src + (241 * (y + 1))) : (src + (240 * y));
+            const uint32_t* row = src + (240 * y);
             std::memcpy(&handle->frame_cache[y * 240], row, 240 * sizeof(uint32_t));
             break;
         }
