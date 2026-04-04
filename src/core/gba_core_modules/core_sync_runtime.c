@@ -641,6 +641,11 @@ void CPULoop(int ticks)
 
 void GBAEmulate(int ticks)
 {
+    // Keep frame waits bounded so ROMs that do not raise has_frames cannot
+    // stall the frontend forever.
+    const int maxFramePolls = 8;
+    int framePolls = 0;
+
     has_frames = false;
 
     // Read and process inputs
@@ -649,7 +654,8 @@ void GBAEmulate(int ticks)
     // Run until at least one frame has been produced.
     do {
         CPULoop(ticks);
-    } while (!has_frames);
+        framePolls++;
+    } while (!has_frames && framePolls < maxFramePolls);
 
 }
 
