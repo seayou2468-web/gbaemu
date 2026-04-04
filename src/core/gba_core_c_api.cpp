@@ -329,6 +329,10 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
     for (; y < 160; ++y) {
         case 8: {
             const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
+#if defined(__LIBRETRO__)
+            const uint8_t* row = src + (240 * y);
+#else
+#endif
                 const uint8_t r = static_cast<uint8_t>(((v >> 5) & 0x07) << 5);
                 const uint8_t g = static_cast<uint8_t>(((v >> 2) & 0x07) << 5);
                 const uint8_t b = static_cast<uint8_t>((v & 0x03) << 6);
@@ -339,7 +343,11 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         }
         case 16: {
             const uint16_t* src = reinterpret_cast<const uint16_t*>(g_pix);
+#if defined(__LIBRETRO__)
+            const uint16_t* row = src + (240 * y);
+#else
             const uint16_t* row = src + (242 * (y + 1));
+#endif
             for (int x = 0; x < 240; ++x) {
                 const uint16_t v = row[x];
                 const uint8_t r = static_cast<uint8_t>(((v >> systemRedShift) & 0x1F) << 3);
@@ -373,7 +381,11 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         case 32:
         default: {
             const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
+#if defined(__LIBRETRO__)
+            const uint32_t* row = src + (240 * y);
+#else
             const uint32_t* row = src + (241 * (y + 1));
+#endif
             std::memcpy(&handle->frame_cache[y * 240], row, 240 * sizeof(uint32_t));
             break;
         }
