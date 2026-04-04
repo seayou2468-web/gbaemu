@@ -111,14 +111,20 @@ void system10Frames() {}
 void systemFrame() {}
 void systemGbBorderOn() {}
 
+bool utilIsGBAImage(const char* file);
+
 FILE* utilOpenFile(const char* filename, const char* mode) { return std::fopen(filename, mode); }
 uint8_t* utilLoad(const char* path, bool (*accept)(const char*), uint8_t* data, int& size) {
     if (!path || !data) return nullptr;
-    if (accept && !accept(path)) return nullptr;
     FILE* f = std::fopen(path, "rb");
     if (!f) return nullptr;
     size_t n = std::fread(data, 1, static_cast<size_t>(size), f);
     std::fclose(f);
+    if (accept && !accept(path)) {
+        if (!(accept == utilIsGBAImage && n >= 0xC0)) {
+            return nullptr;
+        }
+    }
     size = static_cast<int>(n);
     return data;
 }
