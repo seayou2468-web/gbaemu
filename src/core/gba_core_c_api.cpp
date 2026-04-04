@@ -40,7 +40,8 @@ void InitColorMaps() {
     static bool init = false;
     if (init) return;
     init = true;
-    for (int c = 0; c < 0x10000; ++c) {
+    int c = 0;
+    for (; c < 0x10000; ++c) {
         systemColorMap8[c] = static_cast<uint8_t>((((c & 0x1f) << 3) & 0xE0) |
                                                   ((((c & 0x3e0) >> 5) << 0) & 0x1C) |
                                                   ((((c & 0x7c00) >> 10) >> 3) & 0x03));
