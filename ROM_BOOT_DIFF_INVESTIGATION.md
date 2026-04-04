@@ -52,3 +52,5 @@
 - 併せて、PPUモード0〜5実装の移植面を明確化するため、
   `ppu_common.c` / `ppu_tile_modes.c` / `ppu_bitmap_obj.c` に
   VBA-M参照実装と同等の `gba.h` / `gbaGlobals.h` / `gbaGfx.h` ヘッダ面を明示的に同期。
+- さらに入力マスクの極性差分を修正し、未入力時は `0x0000`（押下なし）を使うように変更。
+  (`systemReadJoypad` は「押下=1」ビットで受け取り、内部で `P1 = 0x03FF ^ joy` に変換されるため)

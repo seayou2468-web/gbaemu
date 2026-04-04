@@ -27,7 +27,7 @@
 namespace {
 constexpr int kFrameTicks = 280896;
 constexpr size_t kPixelCount = 240u * 160u;
-uint16_t g_keys = 0x03FF;
+uint16_t g_keys = 0x0000;
 
 void InitColorMaps() {
     static bool init = false;
@@ -212,7 +212,7 @@ GBACoreHandle* GBA_Create(void) {
     if (!h) return nullptr;
     h->bios_path[0] = '\0';
     h->rom_path[0] = '\0';
-    h->keys_pressed = 0x03FF;
+    h->keys_pressed = 0x0000;
     SetError(h, "");
     return h;
 }
