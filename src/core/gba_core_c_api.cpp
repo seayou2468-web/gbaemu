@@ -45,35 +45,6 @@ bool FileExists(const char* path) {
     return true;
 }
 
-bool IsSupportedBiosImage(const char* path) {
-    if (!path || !path[0]) return false;
-    FILE* f = std::fopen(path, "rb");
-    if (!f) return false;
-    uint8_t bios[0x4000];
-    size_t n = std::fread(bios, 1, sizeof(bios), f);
-    std::fclose(f);
-    if (n != sizeof(bios)) return false;
-    uint32_t crc = 0xFFFFFFFFu;
-    for (uint8_t byte : bios) {
-        crc ^= byte;
-        for (int bit = 0; bit < 8; ++bit) {
-            const bool lsb = (crc & 1u) != 0;
-            crc >>= 1;
-            if (lsb) crc ^= 0xEDB88320u;
-        }
-    }
-    crc ^= 0xFFFFFFFFu;
-    return crc == 0x81977335u;
-}
-
-bool HasValidBiosBootHeader() {
-    if (!g_rom) return false;
-    uint8_t checksum = 0;
-    for (int i = 0xA0; i <= 0xBC; ++i) {
-        checksum = static_cast<uint8_t>(checksum - g_rom[i] - 1);
-    }
-    return checksum == g_rom[0xBD];
-}
 }  // namespace
 
 // ---- frontend stubs required by embedded core ----
@@ -241,7 +212,7 @@ void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
 }
 
 bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
-    if (!handle || !FileExists(path) || !utilIsGBABios(path) || !IsSupportedBiosImage(path)) {
+    if (!handle || !FileExists(path) || !utilIsGBABios(path)) {
         SetError(handle, "failed to load bios");
         return false;
     }
@@ -275,8 +246,7 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
         return false;
     }
 
-    const bool requested_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
-    const bool use_bios_file = requested_bios_file && HasValidBiosBootHeader();
+    const bool use_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
     CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
     soundInit();
     CPUReset();
@@ -310,7 +280,7 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         if (reg[15].I >= 0x08000000u) {
             handle->bios_boot_watchdog = false;
         } else if (++handle->bios_boot_frames >= 300) {
-            CPUInit("", false);
+            coreOptions.useBios = false;
             CPUReset();
             handle->bios_boot_watchdog = false;
         }
