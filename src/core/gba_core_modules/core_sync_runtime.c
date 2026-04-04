@@ -642,12 +642,14 @@ void GBAEmulate(int ticks)
         // read default joystick
         joy = systemReadJoypad(-1);
 
-    // Runs nth number of ticks till vblank, outputs audio
-    // then the video frames.
-    // sanity check:
-    // wrapped in loop in case frames has not been written yet
-    while (!has_frames && (soundTicks < SOUND_CLOCK_TICKS))
-        CPULoop(ticks);
+    // Run core ticks for this frame budget.
+    //
+    // NOTE:
+    // In this embedding, audio callbacks are stubbed and `soundTicks` is not
+    // drained by the legacy audio path, so gating execution by
+    // `soundTicks < SOUND_CLOCK_TICKS` can prevent subsequent frames from
+    // running at all. We therefore drive CPU execution directly per frame.
+    CPULoop(ticks);
 
     // Flush sound using accumulated soundTick
     psoundTickfn();
