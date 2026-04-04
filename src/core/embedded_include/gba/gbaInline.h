@@ -206,16 +206,21 @@ static inline uint32_t CPUReadMemory(uint32_t address)
     case REGION_ROM2:
         if (IsEEPROM(address))
             return 0; // ignore reads from eeprom region outside 0x0D page reads    
-        else if ((address & 0x01FFFFFC) <= (gbaGetRomSize() - 4))
+        else if ((address & 0x01FFFFFC) < 0x02000000)
             value = READ32LE(((uint32_t *)&g_rom[address & 0x01FFFFFC]));
         else {
             value = (uint16_t)ROMReadOOB(address & 0x01FFFFFC);
             value |= (uint16_t)ROMReadOOB((address & 0x01FFFFFC) + 2) << 16;
         }
         break;
-    case REGION_ROM2EX:
-        if (cpuEEPROMEnabled)
+        case REGION_ROM2EX:
+        if (IsEEPROM(address))
             return eepromRead(address);
+        // Fallback to ROM read for mirrored regions
+        if ((address & 0x01FFFFFC) < 0x02000000) {
+            value = READ32LE(((uint32_t *)&g_rom[address & 0x01FFFFFC]));
+            break;
+        }
         goto unreadable;
     case REGION_SRAM:
     case REGION_SRAMEX:
@@ -373,14 +378,19 @@ static inline uint32_t CPUReadHalfWord(uint32_t address)
             value = rtcRead(address);
         else if (IsEEPROM(address))
             return 0; // ignore reads from eeprom region outside 0x0D page reads
-        else if ((address & 0x01FFFFFE) <= (gbaGetRomSize() - 2))
+        else if ((address & 0x01FFFFFE) < 0x02000000)
             value = READ16LE(((uint16_t *)&g_rom[address & 0x01FFFFFE]));
         else
             value = (uint16_t)ROMReadOOB(address & 0x01FFFFFE);
         break;
-    case REGION_ROM2EX:
-        if (cpuEEPROMEnabled)
+        case REGION_ROM2EX:
+        if (IsEEPROM(address))
             return eepromRead(address);
+        // Fallback to ROM read for mirrored regions
+        if ((address & 0x01FFFFFC) < 0x02000000) {
+            value = READ16LE(((uint16_t *)&g_rom[address & 0x01FFFFFE]));
+            break;
+        }
         goto unreadable;
     case REGION_SRAM:
     case REGION_SRAMEX:
@@ -498,13 +508,15 @@ static inline uint8_t CPUReadByte(uint32_t address)
     case REGION_ROM2:
         if (IsEEPROM(address))
             return 0; // ignore reads from eeprom region outside 0x0D page reads
-        else if ((address & 0x01FFFFFF) <= gbaGetRomSize())
+        else if ((address & 0x01FFFFFF) < 0x02000000)
             return g_rom[address & 0x01FFFFFF];
         else 
             return (uint8_t)ROMReadOOB(address & 0x01FFFFFE);
-    case REGION_ROM2EX:
-        if (cpuEEPROMEnabled)
+        case REGION_ROM2EX:
+        if (IsEEPROM(address))
             return DowncastU8(eepromRead(address));
+        if ((address & 0x01FFFFFF) < 0x02000000)
+            return g_rom[address & 0x01FFFFFF];
         goto unreadable;
     case REGION_SRAM:
     case REGION_SRAMEX:

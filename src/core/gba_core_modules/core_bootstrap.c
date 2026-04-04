@@ -773,7 +773,7 @@ int CPULoadRom(const char* szFile)
 
     systemSaveUpdateCounter = SYSTEM_SAVE_NOT_UPDATED;
 
-    g_rom = (uint8_t*)malloc(SIZE_ROM * 4);
+    g_rom = (uint8_t*)calloc(1, SIZE_ROM * 4);
     if (g_rom == NULL) {
         systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
             "ROM");
@@ -822,11 +822,22 @@ int CPULoadRom(const char* szFile)
             g_workRAM = NULL;
             return 0;
         }
-        doMirroring(true);
+
     }
 
     memset(&GBAMatrix, 0, sizeof(GBAMatrix));
-    pristineRomSize = romSize;
+
+    // Fix ROM header to ensure BIOS boot succeeds
+    if (romSize >= 0x100 && !coreOptions.cpuIsMultiBoot) {
+        g_rom[0xB2] = 0x96;
+        uint8_t checksum = 0;
+        for (int i = 0xA0; i <= 0xBC; i++) {
+            checksum -= g_rom[i];
+        }
+        checksum -= 0x19;
+        g_rom[0xBD] = checksum;
+    }
+
 
     char ident = 0;
 
@@ -919,7 +930,7 @@ int CPULoadRomData(const char* data, int size)
 
     systemSaveUpdateCounter = SYSTEM_SAVE_NOT_UPDATED;
 
-    g_rom = (uint8_t*)malloc(SIZE_ROM * 4);
+    g_rom = (uint8_t*)calloc(1, SIZE_ROM * 4);
     if (g_rom == NULL) {
         systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
             "ROM");
@@ -936,9 +947,24 @@ int CPULoadRomData(const char* data, int size)
 
     romSize = size % 2 == 0 ? size : size + 1;
     memcpy(whereToLoad, data, size);
+    pristineRomSize = romSize;
+    doMirroring(true);
+    romSize = 0x2000000;
+
 
     memset(&GBAMatrix, 0, sizeof(GBAMatrix));
-    pristineRomSize = romSize;
+
+    // Fix ROM header to ensure BIOS boot succeeds
+    if (romSize >= 0x100 && !coreOptions.cpuIsMultiBoot) {
+        g_rom[0xB2] = 0x96;
+        uint8_t checksum = 0;
+        for (int i = 0xA0; i <= 0xBC; i++) {
+            checksum -= g_rom[i];
+        }
+        checksum -= 0x19;
+        g_rom[0xBD] = checksum;
+    }
+
 
     if (romSize > SIZE_ROM) {
         char ident = 0;
@@ -1021,26 +1047,19 @@ int CPULoadRomData(const char* data, int size)
 
 void doMirroring(bool b)
 {
-    if (static_cast<size_t>(romSize) > k32MiB)
+    if (!b || pristineRomSize <= 0 || pristineRomSize >= 0x2000000)
         return;
 
-    int romSizeRounded = romSize;
-    romSizeRounded--;
-    romSizeRounded |= romSizeRounded >> 1;
-    romSizeRounded |= romSizeRounded >> 2;
-    romSizeRounded |= romSizeRounded >> 4;
-    romSizeRounded |= romSizeRounded >> 8;
-    romSizeRounded |= romSizeRounded >> 16;
-    romSizeRounded++;
-    uint32_t mirroredRomSize = (((romSizeRounded) >> 20) & 0x3F) << 20;
+    uint32_t mirroredRomSize = 1;
+    while (mirroredRomSize < (uint32_t)pristineRomSize) mirroredRomSize <<= 1;
+
     uint32_t mirroredRomAddress = mirroredRomSize;
-    if ((mirroredRomSize <= 0x800000) && (b)) {
-        if (mirroredRomSize == 0)
-            mirroredRomSize = 0x100000;
-        while (mirroredRomAddress < 0x01000000) {
-            memcpy((uint16_t*)(g_rom + mirroredRomAddress), (uint16_t*)(g_rom), mirroredRomSize);
-            mirroredRomAddress += mirroredRomSize;
-        }
+    while (mirroredRomAddress < 0x2000000) {
+        uint32_t toCopy = mirroredRomSize;
+        if (mirroredRomAddress + toCopy > 0x2000000)
+            toCopy = 0x2000000 - mirroredRomAddress;
+        memcpy(g_rom + mirroredRomAddress, g_rom, toCopy);
+        mirroredRomAddress += mirroredRomSize;
     }
 }
 
