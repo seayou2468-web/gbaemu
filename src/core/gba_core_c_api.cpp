@@ -118,9 +118,24 @@ uint8_t* utilLoadFromStream(gzFile, uint8_t*, int&) { return nullptr; }
 bool utilIsGBAImage(const char* file) {
     if (!file) return false;
     const char* ext = std::strrchr(file, '.');
+    if (!ext) return false;
+    return std::strcmp(ext, ".gba") == 0 || std::strcmp(ext, ".GBA") == 0 ||
+           std::strcmp(ext, ".agb") == 0 || std::strcmp(ext, ".AGB") == 0 ||
+           std::strcmp(ext, ".bin") == 0 || std::strcmp(ext, ".BIN") == 0;
+}
+
+static bool unused_utilIsGBAImage(const char* file) {
+    if (!file) return false;
+    const char* ext = std::strrchr(file, '.');
     return ext && std::strcmp(ext, ".gba") == 0;
 }
-bool utilIsGBABios(const char*) { return true; }
+bool utilIsGBABios(const char* file) {
+    if (!file) return false;
+    const char* ext = std::strrchr(file, '.');
+    if (!ext) return false;
+    return std::strcmp(ext, ".bin") == 0 || std::strcmp(ext, ".BIN") == 0 ||
+           std::strcmp(ext, ".bios") == 0 || std::strcmp(ext, ".BIOS") == 0;
+}
 bool utilWritePNGFile(const char*, int, int, uint8_t*) { return false; }
 bool utilWriteBMPFile(const char*, int, int, uint8_t*) { return false; }
 void utilWriteData(gzFile, variable_desc*) {}
@@ -135,7 +150,13 @@ z_off_t utilGzSeek(gzFile, z_off_t, int) { return 0; }
 bool agbPrintWrite(uint32_t, uint16_t) { return false; }
 void agbPrintFlush() {}
 void agbPrintEnable(bool) {}
-bool CPUIsGBABios(const char*) { return true; }
+bool CPUIsGBABios(const char* file) {
+    if (!file) return false;
+    const char* ext = std::strrchr(file, '.');
+    if (!ext) return true;
+    return std::strcmp(ext, ".bin") == 0 || std::strcmp(ext, ".BIN") == 0 ||
+           std::strcmp(ext, ".bios") == 0 || std::strcmp(ext, ".BIOS") == 0;
+}
 const char* elfGetAddressSymbol(uint32_t) { return nullptr; }
 
 int SOUND_CLOCK_TICKS = kFrameTicks;

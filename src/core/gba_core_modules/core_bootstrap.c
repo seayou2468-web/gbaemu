@@ -1376,7 +1376,7 @@ void CPUSoftwareInterrupt(int comment)
         return;
     }
 #endif
-    if (coreOptions.useBios) {
+    if (coreOptions.useBios && !coreOptions.skipBios) {
 #ifdef GBA_LOGGING
         if (systemVerbose & VERBOSE_SWI) {
             log("SWI: %08x at %08x (0x%08x,0x%08x,0x%08x,VCOUNT = %2d)\n", comment,
@@ -1786,6 +1786,7 @@ void CPUInit(const char* biosFileName, bool useBiosFile)
 #endif
     eepromInUse = 0;
     coreOptions.useBios = false;
+    coreOptions.skipBios = false;
 
     if (useBiosFile && strlen(biosFileName) > 0) {
         int size = 0x4000;
@@ -1793,14 +1794,12 @@ void CPUInit(const char* biosFileName, bool useBiosFile)
                 CPUIsGBABios,
                 g_bios,
                 size)) {
-            if (size == 0x4000)
-                coreOptions.useBios = true;
-            else
-                systemMessage(MSG_INVALID_BIOS_FILE_SIZE, N_("Invalid BIOS file size"));
+            if (size >= 0x4000) coreOptions.useBios = true;
         }
     }
 
     if (!coreOptions.useBios) {
+        coreOptions.skipBios = true;
         memcpy(g_bios, myROM, sizeof(myROM));
     }
 
@@ -2141,6 +2140,7 @@ void CPUReset()
 
     // make sure registers are correctly initialized if not using BIOS
     if (!coreOptions.useBios) {
+        coreOptions.skipBios = true;
         if (coreOptions.cpuIsMultiBoot)
             BIOS_RegisterRamReset(0xfe);
         else

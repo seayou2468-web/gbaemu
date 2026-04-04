@@ -219,7 +219,7 @@ void CPULoop(int ticks)
 #ifdef __LIBRETRO__
                                 uint8_t* dest = (uint8_t*)g_pix + 240 * VCOUNT;
 #else
-                                uint8_t* dest = (uint8_t*)g_pix + 244 * (VCOUNT + 1);
+                                uint8_t* dest = (uint8_t*)g_pix + 240 * VCOUNT;
 #endif
                                 for (int x = 0; x < 240;) {
                                     *dest++ = systemColorMap8[g_lineMix[x++] & 0xFFFF];
@@ -251,7 +251,7 @@ void CPULoop(int ticks)
 #ifdef __LIBRETRO__
                                 uint16_t* dest = (uint16_t*)g_pix + 240 * VCOUNT;
 #else
-                                uint16_t* dest = (uint16_t*)g_pix + 242 * (VCOUNT + 1);
+                                uint16_t* dest = (uint16_t*)g_pix + 240 * VCOUNT;
 #endif
                                 for (int x = 0; x < 240;) {
                                     *dest++ = systemColorMap16[g_lineMix[x++] & 0xFFFF];
@@ -276,11 +276,10 @@ void CPULoop(int ticks)
                                 }
 // for filters that read past the screen
 #ifndef __LIBRETRO__
-                                *dest++ = 0;
 #endif
                             } break;
                             case 24: {
-                                uint8_t* dest = (uint8_t*)g_pix + (240 * 3) * (VCOUNT + 1);
+                                uint8_t* dest = (uint8_t*)g_pix + (240 * 3) * VCOUNT;
                                 for (int x = 0; x < 240;) {
                                     uint32_t color = systemColorMap32[g_lineMix[x++] & 0xFFFF];
                                     *dest++ = (uint8_t)(color & 0xFF);
@@ -336,7 +335,7 @@ void CPULoop(int ticks)
                             } break;
                             case 32: {
 #ifdef __LIBRETRO__
-                                uint32_t* dest = (uint32_t*)g_pix + 240 * VCOUNT;
+                                uint32_t* dest = (uint32_t*)g_pix + 241 * (VCOUNT + 1);
 #else
                                 uint32_t* dest = (uint32_t*)g_pix + 241 * (VCOUNT + 1);
 #endif
@@ -646,7 +645,8 @@ void GBAEmulate(int ticks)
     // then the video frames.
     // sanity check:
     // wrapped in loop in case frames has not been written yet
-    while (!has_frames && (soundTicks < SOUND_CLOCK_TICKS))
+    int loop_guard = 0;
+    while (!has_frames && (soundTicks < SOUND_CLOCK_TICKS) && (loop_guard++ < 200))
         CPULoop(ticks);
 
     // Flush sound using accumulated soundTick

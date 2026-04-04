@@ -8,12 +8,6 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "utils/stb_image_write.h"
 
-std::vector<uint8_t> LoadFile(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return {};
-    return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-}
-
 int main(int argc, char** argv) {
     if (argc < 4) {
         std::printf("Usage: %s <rom_path> <frames> <output_png> [bios_path]\n", argv[0]);
@@ -27,11 +21,8 @@ int main(int argc, char** argv) {
 
     gba::GBACore core;
     if (!bios_path.empty()) {
-        std::vector<uint8_t> bios = LoadFile(bios_path);
-        std::string bios_error;
-        if (bios.empty() || !core.LoadBIOS(bios, &bios_error)) {
-            std::printf("Failed to load BIOS (%s): %s\n", bios_path.c_str(),
-                        bios_error.empty() ? "unknown error" : bios_error.c_str());
+        if (!core.LoadBIOSFromPath(bios_path)) {
+            std::printf("Failed to load BIOS (%s): %s\n", bios_path.c_str(), core.GetLastError().c_str());
             return 1;
         }
     } else {

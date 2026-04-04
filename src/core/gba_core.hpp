@@ -31,6 +31,16 @@ public:
         return false;
     }
 
+    bool LoadBIOSFromPath(const std::string& path) {
+        if (!handle_) return false;
+        return GBA_LoadBIOSFromPath(handle_, path.c_str());
+    }
+
+    std::string GetLastError() const {
+        if (!handle_) return "no handle";
+        return GBA_GetLastError(handle_);
+    }
+
     void LoadBuiltInBIOS() {
         if (handle_) {
             GBA_LoadBuiltInBIOS(handle_);
