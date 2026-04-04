@@ -44,6 +44,15 @@ bool FileExists(const char* path) {
     std::fclose(f);
     return true;
 }
+
+bool HasValidBiosBootHeader() {
+    if (!g_rom) return false;
+    uint8_t checksum = 0;
+    for (int i = 0xA0; i <= 0xBC; ++i) {
+        checksum = static_cast<uint8_t>(checksum - g_rom[i] - 1);
+    }
+    return checksum == g_rom[0xBD];
+}
 }  // namespace
 
 // ---- frontend stubs required by embedded core ----
@@ -243,10 +252,11 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
         return false;
     }
 
-    const bool use_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
+    const bool requested_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
+    const bool use_bios_file = requested_bios_file && HasValidBiosBootHeader();
     CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
-    CPUReset();
     soundInit();
+    CPUReset();
 
     std::snprintf(handle->rom_path, sizeof(handle->rom_path), "%s", path);
     handle->has_rom = true;

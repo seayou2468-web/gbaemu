@@ -845,14 +845,12 @@ int CPULoadRom(const char* szFile)
         }
     }
 
+    g_bios = (uint8_t*)calloc(1, SIZE_BIOS);
     if (g_bios == NULL) {
-        g_bios = (uint8_t*)calloc(1, SIZE_BIOS);
-        if (g_bios == NULL) {
-            systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
-                "BIOS");
-            CPUCleanUp();
-            return 0;
-        }
+        systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
+            "BIOS");
+        CPUCleanUp();
+        return 0;
     }
     g_internalRAM = (uint8_t*)calloc(1, SIZE_IRAM);
     if (g_internalRAM == NULL) {
@@ -956,14 +954,12 @@ int CPULoadRomData(const char* data, int size)
         }
     }
 
+    g_bios = (uint8_t*)calloc(1, SIZE_BIOS);
     if (g_bios == NULL) {
-        g_bios = (uint8_t*)calloc(1, SIZE_BIOS);
-        if (g_bios == NULL) {
-            systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
-                "BIOS");
-            CPUCleanUp();
-            return 0;
-        }
+        systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
+            "BIOS");
+        CPUCleanUp();
+        return 0;
     }
     g_internalRAM = (uint8_t*)calloc(1, SIZE_IRAM);
     if (g_internalRAM == NULL) {
@@ -1788,15 +1784,6 @@ void CPUInit(const char* biosFileName, bool useBiosFile)
         cpuBiosSwapped = true;
     }
 #endif
-    if (g_bios == NULL) {
-        g_bios = (uint8_t*)calloc(1, SIZE_BIOS);
-        if (g_bios == NULL) {
-            systemMessage(MSG_OUT_OF_MEMORY, N_("Failed to allocate memory for %s"),
-                "BIOS");
-            return;
-        }
-    }
-
     eepromInUse = 0;
     coreOptions.useBios = false;
 
