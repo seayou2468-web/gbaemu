@@ -356,8 +356,16 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
             const uint8_t* row = src + (kStride * (y + kFrameOffset32));
             for (int x = 0; x < 240; ++x) {
                 const uint8_t v = row[x];
-                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(v) << 16) |
-                    (static_cast<uint32_t>(v) << 8) | v;
+                // systemColorMap8 stores RGB332-like packed color.
+                uint8_t r = static_cast<uint8_t>(v & 0xE0);
+                uint8_t g = static_cast<uint8_t>((v & 0x1C) << 3);
+                uint8_t b = static_cast<uint8_t>((v & 0x03) << 6);
+                // Bit replication to better expand to 8-bit channels.
+                r |= static_cast<uint8_t>(r >> 3);
+                g |= static_cast<uint8_t>(g >> 3);
+                b |= static_cast<uint8_t>(b >> 2);
+                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+                    (static_cast<uint32_t>(g) << 8) | b;
             }
         }
         break;
