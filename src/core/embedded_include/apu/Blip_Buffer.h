@@ -1,6 +1,3 @@
-#ifndef EMBEDDED_INCLUDE_APU_BLIP_BUFFER_H_
-#define EMBEDDED_INCLUDE_APU_BLIP_BUFFER_H_
-
 // Band-limited sound synthesis buffer
 
 // Blip_Buffer 0.4.1
@@ -674,5 +671,4 @@ inline blip_ulong Blip_Buffer::unsettled() const
 int const blip_max_length = 0;
 int const blip_default_length = 250; // 1/4 second
 
-#endif
 #endif

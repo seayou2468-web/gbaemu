@@ -1,6 +1,3 @@
-#ifndef EMBEDDED_INCLUDE_APU_GB_APU_H_
-#define EMBEDDED_INCLUDE_APU_GB_APU_H_
-
 // Nintendo Game Boy sound hardware emulator with save state support
 
 // Gb_Snd_Emu 0.2.0
@@ -9,8 +6,8 @@
 
 #include <cstdint>
 
-#include "core/apu/blargg_common.h"
-#include "core/apu/Gb_Oscs.h"
+#include "blargg_common.h"
+#include "Gb_Oscs.h"
 
 struct gb_apu_state_t;
 
@@ -195,5 +192,4 @@ struct gb_apu_state_t {
         val_t unused[13]; // for future expansion
 };
 
-#endif
 #endif

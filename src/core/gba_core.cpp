@@ -4,6 +4,7 @@
 #include "./gba_core_modules/core_bootstrap.c"
 #include "./gba_core_modules/core_input_runtime.c"
 #include "./gba_core_modules/core_unlicensed_runtime.c"
+#include "./gba_core_modules/apu_interrupts.c"
 #include "./gba_core_modules/cpu_helpers.c"
 #include "./gba_core_modules/cpu_swi.c"
 #include "./gba_core_modules/cpu_arm_execute.c"

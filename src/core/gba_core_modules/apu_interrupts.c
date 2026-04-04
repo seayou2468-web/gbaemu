@@ -254,6 +254,11 @@ static int gba_to_gb_sound(int addr)
 
 void soundEvent8(uint32_t address, uint8_t data)
 {
+    if (!gb_apu || !stereo_buffer) {
+        g_ioMem[address] = data;
+        return;
+    }
+
     int gb_addr = gba_to_gb_sound(address);
     if (gb_addr) {
         g_ioMem[address] = data;
@@ -294,6 +299,11 @@ static void write_SGCNT0_H(int data)
 
 void soundEvent16(uint32_t address, uint16_t data)
 {
+    if (!gb_apu || !stereo_buffer) {
+        WRITE16LE(&g_ioMem[address], data);
+        return;
+    }
+
     switch (address) {
     case SGCNT0_H:
         write_SGCNT0_H(data);
@@ -325,12 +335,18 @@ void soundEvent16(uint32_t address, uint16_t data)
 
 void soundTimerOverflow(int timer)
 {
+    if (!gb_apu || !stereo_buffer)
+        return;
+
     pcm[0].timer_overflowed(timer);
     pcm[1].timer_overflowed(timer);
 }
 
 static void end_frame(blip_time_t time)
 {
+    if (!gb_apu || !stereo_buffer)
+        return;
+
     pcm[0].pcm.end_frame(time);
     pcm[1].pcm.end_frame(time);
 

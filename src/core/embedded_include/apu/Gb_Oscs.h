@@ -1,6 +1,3 @@
-#ifndef EMBEDDED_INCLUDE_APU_GB_OSCS_H_
-#define EMBEDDED_INCLUDE_APU_GB_OSCS_H_
-
 // Private oscillators used by Gb_Apu
 
 // Gb_Snd_Emu 0.2.0
@@ -9,7 +6,7 @@
 
 #include <cstdint>
 
-#include "core/apu/Blip_Buffer.h"
+#include "Blip_Buffer.h"
 
 #ifndef GB_APU_OVERCLOCK
 #define GB_APU_OVERCLOCK 1
@@ -232,5 +229,4 @@ inline void Gb_Wave::write(unsigned addr, uint8_t data)
         ;
 }
 
-#endif
 #endif

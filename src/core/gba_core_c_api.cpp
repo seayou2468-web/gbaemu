@@ -15,6 +15,7 @@
 #include "./embedded_include/gba/gba.h"
 #include "./embedded_include/gba/gbaGlobals.h"
 #include "./embedded_include/gba/gbaLink.h"
+#include "./embedded_include/gba/gbaSound.h"
 #include "./gba_core_modules/module_forward_decls.h"
 
 namespace {
@@ -120,7 +121,15 @@ bool utilIsGBAImage(const char* file) {
     const char* ext = std::strrchr(file, '.');
     return ext && std::strcmp(ext, ".gba") == 0;
 }
-bool utilIsGBABios(const char*) { return true; }
+bool utilIsGBABios(const char* file) {
+    if (!file || !file[0]) return false;
+    FILE* f = std::fopen(file, "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    const long size = std::ftell(f);
+    std::fclose(f);
+    return size == 0x4000;
+}
 bool utilWritePNGFile(const char*, int, int, uint8_t*) { return false; }
 bool utilWriteBMPFile(const char*, int, int, uint8_t*) { return false; }
 void utilWriteData(gzFile, variable_desc*) {}
@@ -135,22 +144,8 @@ z_off_t utilGzSeek(gzFile, z_off_t, int) { return 0; }
 bool agbPrintWrite(uint32_t, uint16_t) { return false; }
 void agbPrintFlush() {}
 void agbPrintEnable(bool) {}
-bool CPUIsGBABios(const char*) { return true; }
+bool CPUIsGBABios(const char* file) { return utilIsGBABios(file); }
 const char* elfGetAddressSymbol(uint32_t) { return nullptr; }
-
-int SOUND_CLOCK_TICKS = kFrameTicks;
-int soundTicks = 0;
-void psoundTickfn() {}
-void soundEvent8(uint32_t, uint8_t) {}
-void soundEvent16(uint32_t, uint16_t) {}
-void soundPause() {}
-void soundResume() {}
-void soundReset() {}
-void soundSetThrottle(unsigned short) {}
-float soundGetVolume() { return 1.0f; }
-void soundSetVolume(float) {}
-void soundTimerOverflow(int) {}
-void interp_rate() {}
 
 int cheatsCheckKeys(uint32_t, uint32_t) { return 0; }
 void StartLink(uint16_t) {}
@@ -197,6 +192,7 @@ GBACoreHandle* GBA_Create(void) {
 
 void GBA_Destroy(GBACoreHandle* handle) {
     if (!handle) return;
+    soundShutdown();
     CPUCleanUp();
     std::free(handle);
 }
@@ -225,6 +221,7 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
         return false;
     }
 
+    soundShutdown();
     CPUCleanUp();
     int loaded = CPULoadRom(path);
     if (!loaded) {
@@ -234,6 +231,7 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
 
     const bool use_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
     CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
+    soundInit();
     CPUReset();
 
     std::snprintf(handle->rom_path, sizeof(handle->rom_path), "%s", path);
@@ -247,6 +245,7 @@ void GBA_Reset(GBACoreHandle* handle) {
         if (handle) SetError(handle, "rom not loaded");
         return;
     }
+    soundInit();
     CPUReset();
     SetError(handle, "");
 }

@@ -1,6 +1,3 @@
-#ifndef EMBEDDED_INCLUDE_APU_EFFECTS_BUFFER_H_
-#define EMBEDDED_INCLUDE_APU_EFFECTS_BUFFER_H_
-
 // Multi-channel effects buffer with echo and individual panning for each channel
 
 // Game_Music_Emu $vers
@@ -9,7 +6,7 @@
 
 #include <vector>
 
-#include "core/apu/Multi_Buffer.h"
+#include "Multi_Buffer.h"
 
 // See Simple_Effects_Buffer (below) for a simpler interface
 
@@ -150,5 +147,4 @@ class Simple_Effects_Buffer : public Effects_Buffer
         void chan_config(); // hide
 };
 
-#endif
 #endif

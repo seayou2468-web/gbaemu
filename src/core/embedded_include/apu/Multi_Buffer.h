@@ -1,14 +1,11 @@
-#ifndef EMBEDDED_INCLUDE_APU_MULTI_BUFFER_H_
-#define EMBEDDED_INCLUDE_APU_MULTI_BUFFER_H_
-
 // Multi-channel sound buffer interface, and basic mono and stereo buffers
 
 // Blip_Buffer 0.4.1
 #ifndef MULTI_BUFFER_H
 #define MULTI_BUFFER_H
 
-#include "core/apu/Blip_Buffer.h"
-#include "core/apu/blargg_common.h"
+#include "Blip_Buffer.h"
+#include "blargg_common.h"
 
 // Interface to one or more Blip_Buffers mapped to one or more channels
 // consisting of left, center, and right buffers.
@@ -305,5 +302,4 @@ inline blargg_err_t Multi_Buffer::set_channel_count(int n, int const *types)
         return 0;
 }
 
-#endif
 #endif

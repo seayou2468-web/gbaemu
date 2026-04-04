@@ -1,6 +1,3 @@
-#ifndef EMBEDDED_INCLUDE_APU_BLARGG_COMMON_H_
-#define EMBEDDED_INCLUDE_APU_BLARGG_COMMON_H_
-
 // Sets up common environment for Shay Green's libraries.
 // To change configuration options, modify blargg_config.h, not this file.
 
@@ -15,7 +12,7 @@
 
 #undef BLARGG_COMMON_H
 // allow blargg_config.h to #include blargg_common.h
-#include "core/apu/blargg_config.h"
+#include "blargg_config.h"
 #ifndef BLARGG_COMMON_H
 #define BLARGG_COMMON_H
 
@@ -229,6 +226,5 @@ struct BOOST {
 #define BLARGG_PURE(def) def
 #endif
 
-#endif
 #endif
 #endif
