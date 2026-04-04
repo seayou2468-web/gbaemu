@@ -34,12 +34,15 @@ void InitColorMaps() {
     if (init) return;
     init = true;
     for (int c = 0; c < 0x10000; ++c) {
-        const uint8_t r = static_cast<uint8_t>((c & 0x1F) << 3);
-        const uint8_t g = static_cast<uint8_t>(((c >> 5) & 0x1F) << 3);
-        const uint8_t b = static_cast<uint8_t>(((c >> 10) & 0x1F) << 3);
-        systemColorMap8[c] = static_cast<uint8_t>((r + g + b) / 3);
-        systemColorMap16[c] = static_cast<uint16_t>((c & 0x1F) | ((c & 0x03E0) << 1) | ((c & 0x7C00) << 1));
-        systemColorMap32[c] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b;
+        systemColorMap8[c] = static_cast<uint8_t>((((c & 0x1f) << 3) & 0xE0) |
+                                                  ((((c & 0x3e0) >> 5) << 0) & 0x1C) |
+                                                  ((((c & 0x7c00) >> 10) >> 3) & 0x03));
+        systemColorMap16[c] = static_cast<uint16_t>(((c & 0x1f) << systemRedShift) |
+                                                     (((c & 0x3e0) >> 5) << systemGreenShift) |
+                                                     (((c & 0x7c00) >> 10) << systemBlueShift));
+        systemColorMap32[c] = ((c & 0x1f) << systemRedShift) |
+                              (((c & 0x3e0) >> 5) << systemGreenShift) |
+                              (((c & 0x7c00) >> 10) << systemBlueShift);
     }
 }
 
@@ -56,9 +59,9 @@ bool FileExists(const char* path) {
 // ---- frontend stubs required by embedded core ----
 CoreOptions coreOptions;
 int emulating = 0;
-int systemRedShift = 19;
-int systemGreenShift = 11;
-int systemBlueShift = 3;
+int systemRedShift = 0;
+int systemGreenShift = 0;
+int systemBlueShift = 0;
 int systemColorDepth = 32;
 int systemVerbose = 0;
 int systemFrameSkip = 0;
@@ -67,7 +70,14 @@ int systemSpeed = 0;
 uint8_t systemColorMap8[0x10000];
 uint16_t systemColorMap16[0x10000];
 uint32_t systemColorMap32[0x10000];
-uint16_t systemGbPalette[24] = {0};
+uint16_t systemGbPalette[24] = {
+    0x7FFF, 0x56B5, 0x318C, 0,
+    0x7FFF, 0x56B5, 0x318C, 0,
+    0x7FFF, 0x56B5, 0x318C, 0,
+    0x7FFF, 0x56B5, 0x318C, 0,
+    0x7FFF, 0x56B5, 0x318C, 0,
+    0x7FFF, 0x56B5, 0x318C, 0,
+};
 void (*dbgOutput)(const char* s, uint32_t addr) = nullptr;
 void (*dbgSignal)(int sig, int number) = nullptr;
 
