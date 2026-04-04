@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <strings.h>
 #include <string>
 #include <vector>
 
@@ -21,6 +20,8 @@
 
 #if defined(_MSC_VER)
 #define strcasecmp _stricmp
+#else
+#include <strings.h>
 #endif
 
 namespace {
