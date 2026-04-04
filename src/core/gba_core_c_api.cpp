@@ -199,14 +199,22 @@ void GBA_Destroy(GBACoreHandle* handle) {
 
 void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
     if (!handle) return;
+    if (handle->has_rom) {
+        SetError(handle, "bios must be set before rom load");
+        return;
+    }
     handle->has_bios = true;
     handle->bios_path[0] = '\0';
     SetError(handle, "");
 }
 
 bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
-    if (!handle || !FileExists(path)) {
+    if (!handle || !FileExists(path) || !utilIsGBABios(path)) {
         SetError(handle, "failed to load bios");
+        return false;
+    }
+    if (handle->has_rom) {
+        SetError(handle, "bios must be set before rom load");
         return false;
     }
     std::snprintf(handle->bios_path, sizeof(handle->bios_path), "%s", path);
@@ -216,23 +224,31 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
 }
 
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
-    if (!handle || !FileExists(path)) {
+    if (!handle || !path || !path[0] || !FileExists(path)) {
         SetError(handle, "failed to load rom");
+        return false;
+    }
+    if (!utilIsGBAImage(path)) {
+        SetError(handle, "unsupported rom format");
         return false;
     }
 
     soundShutdown();
     CPUCleanUp();
+
+    const bool use_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
+    CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
+
     int loaded = CPULoadRom(path);
     if (!loaded) {
+        handle->has_rom = false;
+        handle->rom_path[0] = '\0';
         SetError(handle, "CPULoadRom failed");
         return false;
     }
 
-    const bool use_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
-    CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
-    soundInit();
     CPUReset();
+    soundInit();
 
     std::snprintf(handle->rom_path, sizeof(handle->rom_path), "%s", path);
     handle->has_rom = true;
@@ -245,7 +261,6 @@ void GBA_Reset(GBACoreHandle* handle) {
         if (handle) SetError(handle, "rom not loaded");
         return;
     }
-    soundInit();
     CPUReset();
     SetError(handle, "");
 }
