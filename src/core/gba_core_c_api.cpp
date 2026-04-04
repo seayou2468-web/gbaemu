@@ -111,7 +111,7 @@ public:
     void setThrottle(unsigned short) override {}
 };
 
-std::unique_ptr<SoundDriver> systemSoundInit() { return std::make_unique<NullSoundDriver>(); }
+std::unique_ptr<SoundDriver> systemSoundInit() { return std::unique_ptr<SoundDriver>(new NullSoundDriver()); }
 void systemOnWriteDataToSoundBuffer(const uint16_t*, int) {}
 void systemOnSoundShutdown() {}
 void systemScreenMessage(const char*) {}
