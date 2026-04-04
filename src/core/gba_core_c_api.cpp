@@ -138,20 +138,6 @@ void agbPrintEnable(bool) {}
 bool CPUIsGBABios(const char*) { return true; }
 const char* elfGetAddressSymbol(uint32_t) { return nullptr; }
 
-int SOUND_CLOCK_TICKS = kFrameTicks;
-int soundTicks = 0;
-void psoundTickfn() {}
-void soundEvent8(uint32_t, uint8_t) {}
-void soundEvent16(uint32_t, uint16_t) {}
-void soundPause() {}
-void soundResume() {}
-void soundReset() {}
-void soundSetThrottle(unsigned short) {}
-float soundGetVolume() { return 1.0f; }
-void soundSetVolume(float) {}
-void soundTimerOverflow(int) {}
-void interp_rate() {}
-
 int cheatsCheckKeys(uint32_t, uint32_t) { return 0; }
 void StartLink(uint16_t) {}
 void StartGPLink(uint16_t) {}
