@@ -332,7 +332,8 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
 #if defined(__LIBRETRO__)
             const uint8_t* row = src + (240 * y);
 #else
-            const uint8_t* row = src + (244 * y);
+            // VBA-M v2.2.3 non-libretro layout
+            const uint8_t* row = src + (244 * (y + 1));
                 if (v == 0xFF) {
                     handle->frame_cache[y * 240 + x] = 0xFFFFFFFFu;
                 } else {
@@ -350,7 +351,8 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
 #if defined(__LIBRETRO__)
             const uint16_t* row = src + (240 * y);
 #else
-            const uint16_t* row = src + (242 * y);
+            // VBA-M v2.2.3 non-libretro layout
+            const uint16_t* row = src + (242 * (y + 1));
 #endif
             for (int x = 0; x < 240; ++x) {
                 const uint16_t v = row[x];
@@ -364,7 +366,8 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         }
         case 24: {
             const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
-            const uint8_t* row = src + ((240 * 3) * y);
+            // VBA-M v2.2.3 non-libretro layout
+            const uint8_t* row = src + ((240 * 3) * (y + 1));
             for (int x = 0; x < 240; ++x) {
                 if (systemRedShift < systemBlueShift) {
                     const uint8_t r = row[x * 3 + 0];
@@ -388,7 +391,8 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
 #if defined(__LIBRETRO__)
             const uint32_t* row = src + (240 * y);
 #else
-            const uint32_t* row = src + (241 * y);
+            // VBA-M v2.2.3 non-libretro layout
+            const uint32_t* row = src + (241 * (y + 1));
 #endif
             std::memcpy(&handle->frame_cache[y * 240], row, 240 * sizeof(uint32_t));
             break;
