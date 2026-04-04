@@ -343,6 +343,8 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         if (out_size) *out_size = 0;
         return nullptr;
     }
+    // Keep this path intentionally simple (no switch/case nesting) to avoid
+    // parser-fragile merge states and match VBA-M row layout addressing.
     const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
     for (int y = 0; y < 160; ++y) {
         const uint32_t* row = src + (kFrameStride32 * (y + kFrameOffset32));
