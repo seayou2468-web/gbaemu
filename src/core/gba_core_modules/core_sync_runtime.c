@@ -629,7 +629,7 @@ void CPULoop(int ticks)
                 cpuNextEvent = ticks;
 
             // end loop when a frame is done
-            if (ticks <= 0 || cpuBreakLoop || has_frames)
+            if (ticks <= 0 || cpuBreakLoop)
                 break;
         }
     }
@@ -641,21 +641,13 @@ void CPULoop(int ticks)
 
 void GBAEmulate(int ticks)
 {
-    // Keep frame waits bounded so ROMs that do not raise has_frames cannot
-    // stall the frontend forever.
-    const int maxFramePolls = 8;
-    int framePolls = 0;
-
     has_frames = false;
 
     // Read and process inputs
     gbaUpdateJoypads();
 
-    // Run until at least one frame has been produced.
-    do {
-        CPULoop(ticks);
-        framePolls++;
-    } while (!has_frames && framePolls < maxFramePolls);
+    // Drive a single frame budget per frontend step.
+    CPULoop(ticks);
 
 }
 
