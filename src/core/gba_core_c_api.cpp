@@ -154,7 +154,7 @@ const char* elfGetAddressSymbol(uint32_t) { return nullptr; }
 
 int SOUND_CLOCK_TICKS = kFrameTicks;
 int soundTicks = 0;
-void psoundTickfn() {}
+void psoundTickfn() { soundTicks = 0; }
 void soundEvent8(uint32_t, uint8_t) {}
 void soundEvent16(uint32_t, uint16_t) {}
 void soundPause() {}
