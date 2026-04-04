@@ -325,7 +325,8 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         if (out_size) *out_size = 0;
         return nullptr;
     }
-        switch (systemColorDepth) {
+    int y = 0;
+    for (; y < 160; ++y) {
         case 8: {
             const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
                 const uint8_t r = static_cast<uint8_t>(((v >> 5) & 0x07) << 5);
