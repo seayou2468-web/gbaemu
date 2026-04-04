@@ -385,8 +385,11 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
     case 24: {
         const uint8_t* src = reinterpret_cast<const uint8_t*>(g_pix);
         constexpr int kStride = 240 * 3;
+        // Sync with core write path: 24-bit mode uses (VCOUNT + 1) layout
+        // regardless of __LIBRETRO__.
+        constexpr int kOffsetRows = 1;
         for (int y = 0; y < 160; ++y) {
-            const uint8_t* row = src + (kStride * (y + kFrameOffset32));
+            const uint8_t* row = src + (kStride * (y + kOffsetRows));
             for (int x = 0; x < 240; ++x) {
                 const uint8_t b = row[x * 3 + 0];
                 const uint8_t g = row[x * 3 + 1];
