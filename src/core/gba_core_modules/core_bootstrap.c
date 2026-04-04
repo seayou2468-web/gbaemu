@@ -59,6 +59,7 @@ extern int emulating;
 bool debugger = false;
 
 int SWITicks = 0;
+
 int IRQTicks = 0;
 
 uint32_t mastercode = 0;
@@ -635,6 +636,7 @@ void CPUCleanUp()
 void SetMapMasks()
 {
     map[0].mask = 0x3FFF;
+    map[1].mask = 0;
     map[2].mask = 0x3FFFF;
     map[3].mask = 0x7FFF;
     map[4].mask = 0x3FF;
@@ -644,8 +646,11 @@ void SetMapMasks()
     map[8].mask = 0x1FFFFFF;
     map[9].mask = 0x1FFFFFF;
     map[10].mask = 0x1FFFFFF;
+    map[11].mask = 0x1FFFFFF;
     map[12].mask = 0x1FFFFFF;
+    map[13].mask = 0x1FFFFFF;
     map[14].mask = 0xFFFF;
+    map[15].mask = 0xFFFF;
 
 #ifdef VBAM_ENABLE_DEBUGGER
     for (int i = 0; i < 16; i++) {
@@ -817,6 +822,7 @@ int CPULoadRom(const char* szFile)
             g_workRAM = NULL;
             return 0;
         }
+        doMirroring(true);
     }
 
     memset(&GBAMatrix, 0, sizeof(GBAMatrix));
@@ -2119,7 +2125,8 @@ void CPUReset()
         map[i].mask = 0;
     }
 
-    map[0].address = g_bios;
+        map[0].address = g_bios;
+        map[1].address = (uint8_t*)&dummyAddress;
     map[2].address = g_workRAM;
     map[3].address = g_internalRAM;
     map[4].address = g_ioMem;
@@ -2129,8 +2136,11 @@ void CPUReset()
     map[8].address = g_rom;
     map[9].address = g_rom;
     map[10].address = g_rom;
+    map[11].address = g_rom;
     map[12].address = g_rom;
+    map[13].address = g_rom;
     map[14].address = flashSaveMemory;
+    map[15].address = flashSaveMemory;
 
     SetMapMasks();
 
@@ -2163,6 +2173,8 @@ void CPUReset()
     lastTime = systemGetClock();
 
     SWITicks = 0;
+
+    CPUUpdateRender();
 
     if (pristineRomSize > SIZE_ROM) {
         char ident = 0;
