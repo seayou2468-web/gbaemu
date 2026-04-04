@@ -2,6 +2,11 @@
 // Imported from reference implementation: gbaGfx.cpp
 /* BEGIN gbaGfx.cpp */
 
+// Synced include surface with VBA-M reference (gbaGfx.cpp).
+#include "../embedded_include/gba/gba.h"
+#include "../embedded_include/gba/gbaGlobals.h"
+#include "../embedded_include/gba/gbaGfx.h"
+
 #if defined(TILED_RENDERING)
 #include <cstring>
 #endif  // defined(TILED_RENDERING)

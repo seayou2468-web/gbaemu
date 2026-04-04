@@ -1,4 +1,9 @@
 #if defined(__cplusplus)
+// Synced include surface with VBA-M reference (gbaMode0/1/2.cpp).
+#include "../embedded_include/gba/gba.h"
+#include "../embedded_include/gba/gbaGlobals.h"
+#include "../embedded_include/gba/gbaGfx.h"
+
 // Imported from reference implementation: gbaMode0.cpp
 /* BEGIN gbaMode0.cpp */
 

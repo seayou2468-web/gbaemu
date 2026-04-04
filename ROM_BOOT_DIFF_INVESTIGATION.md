@@ -49,3 +49,6 @@
   **GBA ROM読み込み時（`accept == utilIsGBAImage`）かつ `n >= 0xC0`** なら
   読み込み結果を有効化するフォールバックを追加。
 - これにより、拡張子判定とacceptゲートの組み合わせでROMが未ロードになる経路を遮断。
+- 併せて、PPUモード0〜5実装の移植面を明確化するため、
+  `ppu_common.c` / `ppu_tile_modes.c` / `ppu_bitmap_obj.c` に
+  VBA-M参照実装と同等の `gba.h` / `gbaGlobals.h` / `gbaGfx.h` ヘッダ面を明示的に同期。
