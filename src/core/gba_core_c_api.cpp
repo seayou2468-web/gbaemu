@@ -325,6 +325,16 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         if (out_size) *out_size = 0;
         return nullptr;
     }
+    const bool has_non_libretro_padding_32bpp = [&]() -> bool {
+        const uint32_t* src32 = reinterpret_cast<const uint32_t*>(g_pix);
+        int non_zero_padding_slots = 0;
+        for (int y = 0; y < 4; ++y) {
+            const size_t idx = static_cast<size_t>(241 * (y + 1) + 240);
+            if (src32[idx] != 0) ++non_zero_padding_slots;
+        }
+        return non_zero_padding_slots <= 1;
+    }();
+
     for (int y = 0; y < 160; ++y) {
         switch (systemColorDepth) {
         case 16: {
@@ -374,11 +384,7 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         case 32:
         default: {
             const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
-#if defined(__LIBRETRO__)
-            const uint32_t* row = src + (240 * y);
-#else
-            const uint32_t* row = src + (241 * (y + 1));
-#endif
+            const uint32_t* row = has_non_libretro_padding_32bpp ? (src + (241 * (y + 1))) : (src + (240 * y));
             std::memcpy(&handle->frame_cache[y * 240], row, 240 * sizeof(uint32_t));
             break;
         }
