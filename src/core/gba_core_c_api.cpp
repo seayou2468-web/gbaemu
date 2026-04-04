@@ -1,3 +1,7 @@
+#ifndef C_CORE
+#define C_CORE 1
+#endif
+
 #include "./gba_core_c_api.h"
 
 #include <cstdarg>
@@ -13,13 +17,17 @@
 #include "./embedded_include/base/message.h"
 #include "./embedded_include/base/system.h"
 #include "./embedded_include/gba/gba.h"
-
-#include "./gba_core.cpp"
+#include "./embedded_include/gba/gbaGlobals.h"
+#include "./embedded_include/gba/gbaLink.h"
+#include "./gba_core_modules/module_forward_decls.h"
 
 namespace {
 constexpr int kFrameTicks = 280896;
+constexpr int kFrameBursts = 3;
 constexpr size_t kPixelCount = 240u * 160u;
-uint16_t g_keys = 0;
+constexpr long kBiosSizeBytes = 0x4000;
+constexpr uint16_t kJoypadAllReleased = 0x03FF;
+uint16_t g_keys = kJoypadAllReleased;
 
 void InitColorMaps() {
     static bool init = false;
@@ -41,6 +49,19 @@ bool FileExists(const char* path) {
     if (!f) return false;
     std::fclose(f);
     return true;
+}
+
+bool HasValidBiosSize(const char* path) {
+    if (!path || !path[0]) return false;
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    if (std::fseek(f, 0, SEEK_END) != 0) {
+        std::fclose(f);
+        return false;
+    }
+    const long size = std::ftell(f);
+    std::fclose(f);
+    return size == kBiosSizeBytes;
 }
 }  // namespace
 
@@ -188,8 +209,10 @@ GBACoreHandle* GBA_Create(void) {
     InitColorMaps();
     GBACoreHandle* h = static_cast<GBACoreHandle*>(std::calloc(1, sizeof(GBACoreHandle)));
     if (!h) return nullptr;
+    h->has_bios = true; // built-in BIOS fallback is always available.
     h->bios_path[0] = '\0';
     h->rom_path[0] = '\0';
+    h->keys_pressed = 0;
     SetError(h, "");
     return h;
 }
@@ -203,6 +226,7 @@ void GBA_Destroy(GBACoreHandle* handle) {
 void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
     if (!handle) return;
     handle->has_bios = true;
+    // Use the core's built-in BIOS implementation (HLE) for broad ROM compatibility.
     handle->bios_path[0] = '\0';
     SetError(handle, "");
 }
@@ -210,6 +234,10 @@ void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
 bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
     if (!handle || !FileExists(path)) {
         SetError(handle, "failed to load bios");
+        return false;
+    }
+    if (!HasValidBiosSize(path)) {
+        SetError(handle, "invalid bios size");
         return false;
     }
     std::snprintf(handle->bios_path, sizeof(handle->bios_path), "%s", path);
@@ -233,7 +261,21 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
 
     const bool use_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
     CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
+    if (use_bios_file && !coreOptions.useBios) {
+        SetError(handle, "failed to load bios");
+        return false;
+    }
     CPUReset();
+    // Some homebrew test ROMs keep DISPCNT forced-blank in this standalone host.
+    // Clear forced blank so scanout is visible in the C API framebuffer path.
+    DISPCNT &= static_cast<uint16_t>(~0x0080);
+    g_keys = kJoypadAllReleased;
+    // Prime one frame so the first framebuffer fetch is real image data
+    // instead of the post-reset cleared buffer.
+    for (int i = 0; i < kFrameBursts; ++i) {
+        soundTicks = 0;
+        GBAEmulate(kFrameTicks);
+    }
 
     std::snprintf(handle->rom_path, sizeof(handle->rom_path), "%s", path);
     handle->has_rom = true;
@@ -255,8 +297,11 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         if (handle) SetError(handle, "rom not loaded");
         return;
     }
-    g_keys = handle->keys_pressed;
-    GBAEmulate(kFrameTicks);
+    g_keys = static_cast<uint16_t>((~handle->keys_pressed) & kJoypadAllReleased);
+    for (int i = 0; i < kFrameBursts; ++i) {
+        soundTicks = 0;
+        GBAEmulate(kFrameTicks);
+    }
     SetError(handle, "");
 }
 
@@ -268,16 +313,26 @@ void GBA_SetKeys(GBACoreHandle* handle, uint16_t keys_pressed_mask) {
 size_t GBA_GetFrameBufferSize(GBACoreHandle*) { return kPixelCount; }
 
 const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) {
-    if (!handle || !g_pix) {
+    if (!handle || !handle->has_rom || !g_pix) {
         if (out_size) *out_size = 0;
+        if (handle && !handle->has_rom) SetError(handle, "rom not loaded");
+        if (handle && handle->has_rom && !g_pix) SetError(handle, "framebuffer not ready");
         return nullptr;
     }
     const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
     for (int y = 0; y < 160; ++y) {
+#ifdef __LIBRETRO__
+        const uint32_t* row = src + (240 * y);
+#else
         const uint32_t* row = src + (241 * (y + 1));
-        std::memcpy(&handle->frame_cache[y * 240], row, 240 * sizeof(uint32_t));
+#endif
+        uint32_t* dst = &handle->frame_cache[y * 240];
+        for (int x = 0; x < 240; ++x) {
+            dst[x] = row[x] | 0xFF000000u;
+        }
     }
     if (out_size) *out_size = kPixelCount;
+    SetError(handle, "");
     return handle->frame_cache;
 }
 

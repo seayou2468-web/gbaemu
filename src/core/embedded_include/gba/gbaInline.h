@@ -250,19 +250,22 @@ static inline uint32_t CPUReadMemory(uint32_t address)
         int shift = (address & 3) << 3;
         value = (value >> shift) | (value << (32 - shift));
 #else
-#ifdef __GNUC__
+#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
         asm("and $3, %%ecx;"
             "shl $3 ,%%ecx;"
             "ror %%cl, %0"
             : "=r"(value)
             : "r"(value), "c"(address));
-#else
+#elif defined(_MSC_VER) && defined(_M_IX86)
         __asm {
       mov ecx, address;
       and ecx, 3;
       shl ecx, 3;
       ror [dword ptr value], cl;
         }
+#else
+        int shift = (address & 3) << 3;
+        value = (value >> shift) | (value << (32 - shift));
 #endif
 #endif
     }

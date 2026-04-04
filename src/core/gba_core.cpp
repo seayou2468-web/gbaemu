@@ -1,3 +1,7 @@
+#ifndef C_CORE
+#define C_CORE 1
+#endif
+
 #include "./gba_core_modules/module_forward_decls.h"
 
 // Order matters: bootstrap/types first, then globals/IO/runtime dependencies.
