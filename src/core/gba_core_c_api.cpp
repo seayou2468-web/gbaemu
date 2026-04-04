@@ -28,6 +28,13 @@ namespace {
 constexpr int kFrameTicks = 280896;
 constexpr size_t kPixelCount = 240u * 160u;
 uint16_t g_keys = 0x0000;
+#if defined(__LIBRETRO__)
+constexpr int kFrameStride32 = 240;
+constexpr int kFrameOffset32 = 0;
+#else
+constexpr int kFrameStride32 = 241;
+constexpr int kFrameOffset32 = 1;
+#endif
 
 void InitColorMaps() {
     static bool init = false;
@@ -337,11 +344,7 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
     }
     const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
     for (int y = 0; y < 160; ++y) {
-        const uint32_t* row = src + (240 * y);
-#else
-        const uint32_t* row = src + (241 * (y + 1));
-        std::memcpy(&handle->frame_cache[y * 240], row, 240 * sizeof(uint32_t));
-                const uint16_t c = row[x];
+        const uint32_t* row = src + (kFrameStride32 * (y + kFrameOffset32));
                 const uint8_t r = static_cast<uint8_t>((c & 0x1F) << 3);
                 const uint8_t g = static_cast<uint8_t>(((c >> 5) & 0x1F) << 3);
                 const uint8_t b = static_cast<uint8_t>(((c >> 10) & 0x1F) << 3);
