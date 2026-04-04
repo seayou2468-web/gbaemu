@@ -168,7 +168,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
             self.statusLabel.text = @"BIOSを読み込みました";
             if (self.romLoaded) {
                 [self.engine reset];
-                [self.engine setKeysPressedMask:0x0000];
+                [self.engine setKeysPressedMask:0x03FF];
                 [self renderCurrentFrame];
             }
         } else {
@@ -181,7 +181,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
             [self.engine reset];
-            [self.engine setKeysPressedMask:0x0000];
+            [self.engine setKeysPressedMask:0x03FF];
             [self renderCurrentFrame];
             if (self.displayLink == nil) {
                 [self togglePlayback];
