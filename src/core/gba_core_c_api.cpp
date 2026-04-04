@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <strings.h>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,10 @@
 #include "./embedded_include/gba/gbaLink.h"
 #include "./embedded_include/gba/gbaSound.h"
 #include "./gba_core_modules/module_forward_decls.h"
+
+#if defined(_MSC_VER)
+#define strcasecmp _stricmp
+#endif
 
 namespace {
 constexpr int kFrameTicks = 280896;
@@ -118,9 +123,20 @@ uint8_t* utilLoad(const char* path, bool (*accept)(const char*), uint8_t* data, 
 }
 uint8_t* utilLoadFromStream(gzFile, uint8_t*, int&) { return nullptr; }
 bool utilIsGBAImage(const char* file) {
+    coreOptions.cpuIsMultiBoot = false;
     if (!file) return false;
+    if (std::strlen(file) <= 4) return false;
     const char* ext = std::strrchr(file, '.');
-    return ext && std::strcmp(ext, ".gba") == 0;
+    if (!ext) return false;
+    if ((strcasecmp(ext, ".agb") == 0) || (strcasecmp(ext, ".gba") == 0) ||
+        (strcasecmp(ext, ".bin") == 0) || (strcasecmp(ext, ".elf") == 0)) {
+        return true;
+    }
+    if (strcasecmp(ext, ".mb") == 0) {
+        coreOptions.cpuIsMultiBoot = true;
+        return true;
+    }
+    return false;
 }
 bool utilIsGBABios(const char* file) {
     if (!file || !file[0]) return false;
