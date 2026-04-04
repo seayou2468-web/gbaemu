@@ -216,6 +216,8 @@ struct GBACoreHandle {
     bool has_rom;
     bool bios_boot_watchdog;
     int bios_boot_frames;
+    bool force_blank_watchdog;
+    int force_blank_frames;
     uint32_t frame_cache[240 * 160];
 };
 
@@ -294,6 +296,8 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     CPUReset();
     handle->bios_boot_watchdog = use_bios_file;
     handle->bios_boot_frames = 0;
+    handle->force_blank_watchdog = !use_bios_file;
+    handle->force_blank_frames = 0;
 
     std::snprintf(handle->rom_path, sizeof(handle->rom_path), "%s", path);
     handle->has_rom = true;
@@ -307,6 +311,8 @@ void GBA_Reset(GBACoreHandle* handle) {
         return;
     }
     CPUReset();
+    handle->force_blank_watchdog = true;
+    handle->force_blank_frames = 0;
     SetError(handle, "");
 }
 
@@ -325,6 +331,20 @@ void GBA_StepFrame(GBACoreHandle* handle) {
             coreOptions.useBios = false;
             CPUReset();
             handle->bios_boot_watchdog = false;
+        }
+    }
+
+    // Built-in BIOS / no-BIOS path can get stuck in force-blank forever for
+    // some homebrew startup flows. If that happens for long enough, unblank
+    // once so the normal render transition can proceed.
+    if (handle->force_blank_watchdog) {
+        if ((DISPCNT & 0x0080u) == 0) {
+            handle->force_blank_watchdog = false;
+            handle->force_blank_frames = 0;
+        } else if (++handle->force_blank_frames >= 120) {
+            CPUUpdateRegister(IO_REG_DISPCNT, static_cast<uint16_t>(DISPCNT & ~0x0080u));
+            handle->force_blank_watchdog = false;
+            handle->force_blank_frames = 0;
         }
     }
 
