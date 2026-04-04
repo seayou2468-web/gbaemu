@@ -333,11 +333,15 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
             const uint8_t* row = src + (240 * y);
 #else
 #endif
-                const uint8_t r = static_cast<uint8_t>(((v >> 5) & 0x07) << 5);
-                const uint8_t g = static_cast<uint8_t>(((v >> 2) & 0x07) << 5);
-                const uint8_t b = static_cast<uint8_t>((v & 0x03) << 6);
-                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
-                                                   (static_cast<uint32_t>(g) << 8) | b;
+                if (v == 0xFF) {
+                    handle->frame_cache[y * 240 + x] = 0xFFFFFFFFu;
+                } else {
+                    const uint8_t r = static_cast<uint8_t>(((v >> 5) & 0x07) << 5);
+                    const uint8_t g = static_cast<uint8_t>(((v >> 2) & 0x07) << 5);
+                    const uint8_t b = static_cast<uint8_t>((v & 0x03) << 6);
+                    handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+                                                       (static_cast<uint32_t>(g) << 8) | b;
+                }
             }
             break;
         }
