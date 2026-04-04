@@ -327,7 +327,11 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
     }
     const uint32_t* src = reinterpret_cast<const uint32_t*>(g_pix);
     for (int y = 0; y < 160; ++y) {
+#if defined(__LIBRETRO__)
+        const uint32_t* row = src + (240 * y);
+#else
         const uint32_t* row = src + (241 * (y + 1));
+#endif
         std::memcpy(&handle->frame_cache[y * 240], row, 240 * sizeof(uint32_t));
     }
     if (out_size) *out_size = kPixelCount;
