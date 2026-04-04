@@ -204,29 +204,6 @@ void CPULoop(int ticks)
                         lcdTicks += 1008;
                         DISPSTAT &= 0xFFFD;
                         if (VCOUNT == 160) {
-                            P1 = 0x03FF ^ (joy & 0x3FF);
-                            systemUpdateMotionSensor();
-                            UPDATE_REG(IO_REG_KEYINPUT, P1);
-                            uint16_t P1CNT = READ16LE(((uint16_t*)&g_ioMem[0x132]));
-
-                            // this seems wrong, but there are cases where the game
-                            // can enter the stop state without requesting an IRQ from
-                            // the joypad.
-                            if ((P1CNT & 0x4000) || stopState) {
-                                uint16_t p1 = (0x3FF ^ P1) & 0x3FF;
-                                if (P1CNT & 0x8000) {
-                                    if (p1 == (P1CNT & 0x3FF)) {
-                                        IF |= 0x1000;
-                                        UPDATE_REG(IO_REG_IF, IF);
-                                    }
-                                } else {
-                                    if (p1 & P1CNT) {
-                                        IF |= 0x1000;
-                                        UPDATE_REG(IO_REG_IF, IF);
-                                    }
-                                }
-                            }
-
                             DISPSTAT |= 1;
                             DISPSTAT &= 0xFFFD;
                             UPDATE_REG(IO_REG_DISPSTAT, DISPSTAT);
@@ -676,8 +653,6 @@ void GBAEmulate(int ticks)
         CPULoop(ticks);
     } while (!has_frames);
 
-    // Flush sound using accumulated soundTick
-    psoundTickfn();
 }
 
 #else
