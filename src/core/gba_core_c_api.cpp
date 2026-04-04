@@ -235,10 +235,6 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
 
     soundShutdown();
     CPUCleanUp();
-
-    const bool use_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
-    CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
-
     int loaded = CPULoadRom(path);
     if (!loaded) {
         handle->has_rom = false;
@@ -247,6 +243,8 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
         return false;
     }
 
+    const bool use_bios_file = handle->has_bios && handle->bios_path[0] != '\0';
+    CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
     CPUReset();
     soundInit();
 
