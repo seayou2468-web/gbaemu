@@ -67,9 +67,9 @@ bool FileExists(const char* path) {
 // ---- frontend stubs required by embedded core ----
 CoreOptions coreOptions;
 int emulating = 0;
-int systemRedShift = 19;
-int systemGreenShift = 11;
-int systemBlueShift = 3;
+int systemRedShift = 0;
+int systemGreenShift = 5;
+int systemBlueShift = 10;
 int systemColorDepth = 32;
 int systemVerbose = 0;
 int systemFrameSkip = 0;
@@ -381,9 +381,12 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
             const uint16_t* row = src + (kStride * (y + kFrameOffset32));
             for (int x = 0; x < 240; ++x) {
                 const uint16_t c = row[x];
-                const uint8_t r = static_cast<uint8_t>((c & 0x1F) << 3);
-                const uint8_t g = static_cast<uint8_t>(((c >> 5) & 0x1F) << 3);
-                const uint8_t b = static_cast<uint8_t>(((c >> 10) & 0x1F) << 3);
+                const uint8_t r5 = static_cast<uint8_t>((c >> systemRedShift) & 0x1F);
+                const uint8_t g5 = static_cast<uint8_t>((c >> systemGreenShift) & 0x1F);
+                const uint8_t b5 = static_cast<uint8_t>((c >> systemBlueShift) & 0x1F);
+                const uint8_t r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+                const uint8_t g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
+                const uint8_t b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
                 handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
                     (static_cast<uint32_t>(g) << 8) | b;
             }
@@ -414,7 +417,15 @@ const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size) 
         for (int y = 0; y < 160; ++y) {
             const uint32_t* row = src + (kFrameStride32 * (y + kFrameOffset32));
             for (int x = 0; x < 240; ++x) {
-                handle->frame_cache[y * 240 + x] = 0xFF000000u | (row[x] & 0x00FFFFFFu);
+                const uint32_t c = row[x];
+                const uint8_t r5 = static_cast<uint8_t>((c >> systemRedShift) & 0x1F);
+                const uint8_t g5 = static_cast<uint8_t>((c >> systemGreenShift) & 0x1F);
+                const uint8_t b5 = static_cast<uint8_t>((c >> systemBlueShift) & 0x1F);
+                const uint8_t r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+                const uint8_t g = static_cast<uint8_t>((g5 << 3) | (g5 >> 2));
+                const uint8_t b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
+                handle->frame_cache[y * 240 + x] = 0xFF000000u | (static_cast<uint32_t>(r) << 16) |
+                    (static_cast<uint32_t>(g) << 8) | b;
             }
         }
         break;
