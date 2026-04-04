@@ -25,6 +25,37 @@ void CPUInterrupt()
 static uint32_t joy;
 static bool has_frames;
 
+static void gbaUpdateJoypads(void)
+{
+    // update joystick information
+    if (systemReadJoypads())
+        // read default joystick
+        joy = systemReadJoypad(-1);
+
+    P1 = 0x03FF ^ (joy & 0x3FF);
+    systemUpdateMotionSensor();
+    UPDATE_REG(0x130, P1);
+    uint16_t P1CNT = READ16LE(((uint16_t*)&g_ioMem[0x132]));
+
+    // this seems wrong, but there are cases where the game
+    // can enter the stop state without requesting an IRQ from
+    // the joypad.
+    if ((P1CNT & 0x4000) || stopState) {
+        uint16_t p1 = (0x3FF ^ P1) & 0x3FF;
+        if (P1CNT & 0x8000) {
+            if (p1 == (P1CNT & 0x3FF)) {
+                IF |= 0x1000;
+                UPDATE_REG(0x202, IF);
+            }
+        } else {
+            if (p1 & P1CNT) {
+                IF |= 0x1000;
+                UPDATE_REG(0x202, IF);
+            }
+        }
+    }
+}
+
 void CPULoop(int ticks)
 {
     int clockTicks;
@@ -623,7 +654,7 @@ void CPULoop(int ticks)
                 cpuNextEvent = ticks;
 
             // end loop when a frame is done
-            if (ticks <= 0 || cpuBreakLoop)
+            if (ticks <= 0 || cpuBreakLoop || has_frames)
                 break;
         }
     }
@@ -637,19 +668,13 @@ void GBAEmulate(int ticks)
 {
     has_frames = false;
 
-    // update joystick information
-    if (systemReadJoypads())
-        // read default joystick
-        joy = systemReadJoypad(-1);
+    // Read and process inputs
+    gbaUpdateJoypads();
 
-    // Run core ticks for this frame budget.
-    //
-    // NOTE:
-    // In this embedding, audio callbacks are stubbed and `soundTicks` is not
-    // drained by the legacy audio path, so gating execution by
-    // `soundTicks < SOUND_CLOCK_TICKS` can prevent subsequent frames from
-    // running at all. We therefore drive CPU execution directly per frame.
-    CPULoop(ticks);
+    // Run until at least one frame has been produced.
+    do {
+        CPULoop(ticks);
+    } while (!has_frames);
 
     // Flush sound using accumulated soundTick
     psoundTickfn();
