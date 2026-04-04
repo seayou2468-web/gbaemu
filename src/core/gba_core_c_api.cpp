@@ -248,8 +248,15 @@ void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
         SetError(handle, "bios must be set before rom load");
         return;
     }
+    // Prefer the bundled reference BIOS when available. This more closely
+    // matches VBA-M startup behavior and avoids compatibility issues seen with
+    // pure HLE boot on some ROMs.
+    if (FileExists("utils/bios/ababios.bin") && utilIsGBABios("utils/bios/ababios.bin")) {
+        std::snprintf(handle->bios_path, sizeof(handle->bios_path), "%s", "utils/bios/ababios.bin");
+    } else {
+        handle->bios_path[0] = '\0';
+    }
     handle->has_bios = true;
-    handle->bios_path[0] = '\0';
     SetError(handle, "");
 }
 
@@ -322,6 +329,7 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         if (reg[15].I >= 0x08000000u) {
             handle->bios_boot_watchdog = false;
         } else if (++handle->bios_boot_frames >= 300) {
+            std::fprintf(stderr, "[gba_core] BIOS boot watchdog fired at PC=%08X; retrying without BIOS\n", reg[15].I);
             coreOptions.useBios = false;
             CPUReset();
             handle->bios_boot_watchdog = false;
