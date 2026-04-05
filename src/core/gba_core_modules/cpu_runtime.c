@@ -4033,15 +4033,17 @@ void print_arm_registers()
   }
 }
 
-void print_thumb_instruction()
+void print_thumb_instruction(u32 cycles)
 {
+  (void)cycles;
   debug_screen_printf("Thumb instruction at PC: %04x",
    read_memory16(reg[REG_PC]));
   debug_screen_newline(1);
 }
 
-void print_arm_instruction()
+void print_arm_instruction(u32 cycles)
 {
+  (void)cycles;
   debug_screen_printf("ARM instruction at PC: %08x",
    read_memory32(reg[REG_PC]));
   debug_screen_newline(1);
@@ -4541,7 +4543,6 @@ void cpu_read_savestate(file_tag_type savestate_file)
   file_read_array(savestate_file, reg_mode);
 
   repair_cpu_mode_state();
-  extract_flags();
 }
 
 void cpu_write_mem_savestate(file_tag_type savestate_file)
