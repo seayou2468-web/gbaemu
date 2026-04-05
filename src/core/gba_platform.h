@@ -1,4 +1,5 @@
 #pragma once
+// Platform abstraction layer.
 
 #include <stdint.h>
 #include <stddef.h>

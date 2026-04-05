@@ -1,5 +1,4 @@
 #include "../gba_platform.h"
-#include "../gba_platform_gp2x.h"
 
 #include <pthread.h>
 #include <sys/select.h>
