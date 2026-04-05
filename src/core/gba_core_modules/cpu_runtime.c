@@ -75,7 +75,13 @@ int sort_tagged_element(const void *_a, const void *_b)
   const u64 *a = _a;
   const u64 *b = _b;
 
-  return (int)(b[1] - a[1]);
+  if(b[1] > a[1])
+    return 1;
+
+  if(b[1] < a[1])
+    return -1;
+
+  return 0;
 }
 
 void print_register_usage()
@@ -713,9 +719,10 @@ u32 high_frequency_branch_targets = 0;
 #define arm_spsr_restore()                                                    \
   if(rd == 15)                                                                \
   {                                                                           \
-    if(reg[CPU_MODE] != MODE_USER)                                            \
+    u32 cpu_mode = normalize_cpu_mode_state();                                \
+    if(cpu_mode != MODE_USER)                                                 \
     {                                                                         \
-      reg[REG_CPSR] = spsr[reg[CPU_MODE]];                                    \
+      reg[REG_CPSR] = spsr[cpu_mode];                                         \
       extract_flags();                                                        \
       set_cpu_mode(cpu_modes[reg[REG_CPSR] & 0x1F]);                          \
       check_for_interrupts();                                                 \
@@ -887,8 +894,9 @@ const u32 psr_masks[16] =
   }                                                                           \
 
 #define arm_psr_store_spsr(source)                                            \
-  u32 _psr = spsr[reg[CPU_MODE]];                                             \
-  spsr[reg[CPU_MODE]] = (source & store_mask) | (_psr & (~store_mask))        \
+  u32 cpu_mode = normalize_cpu_mode_state();                                  \
+  u32 _psr = spsr[cpu_mode];                                                  \
+  spsr[cpu_mode] = (source & store_mask) | (_psr & (~store_mask))             \
 
 #define arm_psr_store(source, psr_reg)                                        \
   const u32 store_mask = psr_masks[psr_field];                                \
@@ -1534,6 +1542,38 @@ u32 cpu_modes_cpsr[7] = { 0x10, 0x11, 0x12, 0x13, 0x17, 0x1B, 0x1F };
 u32 initial_reg[64];
 u32 *reg = initial_reg;
 u32 spsr[6];
+
+static u32 get_valid_cpu_mode(u32 mode)
+{
+  if(mode < MODE_INVALID)
+    return mode;
+
+  return MODE_INVALID;
+}
+
+static u32 normalize_cpu_mode_state(void)
+{
+  u32 cpu_mode = get_valid_cpu_mode(reg[CPU_MODE]);
+  u32 cpsr_mode = cpu_modes[reg[REG_CPSR] & 0x1F];
+
+  if(cpsr_mode != MODE_INVALID)
+  {
+    if(cpu_mode != cpsr_mode)
+      reg[CPU_MODE] = cpsr_mode;
+
+    return cpsr_mode;
+  }
+
+  if(cpu_mode != MODE_INVALID)
+  {
+    reg[REG_CPSR] = (reg[REG_CPSR] & ~0x1F) | cpu_modes_cpsr[cpu_mode];
+    return cpu_mode;
+  }
+
+  reg[CPU_MODE] = MODE_USER;
+  reg[REG_CPSR] = (reg[REG_CPSR] & ~0x1F) | cpu_modes_cpsr[MODE_USER];
+  return MODE_USER;
+}
 
 // ARM/Thumb mode is stored in the flags directly, this is simpler than
 // shadowing it since it has a constant 1bit represenation.
@@ -2189,7 +2229,7 @@ char *cpu_mode_names[] =
       else                                                                    \
       {                                                                       \
         /* MRS rd, spsr */                                                    \
-        arm_psr(reg, read, spsr[reg[CPU_MODE]]);                              \
+        arm_psr(reg, read, spsr[normalize_cpu_mode_state()]);                 \
       }                                                                       \
       break;                                                                  \
                                                                               \
@@ -3999,12 +4039,12 @@ void print_arm_instruction()
 void print_flags()
 {
   u32 cpsr = reg[REG_CPSR];
+  u32 cpu_mode = normalize_cpu_mode_state();
   debug_screen_newline(1);
   debug_screen_printf(
    " N: %d  Z: %d  C: %d  V: %d  CPSR: %08x  SPSR: %08x  mode: %s",
    (cpsr >> 31) & 0x01, (cpsr >> 30) & 0x01, (cpsr >> 29) & 0x01,
-   (cpsr >> 28) & 0x01, cpsr, spsr[reg[CPU_MODE]],
-   cpu_mode_names[reg[CPU_MODE]]);
+   (cpsr >> 28) & 0x01, cpsr, spsr[cpu_mode], cpu_mode_names[cpu_mode]);
   debug_screen_newline(2);
 }
 
@@ -4275,7 +4315,10 @@ void step_debug(u32 pc, u32 cycles)
 void set_cpu_mode(cpu_mode_type new_mode)
 {
   u32 i;
-  cpu_mode_type cpu_mode = reg[CPU_MODE];
+  cpu_mode_type cpu_mode = normalize_cpu_mode_state();
+  new_mode = get_valid_cpu_mode(new_mode);
+  if(new_mode == MODE_INVALID)
+    new_mode = cpu_mode;
 
   if(cpu_mode != new_mode)
   {
@@ -4338,6 +4381,7 @@ static u32 g_execute_arm_step_mode = 0;
 
 void execute_arm(u32 cycles)
 {
+  const u32 step_mode = g_execute_arm_step_mode;
   u32 pc = reg[REG_PC];
   u32 opcode;
   u32 condition;
@@ -4358,6 +4402,7 @@ void execute_arm(u32 cycles)
   {
     cycles_remaining = cycles;
     pc = reg[REG_PC];
+    normalize_cpu_mode_state();
     extract_flags();
 
     if(reg[REG_CPSR] & 0x20)
@@ -4374,15 +4419,18 @@ void execute_arm(u32 cycles)
       old_pc = pc;
       execute_arm_instruction();
       cycles_remaining -= cycles_per_instruction;
+
+      if(step_mode)
+      {
+        collapse_flags();
+        return;
+      }
     } while(cycles_remaining > 0);
 
     collapse_flags();
     cycles = update_gba();
-    if(g_execute_arm_step_mode)
-    {
-      g_execute_arm_step_mode = 0;
+    if(step_mode)
       return;
-    }
     continue;
 
     do
@@ -4391,19 +4439,23 @@ void execute_arm(u32 cycles)
 
       collapse_flags();
       step_debug(pc, cycles_remaining);
+      cycles_per_instruction = global_cycles_per_instruction;
 
       old_pc = pc;
       execute_thumb_instruction();
       cycles_remaining -= cycles_per_instruction;
+
+      if(step_mode)
+      {
+        collapse_flags();
+        return;
+      }
     } while(cycles_remaining > 0);
 
     collapse_flags();
     cycles = update_gba();
-    if(g_execute_arm_step_mode)
-    {
-      g_execute_arm_step_mode = 0;
+    if(step_mode)
       return;
-    }
     continue;
 
     alert:
@@ -4419,11 +4471,8 @@ void execute_arm(u32 cycles)
       while(reg[CPU_HALT_STATE] != CPU_ACTIVE)
       {
         cycles = update_gba();
-        if(g_execute_arm_step_mode)
-        {
-          g_execute_arm_step_mode = 0;
+        if(step_mode)
           return;
-        }
       }
     }
   }
@@ -4471,13 +4520,19 @@ void move_reg(u32 *new_reg)
 }
 
 
-#define cpu_savestate_builder(type)                                           \
-void cpu_##type##_savestate(file_tag_type savestate_file)                     \
-{                                                                             \
-  file_##type(savestate_file, reg, 0x100);                                    \
-  file_##type##_array(savestate_file, spsr);                                  \
-  file_##type##_array(savestate_file, reg_mode);                              \
-}                                                                             \
+void cpu_read_savestate(file_tag_type savestate_file)
+{
+  file_read(savestate_file, reg, 0x100);
+  file_read_array(savestate_file, spsr);
+  file_read_array(savestate_file, reg_mode);
 
-cpu_savestate_builder(read);
-cpu_savestate_builder(write_mem);
+  normalize_cpu_mode_state();
+  extract_flags();
+}
+
+void cpu_write_mem_savestate(file_tag_type savestate_file)
+{
+  file_write_mem(savestate_file, reg, 0x100);
+  file_write_mem_array(savestate_file, spsr);
+  file_write_mem_array(savestate_file, reg_mode);
+}
