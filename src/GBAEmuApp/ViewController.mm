@@ -23,6 +23,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 @property (nonatomic, assign) BOOL romLoaded;
 @property (nonatomic, assign) BOOL biosLoaded;
 @property (nonatomic, assign) CGColorSpaceRef frameColorSpace;
+@property (nonatomic, strong) NSMutableData *frameUploadBuffer;
 @property (nonatomic, assign) GBADocumentSelectionType documentSelectionType;
 @end
 
@@ -292,8 +293,23 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
     if (self.frameColorSpace == NULL) {
         return;
     }
+    const size_t frameBytes = width * height * sizeof(uint32_t);
+    if (self.frameUploadBuffer == nil || self.frameUploadBuffer.length != frameBytes) {
+        self.frameUploadBuffer = [NSMutableData dataWithLength:frameBytes];
+    }
+    uint32_t *bgraPixels = static_cast<uint32_t *>(self.frameUploadBuffer.mutableBytes);
+    if (bgraPixels == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < width * height; ++i) {
+        const uint32_t rgba = pixels[i];
+        const uint32_t r = rgba & 0x000000FFu;
+        const uint32_t g = (rgba & 0x0000FF00u);
+        const uint32_t b = (rgba & 0x00FF0000u) >> 16u;
+        bgraPixels[i] = 0xFF000000u | (r << 16u) | g | b;
+    }
 
-    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pixels, width * height * sizeof(uint32_t), NULL);
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, bgraPixels, frameBytes, NULL);
     if (provider == NULL) {
         return;
     }
@@ -304,8 +320,8 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
                                         32,
                                         bytesPerRow,
                                         self.frameColorSpace,
-                                        static_cast<CGBitmapInfo>(kCGBitmapByteOrder32Big |
-                                                                  static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast)),
+                                        static_cast<CGBitmapInfo>(kCGBitmapByteOrder32Little |
+                                                                  static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedFirst)),
                                         provider,
                                         NULL,
                                         false,
