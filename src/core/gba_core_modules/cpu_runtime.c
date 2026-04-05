@@ -1,6 +1,6 @@
 
 
-#include "common.h"
+#include "../common.h"
 
 u32 memory_region_access_read_u8[16];
 u32 memory_region_access_read_s8[16];

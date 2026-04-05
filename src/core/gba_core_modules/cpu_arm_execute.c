@@ -3220,6 +3220,8 @@ int armExecute()
 
 #if !defined(__cplusplus)
 #include "../common.h"
+#include "../includes/cpu.h"
+#include "../includes/main.h"
 
 extern int cpuRunArmStep(u32 cycles);
 

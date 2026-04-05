@@ -732,6 +732,7 @@ int disThumb(uint32_t offset, char* dest, unsigned dest_sz, int flags)
 
 #if !defined(__cplusplus)
 #include "../common.h"
+#include "../includes/cpu.h"
 
 int cpuRunArmStep(u32 cycles)
 {
