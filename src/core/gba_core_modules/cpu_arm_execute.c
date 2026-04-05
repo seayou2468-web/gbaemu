@@ -1,6 +1,6 @@
 
 
-#include "common.h"
+#include "../common.h"
 
 void gba_handle_arm_swi(u32 pc);
 void gba_handle_thumb_swi(u32 pc);

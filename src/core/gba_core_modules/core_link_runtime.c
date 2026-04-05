@@ -1,6 +1,6 @@
 // Imported from reference implementation: gui.h
 
-#include "common.h"
+#include "../common.h"
 
 
 #ifndef GUI_H

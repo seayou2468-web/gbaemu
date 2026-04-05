@@ -2,7 +2,7 @@
 
 
 
-#include "common.h"
+#include "../common.h"
 #include "gba_platform.h"
 u32 global_enable_audio = 1;
 

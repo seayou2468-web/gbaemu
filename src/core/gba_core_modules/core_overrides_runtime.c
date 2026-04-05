@@ -1,7 +1,7 @@
 // Imported from reference implementation: cheats.c
 
 
-#include "common.h"
+#include "../common.h"
 
 cheat_type cheats[MAX_CHEATS];
 u32 num_cheats;

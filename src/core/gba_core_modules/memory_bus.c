@@ -2,7 +2,7 @@
 
 
 #define IN_MEMORY_C
-#include "common.h"
+#include "../common.h"
 
 // This table is configured for sequential access on system defaults
 

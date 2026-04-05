@@ -1,6 +1,6 @@
 // Imported from reference implementation: memory.h
 
-#include "common.h"
+#include "../common.h"
 
 #ifndef MEMORY_H
 #define MEMORY_H

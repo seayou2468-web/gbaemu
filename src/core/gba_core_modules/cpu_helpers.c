@@ -6,7 +6,7 @@
 // ownership unique while this file remains a dedicated placeholder
 // for future helper-only extraction.
 
-#include "common.h"
+#include "../common.h"
 
 // Keep at least one concrete helper copied from the reference CPU codebase.
 const u8 cpu_migration_bit_count_lut[256] = {

@@ -1,6 +1,6 @@
 
 
-#include "common.h"
+#include "../common.h"
 
 u8 rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
 u8 *rom_translation_ptr = rom_translation_cache;

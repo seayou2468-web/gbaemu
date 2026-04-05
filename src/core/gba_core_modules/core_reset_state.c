@@ -1,7 +1,7 @@
 // Imported from reference implementation: main.c
 
 
-#include "common.h"
+#include "../common.h"
 #include <ctype.h>
 
 #ifdef PSP_BUILD

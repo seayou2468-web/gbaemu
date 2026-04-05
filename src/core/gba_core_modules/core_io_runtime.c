@@ -1,7 +1,7 @@
 // Imported from reference implementation: gui.c
 
 
-#include "common.h"
+#include "../common.h"
 #include "../includes/font.h"
 
 #ifndef _WIN32_WCE

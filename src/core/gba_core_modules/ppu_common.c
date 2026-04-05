@@ -1,7 +1,7 @@
 // Imported from reference implementation: video.c
 
 
-#include "common.h"
+#include "../common.h"
 #define WANT_FONT_BITS
 #include "../includes/font.h"
 

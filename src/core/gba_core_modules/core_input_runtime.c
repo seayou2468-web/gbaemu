@@ -1,7 +1,7 @@
 // Imported from reference implementation: input.c
 
 
-#include "common.h"
+#include "../common.h"
 
 // Special thanks to psp298 for the analog->dpad code!
 

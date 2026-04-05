@@ -1,3 +1,5 @@
+#include "../common.h"
+
 // Imported from reference implementation: video.h
 
 

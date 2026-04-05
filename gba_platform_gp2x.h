@@ -1,14 +1,6 @@
-#ifndef GBA_CORE_PLATFORM_GP2X_H
-#define GBA_CORE_PLATFORM_GP2X_H
+#ifndef GBA_CORE_PLATFORM_GP2X_REDIRECT_H
+#define GBA_CORE_PLATFORM_GP2X_REDIRECT_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void GBA_GP2X_AllowGfxMemory(void *ptr, int size);
-
-#ifdef __cplusplus
-}
-#endif
+#include "src/core/gba_platform_gp2x.h"
 
 #endif
