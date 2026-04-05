@@ -179,7 +179,13 @@ void GBA_StepFrame(GBACoreHandle *handle) {
         return;
     }
 
-    update_gba();
+    constexpr uint32_t kGbaFrameCycles = 280896u;
+    uint32_t consumed = 0;
+    int guard = 0;
+    while (consumed < kGbaFrameCycles && guard < 2000) {
+        consumed += update_gba();
+        ++guard;
+    }
     RefreshFrameBuffer(handle);
     SetError(handle, "");
 }
