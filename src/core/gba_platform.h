@@ -1,5 +1,4 @@
-#ifndef GBA_CORE_PLATFORM_H
-#define GBA_CORE_PLATFORM_H
+#pragma once
 
 #include <stdint.h>
 #include <stddef.h>
@@ -63,48 +62,13 @@ typedef struct GBA_AudioSpec {
   int freq;
   Uint16 format;
   Uint8 channels;
+  Uint8 silence;
   Uint16 samples;
+  Uint16 padding;
   Uint32 size;
   GBA_AudioCallback callback;
   void *userdata;
 } GBA_AudioSpec;
-
-#define GBA_INIT_VIDEO 0x00000020u
-#define GBA_INIT_JOYSTICK 0x00000200u
-#define GBA_INIT_NOPARACHUTE 0x00100000u
-
-#define GBA_HWSURFACE 0x00000001u
-#define GBA_ENABLE 1
-
-#define GBA_QUIT 0x100
-#define GBA_KEYDOWN 0x300
-#define GBA_KEYUP 0x301
-#define GBA_JOYAXISMOTION 0x600
-#define GBA_JOYBUTTONDOWN 0x601
-#define GBA_JOYBUTTONUP 0x602
-
-#define GBAK_ESCAPE 27
-#define GBAK_RETURN 13
-#define GBAK_BACKSPACE 8
-#define GBAK_BACKQUOTE '`'
-#define GBAK_UP 273
-#define GBAK_DOWN 274
-#define GBAK_RIGHT 275
-#define GBAK_LEFT 276
-#define GBAK_LSHIFT 304
-#define GBAK_RSHIFT 303
-#define GBAK_LCTRL 306
-#define GBAK_LALT 308
-#define GBAK_F1 282
-#define GBAK_F2 283
-#define GBAK_F3 284
-#define GBAK_F5 286
-#define GBAK_F7 288
-#define GBAK_F10 291
-#define GBAK_a 'a'
-#define GBAK_s 's'
-#define GBAK_x 'x'
-#define GBAK_z 'z'
 
 int GBA_Init(Uint32 flags);
 void GBA_Quit(void);
@@ -141,6 +105,5 @@ void GBA_Delay(Uint32 ms);
 
 #ifdef __cplusplus
 }
-#endif
 
 #endif

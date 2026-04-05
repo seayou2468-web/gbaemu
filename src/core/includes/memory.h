@@ -1,6 +1,4 @@
-// Imported from reference implementation: memory.h
 
-#include "../common.h"
 
 #ifndef MEMORY_H
 #define MEMORY_H
@@ -200,15 +198,5 @@ extern u32 *reg;
 extern u8 *memory_map_write[8 * 1024];
 
 extern flash_device_id_type flash_device_id;
-
-#endif
-
-// Imported from reference implementation: zip.h
-
-
-#ifndef ZIP_H
-#define ZIP_H
-
-u32 load_file_zip(char *filename);
 
 #endif

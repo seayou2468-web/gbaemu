@@ -1,6 +1,6 @@
 // Imported from reference implementation: cpu.c
 
-#include "common.h"
+#include "../common.h"
 
 void gba_handle_arm_swi(u32 pc)
 {

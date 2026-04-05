@@ -1,6 +1,3 @@
-#include "../common.h"
-
-// Imported from reference implementation: video.h
 
 
 #ifndef VIDEO_H

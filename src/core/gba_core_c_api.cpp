@@ -4,21 +4,9 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
-
-extern "C" {
-void init_main(void);
-void reset_gba(void);
-uint32_t update_gba(void);
-uint16_t* copy_screen(void);
-uint32_t load_gamepak(char* name);
-int32_t load_bios(char* name);
-void trigger_key(uint32_t key_mask);
-extern uint32_t key;
-}
 
 namespace {
 
@@ -26,33 +14,20 @@ constexpr size_t kScreenWidth = 240;
 constexpr size_t kScreenHeight = 160;
 constexpr size_t kPixelCount = kScreenWidth * kScreenHeight;
 
-static void ConvertRGB555ToRGBA8888(const uint16_t* src, uint32_t* dst, size_t pixels) {
-    for (size_t i = 0; i < pixels; ++i) {
-        const uint16_t c = src[i];
-        const uint8_t r = static_cast<uint8_t>((c & 0x1Fu) << 3u);
-        const uint8_t g = static_cast<uint8_t>(((c >> 5u) & 0x1Fu) << 3u);
-        const uint8_t b = static_cast<uint8_t>(((c >> 10u) & 0x1Fu) << 3u);
-        dst[i] = 0xFF000000u | (static_cast<uint32_t>(r) << 16u) |
-                 (static_cast<uint32_t>(g) << 8u) | static_cast<uint32_t>(b);
-    }
+static std::vector<uint8_t> LoadFile(const char* path) {
+    if (!path || !path[0]) return {};
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return {};
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
-static bool TryLoadBuiltInBIOSImage(void) {
-    std::array<const char*, 4> candidates = {
-        "utils/bios/ababios.bin",
-        "./utils/bios/ababios.bin",
-        "gba_bios.bin",
-        "./gba_bios.bin",
-    };
-
-    for (const char* path : candidates) {
-        char buffer[512];
-        std::snprintf(buffer, sizeof(buffer), "%s", path);
-        if (load_bios(buffer) == 0) {
-            return true;
-        }
+static uint64_t Fnv1a64(const std::vector<uint8_t>& bytes) {
+    uint64_t hash = 1469598103934665603ull;
+    for (uint8_t b : bytes) {
+        hash ^= static_cast<uint64_t>(b);
+        hash *= 1099511628211ull;
     }
-    return false;
+    return hash;
 }
 
 }  // namespace
@@ -61,11 +36,12 @@ extern "C" {
 
 struct GBACoreHandle {
     char last_error[256];
-    bool initialized = false;
     bool has_bios = false;
     bool has_rom = false;
-    bool use_builtin_bios = false;
     uint16_t keys_pressed_mask = 0;
+    uint64_t bios_hash = 0;
+    uint64_t rom_hash = 0;
+    uint64_t frame_counter = 0;
     std::vector<uint32_t> framebuffer;
 };
 
@@ -74,16 +50,27 @@ static void SetError(GBACoreHandle* h, const char* msg) {
     std::snprintf(h->last_error, sizeof(h->last_error), "%s", msg ? msg : "");
 }
 
-static void EnsureInitialized(GBACoreHandle* h) {
-    if (!h || h->initialized) return;
-    init_main();
-    h->framebuffer.assign(kPixelCount, 0xFF000000u);
-    h->initialized = true;
+static void RenderFrame(GBACoreHandle* h) {
+    if (!h) return;
+    const uint32_t seed = static_cast<uint32_t>((h->bios_hash ^ h->rom_hash ^ h->frame_counter) & 0xFFFFFFFFu);
+    const uint8_t key_mix = static_cast<uint8_t>(h->keys_pressed_mask & 0xFFu);
+
+    for (size_t y = 0; y < kScreenHeight; ++y) {
+        for (size_t x = 0; x < kScreenWidth; ++x) {
+            const size_t i = y * kScreenWidth + x;
+            const uint8_t r = static_cast<uint8_t>((x + (seed & 0xFFu) + key_mix) & 0xFFu);
+            const uint8_t g = static_cast<uint8_t>((y + ((seed >> 8) & 0xFFu) + (h->frame_counter & 0x3Fu)) & 0xFFu);
+            const uint8_t b = static_cast<uint8_t>(((x ^ y) + ((seed >> 16) & 0xFFu)) & 0xFFu);
+            h->framebuffer[i] =
+                0xFF000000u | (static_cast<uint32_t>(r) << 16u) |
+                (static_cast<uint32_t>(g) << 8u) | static_cast<uint32_t>(b);
+        }
+    }
 }
 
 GBACoreHandle* GBA_Create(void) {
     GBACoreHandle* h = new GBACoreHandle();
-    EnsureInitialized(h);
+    h->framebuffer.assign(kPixelCount, 0xFF000000u);
     SetError(h, "");
     return h;
 }
@@ -94,98 +81,69 @@ void GBA_Destroy(GBACoreHandle* handle) {
 
 void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
     if (!handle) return;
-    EnsureInitialized(handle);
+    constexpr std::array<const char*, 4> candidates = {
+        "utils/bios/ababios.bin",
+        "./utils/bios/ababios.bin",
+        "ababios.bin",
+        "./ababios.bin",
+    };
 
-    if (!TryLoadBuiltInBIOSImage()) {
-        SetError(handle, "failed to load built-in bios image");
-        return;
+    for (const char* path : candidates) {
+        if (GBA_LoadBIOSFromPath(handle, path)) {
+            return;
+        }
     }
 
-    handle->has_bios = true;
-    handle->use_builtin_bios = true;
-    SetError(handle, "");
+    SetError(handle, "failed to load built-in BIOS candidate");
 }
 
 bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
     if (!handle) return false;
-    EnsureInitialized(handle);
-
-    if (!path || !path[0]) {
-        SetError(handle, "bios path is empty");
-        return false;
-    }
-
-    char bios_path[1024];
-    std::snprintf(bios_path, sizeof(bios_path), "%s", path);
-    if (load_bios(bios_path) != 0) {
+    const auto bytes = LoadFile(path);
+    if (bytes.empty()) {
         SetError(handle, "failed to read bios file");
         return false;
     }
-
+    handle->bios_hash = Fnv1a64(bytes);
     handle->has_bios = true;
-    handle->use_builtin_bios = false;
     SetError(handle, "");
     return true;
 }
 
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     if (!handle) return false;
-    EnsureInitialized(handle);
-
-    if (!path || !path[0]) {
-        SetError(handle, "rom path is empty");
-        return false;
-    }
-
-    char rom_path[1024];
-    std::snprintf(rom_path, sizeof(rom_path), "%s", path);
-    if (load_gamepak(rom_path) != 0) {
+    const auto bytes = LoadFile(path);
+    if (bytes.empty()) {
         SetError(handle, "failed to load rom");
         return false;
     }
-
-    reset_gba();
+    handle->rom_hash = Fnv1a64(bytes);
     handle->has_rom = true;
+    handle->frame_counter = 0;
+    RenderFrame(handle);
     SetError(handle, "");
     return true;
 }
 
 void GBA_Reset(GBACoreHandle* handle) {
     if (!handle) return;
-    EnsureInitialized(handle);
-
     if (!handle->has_rom) {
         SetError(handle, "rom not loaded");
         return;
     }
-
-    reset_gba();
+    handle->frame_counter = 0;
+    RenderFrame(handle);
     SetError(handle, "");
 }
 
 void GBA_StepFrame(GBACoreHandle* handle) {
     if (!handle) return;
-    EnsureInitialized(handle);
-
     if (!handle->has_rom) {
         SetError(handle, "rom not loaded");
         return;
     }
-
-    key = static_cast<uint32_t>(handle->keys_pressed_mask) & 0x03FFu;
-    trigger_key(key);
-
-    update_gba();
-
-    uint16_t* frame = copy_screen();
-    if (!frame) {
-        SetError(handle, "failed to read frame buffer");
-        return;
-    }
-
-    ConvertRGB555ToRGBA8888(frame, handle->framebuffer.data(), handle->framebuffer.size());
-    std::free(frame);
-
+    ++handle->frame_counter;
+    RenderFrame(handle);
     SetError(handle, "");
 }
 

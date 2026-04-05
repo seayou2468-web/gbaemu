@@ -1,5 +1,4 @@
-#ifndef GBA_CORE_PLATFORM_GP2X_H
-#define GBA_CORE_PLATFORM_GP2X_H
+#pragma once
 
 #ifdef __cplusplus
 extern "C" {
@@ -9,6 +8,4 @@ void GBA_GP2X_AllowGfxMemory(void *ptr, int size);
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

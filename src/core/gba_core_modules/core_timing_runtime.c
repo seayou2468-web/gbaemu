@@ -2,8 +2,8 @@
 
 
 
-#include "common.h"
-#include "gba_platform.h"
+#include "../common.h"
+#include "../gba_platform.h"
 u32 global_enable_audio = 1;
 
 direct_sound_struct direct_sound_channel[2];
@@ -746,7 +746,7 @@ void init_sound(int need_reset)
   GBA_AudioSpec desired_spec =
   {
     sound_frequency,
-    AUDIO_S16,
+    0x8010,
     2,
     0,
     audio_buffer_size / 4,
@@ -800,4 +800,3 @@ void sound_##type##_savestate(file_tag_type savestate_file)                 \
 
 sound_savestate_builder(read);
 sound_savestate_builder(write_mem);
-

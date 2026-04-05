@@ -1,6 +1,6 @@
 
 
-#include "common.h"
+#include "../common.h"
 
 void gba_handle_arm_swi(u32 pc);
 void gba_handle_thumb_swi(u32 pc);
@@ -4044,7 +4044,7 @@ void debug_off(debug_state new_debug_state)
   debug_screen_end();
 }
 
-void function_cc step_debug(u32 pc, u32 cycles)
+void step_debug(u32 pc, u32 cycles)
 {
   u32 thumb = 0;
 

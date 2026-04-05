@@ -1,8 +1,8 @@
 // Imported from reference implementation: gui.c
 
 
-#include "common.h"
-#include "font.h"
+#include "../common.h"
+#include "../includes/font.h"
 
 #ifndef _WIN32_WCE
 
@@ -873,6 +873,11 @@ enum file_options {
 
 #ifdef PC_BUILD
 #define PLAT_BUTTON_COUNT 0
+#define PLAT_MENU_BUTTON -1
+#endif
+#ifdef IOS_BUILD
+#define PLAT_BUTTON_COUNT 0
+#define PLAT_MENU_BUTTON -1
 #endif
 #define FILE_OPTION_COUNT (fo_main_option_count + PLAT_BUTTON_COUNT)
 
@@ -1570,7 +1575,7 @@ u32 menu(u16 *original_screen)
 
 #endif
 
-#if defined(PC_BUILD) || defined(RPI_BUILD)
+#if defined(PC_BUILD) || defined(RPI_BUILD) || defined(IOS_BUILD)
 
   menu_option_type gamepad_config_options[] =
   {

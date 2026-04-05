@@ -1,7 +1,7 @@
 // Imported from reference implementation: zip.c
 
 
-#include "common.h"
+#include "../common.h"
 #include <zlib.h>
 
 #define ZIP_BUFFER_SIZE (128 * 1024)

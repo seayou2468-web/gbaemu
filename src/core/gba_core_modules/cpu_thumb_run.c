@@ -1,6 +1,6 @@
 
 
-#include "common.h"
+#include "../common.h"
 
 u8 rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
 u8 *rom_translation_ptr = rom_translation_cache;
@@ -2714,7 +2714,7 @@ u32 translation_flush_count = 0;
 
 
 #define block_lookup_address_builder(type)                                    \
-u8 function_cc *block_lookup_address_##type(u32 pc)                           \
+u8 *block_lookup_address_##type(u32 pc)                           \
 {                                                                             \
   u16 *location;                                                              \
   u32 block_tag;                                                              \

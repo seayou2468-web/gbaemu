@@ -3,6 +3,12 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+#ifdef IOS_BUILD
+#ifndef PC_BUILD
+#define PC_BUILD
+#endif
+#endif
+
 #define ror(dest, value, shift)                                               \
   dest = ((value) >> shift) | ((value) << (32 - shift))                       \
 
@@ -63,7 +69,7 @@
   #include <pspaudiolib.h>
   #include <psprtc.h>
 
-  #define function_cc
+  #define 
 
   #define convert_palette(value)                                              \
     value = ((value & 0x7FE0) << 1) | (value & 0x1F)                          \
@@ -95,12 +101,6 @@
   #include <stdio.h>
 #else
   #include "gba_platform.h"
-
-#ifdef ARM_ARCH
-  #define function_cc
-#else
-  #define function_cc __attribute__((regparm(2)))
-#endif
 
   typedef unsigned char u8;
   typedef signed char s8;
@@ -211,17 +211,18 @@ typedef u32 fixed8_24;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include "gba_platform.h"
-#include "../../reference implementation/cpu.h"
-#include "../../reference implementation/memory.h"
-#include "../../reference implementation/video.h"
-#include "../../reference implementation/input.h"
-#include "../../reference implementation/sound.h"
-#include "../../reference implementation/main.h"
-#include "../../reference implementation/gui.h"
-#include "../../reference implementation/zip.h"
-#include "../../reference implementation/cheats.h"
+#include "includes/cpu.h"
+#include "includes/memory.h"
+#include "includes/video.h"
+#include "includes/input.h"
+#include "includes/sound.h"
+#include "includes/main.h"
+#include "includes/gui.h"
+#include "includes/zip.h"
+#include "includes/cheats.h"
 
 #ifdef ARM_ARCH
   #include "arm/warm.h"

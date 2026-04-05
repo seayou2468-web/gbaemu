@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -24,11 +26,33 @@ public:
         }
     }
 
-    bool LoadBIOS(const std::vector<uint8_t>&, std::string* error) {
-        if (error) {
-            *error = "LoadBIOS(buffer) is not supported; use GBA_LoadBIOSFromPath in host";
+    bool LoadBIOS(const std::vector<uint8_t>& bios, std::string* error) {
+        if (!handle_) {
+            if (error) *error = "core handle is null";
+            return false;
         }
-        return false;
+        if (bios.empty()) {
+            if (error) *error = "bios buffer is empty";
+            return false;
+        }
+
+        const char* tmp_path = "/tmp/gbaemu_bios.bin";
+        std::ofstream out(tmp_path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bios.data()), static_cast<std::streamsize>(bios.size()));
+        out.close();
+        if (!out) {
+            if (error) *error = "failed to write temporary bios file";
+            return false;
+        }
+
+        const bool ok = GBA_LoadBIOSFromPath(handle_, tmp_path);
+        if (!ok && error) {
+            *error = GBA_GetLastError(handle_);
+        } else if (error) {
+            error->clear();
+        }
+        std::remove(tmp_path);
+        return ok;
     }
 
     void LoadBuiltInBIOS() {
@@ -37,11 +61,33 @@ public:
         }
     }
 
-    bool LoadROM(const std::vector<uint8_t>&, std::string* warning) {
-        if (warning) {
-            *warning = "LoadROM(buffer) is not supported in this adapter";
+    bool LoadROM(const std::vector<uint8_t>& rom, std::string* warning) {
+        if (!handle_) {
+            if (warning) *warning = "core handle is null";
+            return false;
         }
-        return false;
+        if (rom.empty()) {
+            if (warning) *warning = "rom buffer is empty";
+            return false;
+        }
+
+        const char* tmp_path = "/tmp/gbaemu_rom.gba";
+        std::ofstream out(tmp_path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(rom.data()), static_cast<std::streamsize>(rom.size()));
+        out.close();
+        if (!out) {
+            if (warning) *warning = "failed to write temporary rom file";
+            return false;
+        }
+
+        const bool ok = GBA_LoadROMFromPath(handle_, tmp_path);
+        if (!ok && warning) {
+            *warning = GBA_GetLastError(handle_);
+        } else if (warning) {
+            warning->clear();
+        }
+        std::remove(tmp_path);
+        return ok;
     }
 
     bool LoadROMFromPath(const std::string& path, std::string* warning) {

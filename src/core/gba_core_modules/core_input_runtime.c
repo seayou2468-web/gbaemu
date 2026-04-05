@@ -1,7 +1,7 @@
 // Imported from reference implementation: input.c
 
 
-#include "common.h"
+#include "../common.h"
 
 // Special thanks to psp298 for the analog->dpad code!
 
@@ -545,34 +545,34 @@ u32 key_map(GBAKey key_sym)
 {
   switch(key_sym)
   {
-    case GBAK_a:
+    case 'a':
       return BUTTON_L;
 
-    case GBAK_s:
+    case 's':
       return BUTTON_R;
 
-    case GBAK_DOWN:
+    case 274:
       return BUTTON_DOWN;
 
-    case GBAK_UP:
+    case 273:
       return BUTTON_UP;
 
-    case GBAK_LEFT:
+    case 276:
       return BUTTON_LEFT;
 
-    case GBAK_RIGHT:
+    case 275:
       return BUTTON_RIGHT;
 
-    case GBAK_RETURN:
+    case 13:
       return BUTTON_START;
 
-    case GBAK_BACKSPACE:
+    case 8:
       return BUTTON_SELECT;
 
-    case GBAK_x:
+    case 'x':
       return BUTTON_B;
 
-    case GBAK_z:
+    case 'z':
       return BUTTON_A;
 
     default:
@@ -587,34 +587,34 @@ u32 key_map(GBAKey key_sym)
 {
   switch(key_sym)
   {
-    case GBAK_LSHIFT:
+    case 304:
       return BUTTON_L;
 
-    case GBAK_x:
+    case 'x':
       return BUTTON_R;
 
-    case GBAK_DOWN:
+    case 274:
       return BUTTON_DOWN;
 
-    case GBAK_UP:
+    case 273:
       return BUTTON_UP;
 
-    case GBAK_LEFT:
+    case 276:
       return BUTTON_LEFT;
 
-    case GBAK_RIGHT:
+    case 275:
       return BUTTON_RIGHT;
 
-    case GBAK_RETURN:
+    case 13:
       return BUTTON_START;
 
-    case GBAK_RSHIFT:
+    case 303:
       return BUTTON_SELECT;
 
-    case GBAK_LCTRL:
+    case 306:
       return BUTTON_B;
 
-    case GBAK_LALT:
+    case 308:
       return BUTTON_A;
 
     default:
@@ -662,38 +662,38 @@ gui_action_type get_gui_input()
   { 
     switch(event.type)
     {
-      case GBA_QUIT:
+      case 0x100:
         quit();
 
-      case GBA_KEYDOWN:
+      case 0x300:
       {
         switch(event.key.keysym.sym)
         {
-          case GBAK_ESCAPE:
+          case 27:
             gui_action = CURSOR_EXIT;
             break;
 
-          case GBAK_DOWN:
+          case 274:
             gui_action = CURSOR_DOWN;
             break;
 
-          case GBAK_UP:
+          case 273:
             gui_action = CURSOR_UP;
             break;
 
-          case GBAK_LEFT:
+          case 276:
             gui_action = CURSOR_LEFT;
             break;
 
-          case GBAK_RIGHT:
+          case 275:
             gui_action = CURSOR_RIGHT;
             break;
 
-          case GBAK_RETURN:
+          case 13:
             gui_action = CURSOR_SELECT;
             break;
 
-          case GBAK_BACKSPACE:
+          case 8:
             gui_action = CURSOR_BACK;
             break;
 	 default:
@@ -702,7 +702,7 @@ gui_action_type get_gui_input()
     }
     break;
 #ifdef RPI_BUILD
-    case GBA_JOYBUTTONDOWN:
+    case 0x601:
     {
       switch (event.jbutton.button)
       {
@@ -721,7 +721,7 @@ gui_action_type get_gui_input()
      }
      break;
 
-     case GBA_JOYAXISMOTION:
+     case 0x600:
      {
          if (event.jaxis.axis==0) { //Left-Right
             if (event.jaxis.value < -3200) gui_action = CURSOR_LEFT;
@@ -750,19 +750,19 @@ u32 update_input()
   {
     switch(event.type)
     {
-      case GBA_QUIT:
+      case 0x100:
         quit();
 
-      case GBA_KEYDOWN:
+      case 0x300:
       {
-        if(event.key.keysym.sym == GBAK_ESCAPE)
+        if(event.key.keysym.sym == 27)
         {
           quit();
         }
 #ifdef PC_BUILD
-        if(event.key.keysym.sym == GBAK_BACKSPACE)
+        if(event.key.keysym.sym == 8)
 #else
-        if(event.key.keysym.sym == GBAK_F10)
+        if(event.key.keysym.sym == 291)
 #endif
         {
           u16 *screen_copy = copy_screen();
@@ -773,13 +773,13 @@ u32 update_input()
         }
         else
 #ifdef PC_BUILD
-        if(event.key.keysym.sym == GBAK_F1)
+        if(event.key.keysym.sym == 282)
         {
           debug_on();
         }
         else
 
-        if(event.key.keysym.sym == GBAK_F2)
+        if(event.key.keysym.sym == 283)
         {
           FILE *fp = fopen("palette_ram.bin", "wb");
           printf("writing palette RAM\n");
@@ -800,13 +800,13 @@ u32 update_input()
         }
         else
 
-        if(event.key.keysym.sym == GBAK_F3)
+        if(event.key.keysym.sym == 284)
         {
           dump_translation_cache();
         }
         else
 #endif
-        if(event.key.keysym.sym == GBAK_F5)
+        if(event.key.keysym.sym == 286)
         {
           char current_savestate_filename[512];
           u16 *current_screen = copy_screen();
@@ -817,7 +817,7 @@ u32 update_input()
         }
         else
 
-        if(event.key.keysym.sym == GBAK_F7)
+        if(event.key.keysym.sym == 288)
         {
           char current_savestate_filename[512];
           get_savestate_filename_noshot(savestate_slot,
@@ -828,7 +828,7 @@ u32 update_input()
         }
         else
 
-        if(event.key.keysym.sym == GBAK_BACKQUOTE)
+        if(event.key.keysym.sym == '`')
         {
           synchronize_flag ^= 1;
         }
@@ -841,40 +841,40 @@ u32 update_input()
         break;
       }
 
-      case GBA_KEYUP:
+      case 0x301:
       {
         key &= ~(key_map(event.key.keysym.sym));
         break;
       }
 
-      case GBA_JOYBUTTONDOWN:
+      case 0x601:
       {
         key |= joy_map(event.jbutton.button);
         trigger_key(key);
         break;
       }
 
-      case GBA_JOYBUTTONUP:
+      case 0x602:
       {
         key &= ~(joy_map(event.jbutton.button));
         break;
       }
 #ifdef RPI_BUILD
-      case GBA_JOYAXISMOTION:
+      case 0x600:
       {
          if (event.jaxis.axis==0) { //Left-Right
             key &= ~(BUTTON_LEFT|BUTTON_RIGHT);
          if (event.jaxis.value < -3200)  key |= BUTTON_LEFT;
            else if (event.jaxis.value > 3200)  key |= BUTTON_RIGHT;
-       } 
+       }
          if (event.jaxis.axis==1) {  //Up-Down
             key &= ~(BUTTON_UP|BUTTON_DOWN);
          if (event.jaxis.value < -3200)  key |= BUTTON_UP;
            else if (event.jaxis.value > 3200)  key |= BUTTON_DOWN;
        }
        break;
-#endif
       }
+#endif
     }
   }
 
@@ -890,7 +890,7 @@ void init_input()
   if(joystick_count > 0)
   {
     GBA_JoystickOpen(0);
-    GBA_JoystickEventState(GBA_ENABLE);
+    GBA_JoystickEventState(1);
   }
 }
 
@@ -905,4 +905,3 @@ void input_##type##_savestate(file_tag_type savestate_file)                   \
 
 input_savestate_builder(read);
 input_savestate_builder(write_mem);
-

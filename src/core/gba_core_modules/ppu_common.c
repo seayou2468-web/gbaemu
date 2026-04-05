@@ -1,9 +1,9 @@
 // Imported from reference implementation: video.c
 
 
-#include "common.h"
+#include "../common.h"
 #define WANT_FONT_BITS
-#include "font.h"
+#include "../includes/font.h"
 
 #ifdef PSP_BUILD
 
@@ -102,7 +102,7 @@ static u16 *screen_pixels = NULL;
 #else
 
 #ifdef GP2X_BUILD
-#include "gba_platform_gp2x.h"
+#include "../gba_platform_gp2x.h"
 GBA_Surface *hw_screen;
 #endif
 GBA_Surface *screen;
@@ -3598,15 +3598,15 @@ void init_video()
 
 void init_video()
 {
-  GBA_Init(GBA_INIT_VIDEO | GBA_INIT_JOYSTICK | GBA_INIT_NOPARACHUTE);
+  GBA_Init(0x00000020u | 0x00000200u | 0x00100000u);
 
 #ifdef GP2X_BUILD
   GBA_GP2X_AllowGfxMemory(NULL, 0);
 
   hw_screen = GBA_SetVideoMode(320 * video_scale, 240 * video_scale,
-   16, GBA_HWSURFACE);
+   16, 0x00000001u);
 
-  screen = GBA_CreateRGBSurface(GBA_HWSURFACE, 240 * video_scale,
+  screen = GBA_CreateRGBSurface(0x00000001u, 240 * video_scale,
    160 * video_scale, 16, 0xFFFF, 0xFFFF, 0xFFFF, 0);
 
   warm_change_cb_upper(WCB_C_BIT|WCB_B_BIT, 1);
@@ -3833,8 +3833,8 @@ void video_resolution_large()
 #ifdef GP2X_BUILD
   GBA_FreeSurface(screen);
   GBA_GP2X_AllowGfxMemory(NULL, 0);
-    hw_screen = GBA_SetVideoMode(320, 240, 16, GBA_HWSURFACE);
-  screen = GBA_CreateRGBSurface(GBA_HWSURFACE, 320, 240, 16, 0xFFFF,
+    hw_screen = GBA_SetVideoMode(320, 240, 16, 0x00000001u);
+  screen = GBA_CreateRGBSurface(0x00000001u, 320, 240, 16, 0xFFFF,
    0xFFFF, 0xFFFF, 0);
   resolution_width = 320;
     resolution_height = 240;
@@ -3864,12 +3864,12 @@ void video_resolution_small()
     h = small_resolution_height * video_scale;
   }
   if (screen_scale == scaled_aspect) h += 20;
-  hw_screen = GBA_SetVideoMode(w, h, 16, GBA_HWSURFACE);
+  hw_screen = GBA_SetVideoMode(w, h, 16, 0x00000001u);
 
   w = small_resolution_width * video_scale;
   if (screen_scale == scaled_aspect_sw)
     w = 320;
-  screen = GBA_CreateRGBSurface(GBA_HWSURFACE,
+  screen = GBA_CreateRGBSurface(0x00000001u,
    w, small_resolution_height * video_scale,
    16, 0xFFFF, 0xFFFF, 0xFFFF, 0);
 
@@ -4135,5 +4135,4 @@ void video_##type##_savestate(file_tag_type savestate_file)                   \
 
 video_savestate_builder(read);
 video_savestate_builder(write_mem);
-
 

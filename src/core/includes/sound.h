@@ -1,6 +1,3 @@
-#include "../common.h"
-
-// Imported from reference implementation: sound.h
 
 #ifndef SOUND_H
 #define SOUND_H
