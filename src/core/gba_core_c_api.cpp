@@ -23,6 +23,10 @@ uint32_t execute_arm_translate(uint32_t cycles);
 uint32_t update_gba(void);
 uint16_t *copy_screen(void);
 extern uint32_t execute_cycles;
+extern int current_frameskip_type;
+extern uint32_t frameskip_value;
+extern uint32_t skip_next_frame;
+extern uint32_t synchronize_flag;
 }
 
 namespace {
@@ -82,6 +86,13 @@ static bool EnsureInitialized(GBACoreHandle *h) {
     init_input();
     init_cpu();
     init_memory();
+
+    // Force deterministic frame production for API callers.
+    // main.h enum order: auto_frameskip(0), manual_frameskip(1), no_frameskip(2).
+    current_frameskip_type = 2;
+    frameskip_value = 0;
+    skip_next_frame = 0;
+    synchronize_flag = 0;
 
     h->initialized = true;
     return true;
