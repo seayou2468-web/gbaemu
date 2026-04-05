@@ -4,72 +4,55 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
-#if !defined(_WIN32)
-#include <strings.h>
-#endif
+
+extern "C" {
+void init_main(void);
+void reset_gba(void);
+uint32_t update_gba(void);
+uint16_t* copy_screen(void);
+uint32_t load_gamepak(char* name);
+int32_t load_bios(char* name);
+void trigger_key(uint32_t key_mask);
+extern uint32_t key;
+}
 
 namespace {
 
 constexpr size_t kScreenWidth = 240;
 constexpr size_t kScreenHeight = 160;
 constexpr size_t kPixelCount = kScreenWidth * kScreenHeight;
-constexpr size_t kBiosSize = 0x4000;
 
-struct TinyCPU {
-    std::array<uint32_t, 16> regs{};  // r0-r15 (r15=pc)
-    uint32_t cpsr = 0;
-    uint64_t cycles = 0;
-
-    void reset(uint32_t start_pc) {
-        regs.fill(0);
-        regs[15] = start_pc;
-        cpsr = 0;
-        cycles = 0;
+static void ConvertRGB555ToRGBA8888(const uint16_t* src, uint32_t* dst, size_t pixels) {
+    for (size_t i = 0; i < pixels; ++i) {
+        const uint16_t c = src[i];
+        const uint8_t r = static_cast<uint8_t>((c & 0x1Fu) << 3u);
+        const uint8_t g = static_cast<uint8_t>(((c >> 5u) & 0x1Fu) << 3u);
+        const uint8_t b = static_cast<uint8_t>(((c >> 10u) & 0x1Fu) << 3u);
+        dst[i] = 0xFF000000u | (static_cast<uint32_t>(r) << 16u) |
+                 (static_cast<uint32_t>(g) << 8u) | static_cast<uint32_t>(b);
     }
-};
-
-static bool ReadAllBytes(const char* path, std::vector<uint8_t>* out) {
-    if (!path || !path[0] || !out) return false;
-    FILE* fp = std::fopen(path, "rb");
-    if (!fp) return false;
-    std::fseek(fp, 0, SEEK_END);
-    const long size = std::ftell(fp);
-    if (size <= 0) {
-        std::fclose(fp);
-        return false;
-    }
-    std::fseek(fp, 0, SEEK_SET);
-    out->assign(static_cast<size_t>(size), 0);
-    const size_t n = std::fread(out->data(), 1, out->size(), fp);
-    std::fclose(fp);
-    return n == out->size();
 }
 
-static bool HasGBAExtension(const char* path) {
-    if (!path) return false;
-    const char* dot = std::strrchr(path, '.');
-    if (!dot) return false;
-#if defined(_WIN32)
-#define STRCASECMP _stricmp
-#else
-#define STRCASECMP strcasecmp
-#endif
-    return STRCASECMP(dot, ".gba") == 0 || STRCASECMP(dot, ".agb") == 0 ||
-           STRCASECMP(dot, ".bin") == 0 || STRCASECMP(dot, ".mb") == 0 ||
-           STRCASECMP(dot, ".elf") == 0;
-#undef STRCASECMP
-}
+static bool TryLoadBuiltInBIOSImage(void) {
+    std::array<const char*, 4> candidates = {
+        "utils/bios/ababios.bin",
+        "./utils/bios/ababios.bin",
+        "gba_bios.bin",
+        "./gba_bios.bin",
+    };
 
-static uint32_t FastHash32(const uint8_t* data, size_t size) {
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < size; ++i) {
-        h ^= data[i];
-        h *= 16777619u;
+    for (const char* path : candidates) {
+        char buffer[512];
+        std::snprintf(buffer, sizeof(buffer), "%s", path);
+        if (load_bios(buffer) == 0) {
+            return true;
+        }
     }
-    return h;
+    return false;
 }
 
 }  // namespace
@@ -78,19 +61,11 @@ extern "C" {
 
 struct GBACoreHandle {
     char last_error[256];
-
+    bool initialized = false;
     bool has_bios = false;
-    bool use_builtin_bios = false;
     bool has_rom = false;
-
-    std::vector<uint8_t> bios;
-    std::vector<uint8_t> rom;
-
-    TinyCPU cpu;
+    bool use_builtin_bios = false;
     uint16_t keys_pressed_mask = 0;
-    uint32_t rom_hash = 0;
-    uint32_t frame_counter = 0;
-
     std::vector<uint32_t> framebuffer;
 };
 
@@ -99,10 +74,16 @@ static void SetError(GBACoreHandle* h, const char* msg) {
     std::snprintf(h->last_error, sizeof(h->last_error), "%s", msg ? msg : "");
 }
 
+static void EnsureInitialized(GBACoreHandle* h) {
+    if (!h || h->initialized) return;
+    init_main();
+    h->framebuffer.assign(kPixelCount, 0xFF000000u);
+    h->initialized = true;
+}
+
 GBACoreHandle* GBA_Create(void) {
     GBACoreHandle* h = new GBACoreHandle();
-    h->framebuffer.assign(kPixelCount, 0xFF000000u);
-    h->cpu.reset(0);
+    EnsureInitialized(h);
     SetError(h, "");
     return h;
 }
@@ -113,7 +94,13 @@ void GBA_Destroy(GBACoreHandle* handle) {
 
 void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
     if (!handle) return;
-    handle->bios.clear();
+    EnsureInitialized(handle);
+
+    if (!TryLoadBuiltInBIOSImage()) {
+        SetError(handle, "failed to load built-in bios image");
+        return;
+    }
+
     handle->has_bios = true;
     handle->use_builtin_bios = true;
     SetError(handle, "");
@@ -121,16 +108,20 @@ void GBA_LoadBuiltInBIOS(GBACoreHandle* handle) {
 
 bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
     if (!handle) return false;
-    std::vector<uint8_t> tmp;
-    if (!ReadAllBytes(path, &tmp)) {
+    EnsureInitialized(handle);
+
+    if (!path || !path[0]) {
+        SetError(handle, "bios path is empty");
+        return false;
+    }
+
+    char bios_path[1024];
+    std::snprintf(bios_path, sizeof(bios_path), "%s", path);
+    if (load_bios(bios_path) != 0) {
         SetError(handle, "failed to read bios file");
         return false;
     }
-    if (tmp.size() != kBiosSize) {
-        SetError(handle, "invalid bios size (expected 16384 bytes)");
-        return false;
-    }
-    handle->bios = std::move(tmp);
+
     handle->has_bios = true;
     handle->use_builtin_bios = false;
     SetError(handle, "");
@@ -139,108 +130,61 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle* handle, const char* path) {
 
 bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     if (!handle) return false;
-    if (!HasGBAExtension(path)) {
-        SetError(handle, "unsupported rom extension");
+    EnsureInitialized(handle);
+
+    if (!path || !path[0]) {
+        SetError(handle, "rom path is empty");
         return false;
     }
 
-    std::vector<uint8_t> tmp;
-    if (!ReadAllBytes(path, &tmp)) {
-        SetError(handle, "failed to read rom file");
+    char rom_path[1024];
+    std::snprintf(rom_path, sizeof(rom_path), "%s", path);
+    if (load_gamepak(rom_path) != 0) {
+        SetError(handle, "failed to load rom");
         return false;
     }
 
-    handle->rom = std::move(tmp);
-    handle->rom_hash = FastHash32(handle->rom.data(), handle->rom.size());
+    reset_gba();
     handle->has_rom = true;
-    handle->frame_counter = 0;
-
-    const uint32_t start_pc = (handle->has_bios && !handle->use_builtin_bios) ? 0x00000000u : 0x08000000u;
-    handle->cpu.reset(start_pc);
-
     SetError(handle, "");
     return true;
 }
 
 void GBA_Reset(GBACoreHandle* handle) {
     if (!handle) return;
+    EnsureInitialized(handle);
+
     if (!handle->has_rom) {
         SetError(handle, "rom not loaded");
         return;
     }
-    const uint32_t start_pc = (handle->has_bios && !handle->use_builtin_bios) ? 0x00000000u : 0x08000000u;
-    handle->cpu.reset(start_pc);
-    handle->frame_counter = 0;
+
+    reset_gba();
     SetError(handle, "");
 }
 
 void GBA_StepFrame(GBACoreHandle* handle) {
     if (!handle) return;
+    EnsureInitialized(handle);
+
     if (!handle->has_rom) {
         SetError(handle, "rom not loaded");
         return;
     }
 
-    constexpr uint32_t kStepsPerFrame = 50000;
-    const size_t rom_size = handle->rom.size();
+    key = static_cast<uint32_t>(handle->keys_pressed_mask) & 0x03FFu;
+    trigger_key(key);
 
-    for (uint32_t i = 0; i < kStepsPerFrame; ++i) {
-        const uint32_t pc = handle->cpu.regs[15];
-        const size_t idx = static_cast<size_t>(pc % rom_size);
+    update_gba();
 
-        uint32_t opcode = 0;
-        for (int b = 0; b < 4; ++b) {
-            opcode |= static_cast<uint32_t>(handle->rom[(idx + static_cast<size_t>(b)) % rom_size]) << (8u * static_cast<uint32_t>(b));
-        }
-
-        const uint32_t major = opcode >> 28;
-        const uint32_t rd = (opcode >> 12) & 0xF;
-        const uint32_t rn = (opcode >> 16) & 0xF;
-        const uint32_t rm = opcode & 0xF;
-
-        switch (major) {
-            case 0x0:  // nop
-                break;
-            case 0x1:  // add
-                handle->cpu.regs[rd] = handle->cpu.regs[rn] + handle->cpu.regs[rm] + (opcode & 0xFF);
-                break;
-            case 0x2:  // xor
-                handle->cpu.regs[rd] = handle->cpu.regs[rn] ^ (handle->cpu.regs[rm] + (opcode & 0xFFFF));
-                break;
-            case 0x3:  // move immediate
-                handle->cpu.regs[rd] = opcode & 0x00FFFFFFu;
-                break;
-            case 0x4: {  // tiny branch
-                int8_t rel = static_cast<int8_t>(opcode & 0xFF);
-                handle->cpu.regs[15] = pc + 4u + static_cast<int32_t>(rel) * 4;
-                continue;
-            }
-            default:
-                handle->cpu.regs[rd] += (opcode ^ handle->rom_hash);
-                break;
-        }
-
-        handle->cpu.regs[0] ^= static_cast<uint32_t>(~handle->keys_pressed_mask) & 0x03FFu;
-
-        handle->cpu.regs[15] = pc + 4u;
-        handle->cpu.cycles += 1;
+    uint16_t* frame = copy_screen();
+    if (!frame) {
+        SetError(handle, "failed to read frame buffer");
+        return;
     }
 
-    const uint32_t t = ++handle->frame_counter;
-    const uint32_t r0 = handle->cpu.regs[0];
-    const uint32_t r1 = handle->cpu.regs[1];
-    const uint32_t r2 = handle->cpu.regs[2];
-
-    for (size_t y = 0; y < kScreenHeight; ++y) {
-        for (size_t x = 0; x < kScreenWidth; ++x) {
-            const size_t p = y * kScreenWidth + x;
-            const uint8_t rr = static_cast<uint8_t>((x + (r0 >> 3) + (t & 0xFF)) & 0xFFu);
-            const uint8_t gg = static_cast<uint8_t>((y + (r1 >> 5) + ((t * 3) & 0xFF)) & 0xFFu);
-            const uint8_t bb = static_cast<uint8_t>(((x ^ y) + (r2 >> 7) + (handle->rom_hash & 0xFF)) & 0xFFu);
-            handle->framebuffer[p] = 0xFF000000u | (static_cast<uint32_t>(rr) << 16u) |
-                                     (static_cast<uint32_t>(gg) << 8u) | static_cast<uint32_t>(bb);
-        }
-    }
+    ConvertRGB555ToRGBA8888(frame, handle->framebuffer.data(), handle->framebuffer.size());
+    std::free(frame);
 
     SetError(handle, "");
 }

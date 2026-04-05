@@ -21,6 +21,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 @property (nonatomic, strong) GBAEngine *engine;
 @property (nonatomic, strong, nullable) CADisplayLink *displayLink;
 @property (nonatomic, assign) BOOL romLoaded;
+@property (nonatomic, assign) BOOL biosLoaded;
 @property (nonatomic, assign) CGColorSpaceRef frameColorSpace;
 @property (nonatomic, assign) GBADocumentSelectionType documentSelectionType;
 @end
@@ -32,12 +33,11 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
     self.title = @"GBA iOS26 Demo";
     self.view.backgroundColor = UIColor.systemBackgroundColor;
     self.engine = [[GBAEngine alloc] init];
-    [self.engine loadBuiltInBIOS];
 
     [self setupUI];
     [self refreshPlayState];
-    self.statusLabel.text = @"ROMを選択してください";
-    self.biosStatusLabel.text = @"BIOS: 内蔵BIOS";
+    self.statusLabel.text = @"BIOSを選択してください";
+    self.biosStatusLabel.text = @"BIOS: 未選択";
 }
 
 - (void)dealloc {
@@ -63,7 +63,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 
     self.biosStatusLabel = [[UILabel alloc] init];
     self.biosStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.biosStatusLabel.text = @"BIOS: 内蔵BIOS";
+    self.biosStatusLabel.text = @"BIOS: 未選択";
     self.biosStatusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     self.biosStatusLabel.numberOfLines = 0;
 
@@ -164,6 +164,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
     if (isBIOSSelection) {
         BOOL biosLoaded = [self.engine loadBIOSAtPath:url.path error:&error];
         if (biosLoaded) {
+            self.biosLoaded = YES;
             self.biosStatusLabel.text = [NSString stringWithFormat:@"BIOS: %@", url.lastPathComponent ?: @"(不明)"];
             self.statusLabel.text = @"BIOSを読み込みました";
             if (self.romLoaded) {
@@ -172,6 +173,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
                 [self renderCurrentFrame];
             }
         } else {
+            self.biosLoaded = NO;
             self.biosStatusLabel.text = @"BIOS: 読み込み失敗";
             self.statusLabel.text = error.localizedDescription ?: @"BIOSロード失敗";
         }
@@ -183,10 +185,10 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
             [self.engine reset];
             [self.engine setKeysPressedMask:0x0000];
             [self renderCurrentFrame];
-            if (self.displayLink == nil) {
+            if (self.displayLink == nil && self.biosLoaded) {
                 [self togglePlayback];
             }
-            self.statusLabel.text = @"ROMを読み込みました";
+            self.statusLabel.text = self.biosLoaded ? @"ROMを読み込みました" : @"ROMを読み込みました。次にBIOSを選択してください";
         } else {
             self.romLoaded = NO;
             self.romStatusLabel.text = @"ROM: 読み込み失敗";
@@ -202,6 +204,10 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 }
 
 - (void)togglePlayback {
+    if (!self.biosLoaded) {
+        self.statusLabel.text = @"先にBIOSを選択してください";
+        return;
+    }
     if (!self.romLoaded) {
         self.statusLabel.text = @"先にROMを選択してください";
         return;
@@ -238,8 +244,8 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 }
 
 - (void)refreshPlayState {
-    self.playPauseButton.enabled = self.romLoaded;
-    if (!self.romLoaded) {
+    self.playPauseButton.enabled = (self.romLoaded && self.biosLoaded);
+    if (!self.romLoaded || !self.biosLoaded) {
         [self stopPlayback];
     }
 }

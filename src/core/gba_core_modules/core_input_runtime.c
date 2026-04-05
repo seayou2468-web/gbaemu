@@ -541,38 +541,38 @@ void init_input()
 
 #if defined(RPI_BUILD)
 
-u32 key_map(SDLKey key_sym)
+u32 key_map(GBAKey key_sym)
 {
   switch(key_sym)
   {
-    case SDLK_a:
+    case GBAK_a:
       return BUTTON_L;
 
-    case SDLK_s:
+    case GBAK_s:
       return BUTTON_R;
 
-    case SDLK_DOWN:
+    case GBAK_DOWN:
       return BUTTON_DOWN;
 
-    case SDLK_UP:
+    case GBAK_UP:
       return BUTTON_UP;
 
-    case SDLK_LEFT:
+    case GBAK_LEFT:
       return BUTTON_LEFT;
 
-    case SDLK_RIGHT:
+    case GBAK_RIGHT:
       return BUTTON_RIGHT;
 
-    case SDLK_RETURN:
+    case GBAK_RETURN:
       return BUTTON_START;
 
-    case SDLK_BACKSPACE:
+    case GBAK_BACKSPACE:
       return BUTTON_SELECT;
 
-    case SDLK_x:
+    case GBAK_x:
       return BUTTON_B;
 
-    case SDLK_z:
+    case GBAK_z:
       return BUTTON_A;
 
     default:
@@ -583,38 +583,38 @@ u32 key_map(SDLKey key_sym)
 
 #if defined(PC_BUILD)
 
-u32 key_map(SDLKey key_sym)
+u32 key_map(GBAKey key_sym)
 {
   switch(key_sym)
   {
-    case SDLK_LSHIFT:
+    case GBAK_LSHIFT:
       return BUTTON_L;
 
-    case SDLK_x:
+    case GBAK_x:
       return BUTTON_R;
 
-    case SDLK_DOWN:
+    case GBAK_DOWN:
       return BUTTON_DOWN;
 
-    case SDLK_UP:
+    case GBAK_UP:
       return BUTTON_UP;
 
-    case SDLK_LEFT:
+    case GBAK_LEFT:
       return BUTTON_LEFT;
 
-    case SDLK_RIGHT:
+    case GBAK_RIGHT:
       return BUTTON_RIGHT;
 
-    case SDLK_RETURN:
+    case GBAK_RETURN:
       return BUTTON_START;
 
-    case SDLK_RSHIFT:
+    case GBAK_RSHIFT:
       return BUTTON_SELECT;
 
-    case SDLK_LCTRL:
+    case GBAK_LCTRL:
       return BUTTON_B;
 
-    case SDLK_LALT:
+    case GBAK_LALT:
       return BUTTON_A;
 
     default:
@@ -653,47 +653,47 @@ u32 joy_map(u32 button)
 
 gui_action_type get_gui_input()
 {
-  SDL_Event event;
+  GBA_Event event;
   gui_action_type gui_action = CURSOR_NONE;
 
   delay_us(30000);
 
-  while(SDL_PollEvent(&event))
+  while(GBA_PollEvent(&event))
   { 
     switch(event.type)
     {
-      case SDL_QUIT:
+      case GBA_QUIT:
         quit();
 
-      case SDL_KEYDOWN:
+      case GBA_KEYDOWN:
       {
         switch(event.key.keysym.sym)
         {
-          case SDLK_ESCAPE:
+          case GBAK_ESCAPE:
             gui_action = CURSOR_EXIT;
             break;
 
-          case SDLK_DOWN:
+          case GBAK_DOWN:
             gui_action = CURSOR_DOWN;
             break;
 
-          case SDLK_UP:
+          case GBAK_UP:
             gui_action = CURSOR_UP;
             break;
 
-          case SDLK_LEFT:
+          case GBAK_LEFT:
             gui_action = CURSOR_LEFT;
             break;
 
-          case SDLK_RIGHT:
+          case GBAK_RIGHT:
             gui_action = CURSOR_RIGHT;
             break;
 
-          case SDLK_RETURN:
+          case GBAK_RETURN:
             gui_action = CURSOR_SELECT;
             break;
 
-          case SDLK_BACKSPACE:
+          case GBAK_BACKSPACE:
             gui_action = CURSOR_BACK;
             break;
 	 default:
@@ -702,7 +702,7 @@ gui_action_type get_gui_input()
     }
     break;
 #ifdef RPI_BUILD
-    case SDL_JOYBUTTONDOWN:
+    case GBA_JOYBUTTONDOWN:
     {
       switch (event.jbutton.button)
       {
@@ -721,7 +721,7 @@ gui_action_type get_gui_input()
      }
      break;
 
-     case SDL_JOYAXISMOTION:
+     case GBA_JOYAXISMOTION:
      {
          if (event.jaxis.axis==0) { //Left-Right
             if (event.jaxis.value < -3200) gui_action = CURSOR_LEFT;
@@ -744,25 +744,25 @@ gui_action_type get_gui_input()
 
 u32 update_input()
 {
-  SDL_Event event;
+  GBA_Event event;
 
-  while(SDL_PollEvent(&event))
+  while(GBA_PollEvent(&event))
   {
     switch(event.type)
     {
-      case SDL_QUIT:
+      case GBA_QUIT:
         quit();
 
-      case SDL_KEYDOWN:
+      case GBA_KEYDOWN:
       {
-        if(event.key.keysym.sym == SDLK_ESCAPE)
+        if(event.key.keysym.sym == GBAK_ESCAPE)
         {
           quit();
         }
 #ifdef PC_BUILD
-        if(event.key.keysym.sym == SDLK_BACKSPACE)
+        if(event.key.keysym.sym == GBAK_BACKSPACE)
 #else
-        if(event.key.keysym.sym == SDLK_F10)
+        if(event.key.keysym.sym == GBAK_F10)
 #endif
         {
           u16 *screen_copy = copy_screen();
@@ -773,13 +773,13 @@ u32 update_input()
         }
         else
 #ifdef PC_BUILD
-        if(event.key.keysym.sym == SDLK_F1)
+        if(event.key.keysym.sym == GBAK_F1)
         {
           debug_on();
         }
         else
 
-        if(event.key.keysym.sym == SDLK_F2)
+        if(event.key.keysym.sym == GBAK_F2)
         {
           FILE *fp = fopen("palette_ram.bin", "wb");
           printf("writing palette RAM\n");
@@ -800,13 +800,13 @@ u32 update_input()
         }
         else
 
-        if(event.key.keysym.sym == SDLK_F3)
+        if(event.key.keysym.sym == GBAK_F3)
         {
           dump_translation_cache();
         }
         else
 #endif
-        if(event.key.keysym.sym == SDLK_F5)
+        if(event.key.keysym.sym == GBAK_F5)
         {
           char current_savestate_filename[512];
           u16 *current_screen = copy_screen();
@@ -817,7 +817,7 @@ u32 update_input()
         }
         else
 
-        if(event.key.keysym.sym == SDLK_F7)
+        if(event.key.keysym.sym == GBAK_F7)
         {
           char current_savestate_filename[512];
           get_savestate_filename_noshot(savestate_slot,
@@ -828,7 +828,7 @@ u32 update_input()
         }
         else
 
-        if(event.key.keysym.sym == SDLK_BACKQUOTE)
+        if(event.key.keysym.sym == GBAK_BACKQUOTE)
         {
           synchronize_flag ^= 1;
         }
@@ -841,26 +841,26 @@ u32 update_input()
         break;
       }
 
-      case SDL_KEYUP:
+      case GBA_KEYUP:
       {
         key &= ~(key_map(event.key.keysym.sym));
         break;
       }
 
-      case SDL_JOYBUTTONDOWN:
+      case GBA_JOYBUTTONDOWN:
       {
         key |= joy_map(event.jbutton.button);
         trigger_key(key);
         break;
       }
 
-      case SDL_JOYBUTTONUP:
+      case GBA_JOYBUTTONUP:
       {
         key &= ~(joy_map(event.jbutton.button));
         break;
       }
 #ifdef RPI_BUILD
-      case SDL_JOYAXISMOTION:
+      case GBA_JOYAXISMOTION:
       {
          if (event.jaxis.axis==0) { //Left-Right
             key &= ~(BUTTON_LEFT|BUTTON_RIGHT);
@@ -885,12 +885,12 @@ u32 update_input()
 
 void init_input()
 {
-  u32 joystick_count = SDL_NumJoysticks();
+  u32 joystick_count = GBA_NumJoysticks();
 
   if(joystick_count > 0)
   {
-    SDL_JoystickOpen(0);
-    SDL_JoystickEventState(SDL_ENABLE);
+    GBA_JoystickOpen(0);
+    GBA_JoystickEventState(GBA_ENABLE);
   }
 }
 

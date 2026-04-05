@@ -102,10 +102,10 @@ static u16 *screen_pixels = NULL;
 #else
 
 #ifdef GP2X_BUILD
-#include "SDL_gp2x.h"
-SDL_Surface *hw_screen;
+#include "gba_platform_gp2x.h"
+GBA_Surface *hw_screen;
 #endif
-SDL_Surface *screen;
+GBA_Surface *screen;
 const u32 video_scale = 1;
 
 #define get_screen_pixels()                                                   \
@@ -3461,17 +3461,17 @@ void flip_screen()
       {
         case unscaled:
         {
-          SDL_Rect srect = {0, 0, 240, 160};
-          SDL_Rect drect = {40, 40, 240, 160};
+          GBA_Rect srect = {0, 0, 240, 160};
+          GBA_Rect drect = {40, 40, 240, 160};
           warm_cache_op_all(WOP_D_CLEAN);
-          SDL_BlitSurface(screen, &srect, hw_screen, &drect);
+          GBA_BlitSurface(screen, &srect, hw_screen, &drect);
           return;
         }
         case scaled_aspect:
         {
-          SDL_Rect drect = {0, 10, 0, 0};
+          GBA_Rect drect = {0, 10, 0, 0};
           warm_cache_op_all(WOP_D_CLEAN);
-          SDL_BlitSurface(screen, NULL, hw_screen, &drect);
+          GBA_BlitSurface(screen, NULL, hw_screen, &drect);
           return;
         }
         case scaled_aspect_sw:
@@ -3484,10 +3484,10 @@ void flip_screen()
       }
     }
     warm_cache_op_all(WOP_D_CLEAN);
-    SDL_BlitSurface(screen, NULL, hw_screen, NULL);
+    GBA_BlitSurface(screen, NULL, hw_screen, NULL);
   }
 #else
-  SDL_Flip(screen);
+  GBA_Flip(screen);
 #endif
 }
 
@@ -3598,22 +3598,22 @@ void init_video()
 
 void init_video()
 {
-  SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_NOPARACHUTE);
+  GBA_Init(GBA_INIT_VIDEO | GBA_INIT_JOYSTICK | GBA_INIT_NOPARACHUTE);
 
 #ifdef GP2X_BUILD
-  SDL_GP2X_AllowGfxMemory(NULL, 0);
+  GBA_GP2X_AllowGfxMemory(NULL, 0);
 
-  hw_screen = SDL_SetVideoMode(320 * video_scale, 240 * video_scale,
-   16, SDL_HWSURFACE);
+  hw_screen = GBA_SetVideoMode(320 * video_scale, 240 * video_scale,
+   16, GBA_HWSURFACE);
 
-  screen = SDL_CreateRGBSurface(SDL_HWSURFACE, 240 * video_scale,
+  screen = GBA_CreateRGBSurface(GBA_HWSURFACE, 240 * video_scale,
    160 * video_scale, 16, 0xFFFF, 0xFFFF, 0xFFFF, 0);
 
   warm_change_cb_upper(WCB_C_BIT|WCB_B_BIT, 1);
 #else
-  screen = SDL_SetVideoMode(240 * video_scale, 160 * video_scale, 16, 0);
+  screen = GBA_SetVideoMode(240 * video_scale, 160 * video_scale, 16, 0);
 #endif
-  SDL_ShowCursor(0);
+  GBA_ShowCursor(0);
 }
 
 #endif
@@ -3831,18 +3831,18 @@ void video_resolution_large()
   current_scale = unscaled;
 
 #ifdef GP2X_BUILD
-  SDL_FreeSurface(screen);
-  SDL_GP2X_AllowGfxMemory(NULL, 0);
-    hw_screen = SDL_SetVideoMode(320, 240, 16, SDL_HWSURFACE);
-  screen = SDL_CreateRGBSurface(SDL_HWSURFACE, 320, 240, 16, 0xFFFF,
+  GBA_FreeSurface(screen);
+  GBA_GP2X_AllowGfxMemory(NULL, 0);
+    hw_screen = GBA_SetVideoMode(320, 240, 16, GBA_HWSURFACE);
+  screen = GBA_CreateRGBSurface(GBA_HWSURFACE, 320, 240, 16, 0xFFFF,
    0xFFFF, 0xFFFF, 0);
   resolution_width = 320;
     resolution_height = 240;
-  SDL_ShowCursor(0);
+  GBA_ShowCursor(0);
 
   warm_change_cb_upper(WCB_C_BIT|WCB_B_BIT, 1);
 #else
-  screen = SDL_SetVideoMode(480, 272, 16, 0);
+  screen = GBA_SetVideoMode(480, 272, 16, 0);
   resolution_width = 480;
   resolution_height = 272;
 #endif
@@ -3854,8 +3854,8 @@ void video_resolution_small()
 
 #ifdef GP2X_BUILD
   int w, h;
-  SDL_FreeSurface(screen);
-  SDL_GP2X_AllowGfxMemory(NULL, 0);
+  GBA_FreeSurface(screen);
+  GBA_GP2X_AllowGfxMemory(NULL, 0);
 
   w = 320; h = 240;
   if (screen_scale == scaled_aspect || screen_scale == fullscreen)
@@ -3864,20 +3864,20 @@ void video_resolution_small()
     h = small_resolution_height * video_scale;
   }
   if (screen_scale == scaled_aspect) h += 20;
-  hw_screen = SDL_SetVideoMode(w, h, 16, SDL_HWSURFACE);
+  hw_screen = GBA_SetVideoMode(w, h, 16, GBA_HWSURFACE);
 
   w = small_resolution_width * video_scale;
   if (screen_scale == scaled_aspect_sw)
     w = 320;
-  screen = SDL_CreateRGBSurface(SDL_HWSURFACE,
+  screen = GBA_CreateRGBSurface(GBA_HWSURFACE,
    w, small_resolution_height * video_scale,
    16, 0xFFFF, 0xFFFF, 0xFFFF, 0);
 
-  SDL_ShowCursor(0);
+  GBA_ShowCursor(0);
 
   warm_change_cb_upper(WCB_C_BIT|WCB_B_BIT, 1);
 #else
-  screen = SDL_SetVideoMode(small_resolution_width * video_scale,
+  screen = GBA_SetVideoMode(small_resolution_width * video_scale,
    small_resolution_height * video_scale, 16, 0);
 #endif
   resolution_width = small_resolution_width;

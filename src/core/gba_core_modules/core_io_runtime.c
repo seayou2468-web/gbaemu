@@ -1403,7 +1403,7 @@ u32 menu(u16 *original_screen)
 #else
      "Set the size (in bytes) of the audio buffer.\n"
      "This option requires gpSP restart to take effect.\n"
-     "Settable values may be limited by SDL implementation.",
+     "Settable values may be limited by platform implementation.",
 #endif
      10),
     submenu_option(NULL, "Back", "Return to the main menu.", 12)
@@ -1660,12 +1660,12 @@ u32 menu(u16 *original_screen)
   video_resolution_large();
 
 #ifndef GP2X_BUILD
-  SDL_LockMutex(sound_mutex);
+  GBA_LockMutex(sound_mutex);
 #endif
-  SDL_PauseAudio(1);
+  GBA_PauseAudio(1);
 
 #ifndef GP2X_BUILD
-  SDL_UnlockMutex(sound_mutex);
+  GBA_UnlockMutex(sound_mutex);
 #endif
 
   if(gamepak_filename[0] == 0)
@@ -1815,7 +1815,7 @@ u32 menu(u16 *original_screen)
   menu_get_clock_speed();
   set_clock_speed();
 
-  SDL_PauseAudio(0);
+  GBA_PauseAudio(0);
   num_skipped_frames = 100;
 
   return return_value;

@@ -1,5 +1,6 @@
 // Imported from reference implementation: memory.h
 
+#include "common.h"
 
 #ifndef MEMORY_H
 #define MEMORY_H
@@ -211,4 +212,3 @@ extern flash_device_id_type flash_device_id;
 u32 load_file_zip(char *filename);
 
 #endif
-
