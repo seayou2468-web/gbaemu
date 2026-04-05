@@ -40,6 +40,7 @@ void CPULoop(int ticks)
 
     cpuBreakLoop = false;
     cpuNextEvent = CPUUpdateTicks();
+            if (cpuNextEvent == 0 && holdState) cpuNextEvent = 1;
     if (cpuNextEvent > ticks)
         cpuNextEvent = ticks;
     
@@ -212,7 +213,9 @@ void CPULoop(int ticks)
                     } else {
                         if (frameCount >= framesToSkip) {
                             (*renderLine)();
-                            switch (systemColorDepth) {
+                            // Defensive checks: skip rendering if g_pix is NULL or VCOUNT is out of range
+                            // This can happen during panel transitions or if state is corrupted
+                            if (g_pix && VCOUNT < 160) switch (systemColorDepth) {
                             case 8: {
 #ifdef __LIBRETRO__
                                 uint8_t* dest = (uint8_t*)g_pix + 240 * VCOUNT;
@@ -551,12 +554,14 @@ void CPULoop(int ticks)
 #endif
 
             cpuNextEvent = CPUUpdateTicks();
+            if (cpuNextEvent == 0 && holdState) cpuNextEvent = 1;
 
             if (cpuDmaTicksToUpdate > 0) {
                 if (cpuDmaTicksToUpdate > cpuNextEvent)
                     clockTicks = cpuNextEvent;
                 else
                     clockTicks = cpuDmaTicksToUpdate;
+                if (clockTicks == 0 && holdState) clockTicks = 1;
                 cpuDmaTicksToUpdate -= clockTicks;
                 if (cpuDmaTicksToUpdate < 0)
                     cpuDmaTicksToUpdate = 0;
@@ -608,6 +613,7 @@ void CPULoop(int ticks)
                     clockTicks = cpuNextEvent;
                 else
                     clockTicks = remainingTicks;
+                if (clockTicks == 0 && holdState) clockTicks = 1;
                 remainingTicks -= clockTicks;
                 if (remainingTicks < 0)
                     remainingTicks = 0;
@@ -649,7 +655,6 @@ void GBAEmulate(int ticks)
 
     // Flush sound using accumulated soundTick
     psoundTickfn();
-
 }
 
 #else
