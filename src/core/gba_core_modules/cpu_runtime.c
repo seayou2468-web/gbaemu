@@ -4334,6 +4334,8 @@ void raise_interrupt(irq_type irq_raised)
   }
 }
 
+static u32 g_execute_arm_step_mode = 0;
+
 void execute_arm(u32 cycles)
 {
   u32 pc = reg[REG_PC];
@@ -4376,6 +4378,11 @@ void execute_arm(u32 cycles)
 
     collapse_flags();
     cycles = update_gba();
+    if(g_execute_arm_step_mode)
+    {
+      g_execute_arm_step_mode = 0;
+      return;
+    }
     continue;
 
     do
@@ -4392,6 +4399,11 @@ void execute_arm(u32 cycles)
 
     collapse_flags();
     cycles = update_gba();
+    if(g_execute_arm_step_mode)
+    {
+      g_execute_arm_step_mode = 0;
+      return;
+    }
     continue;
 
     alert:
@@ -4407,6 +4419,11 @@ void execute_arm(u32 cycles)
       while(reg[CPU_HALT_STATE] != CPU_ACTIVE)
       {
         cycles = update_gba();
+        if(g_execute_arm_step_mode)
+        {
+          g_execute_arm_step_mode = 0;
+          return;
+        }
       }
     }
   }
@@ -4414,80 +4431,9 @@ void execute_arm(u32 cycles)
 
 void execute_arm_step(u32 cycles)
 {
-  u32 pc = reg[REG_PC];
-  u32 opcode;
-  u32 condition;
-  u32 n_flag, z_flag, c_flag, v_flag;
-  u32 pc_region = (pc >> 15);
-  u8 *pc_address_block = memory_map_read[pc_region];
-  u32 new_pc_region;
-  s32 cycles_remaining;
-  u32 cycles_per_instruction = global_cycles_per_instruction;
-  cpu_alert_type cpu_alert;
-
-  u32 old_pc;
-
-  if(pc_address_block == NULL)
-    pc_address_block = load_gamepak_page(pc_region & 0x3FF);
-
-  while(1)
-  {
-    cycles_remaining = cycles;
-    pc = reg[REG_PC];
-    extract_flags();
-
-    if(reg[REG_CPSR] & 0x20)
-      goto thumb_loop;
-
-    do
-    {
-      arm_loop:
-
-      collapse_flags();
-      step_debug(pc, cycles_remaining);
-      cycles_per_instruction = global_cycles_per_instruction;
-
-      old_pc = pc;
-      execute_arm_instruction();
-      cycles_remaining -= cycles_per_instruction;
-    } while(cycles_remaining > 0);
-
-    collapse_flags();
-    update_gba();
-    return;
-
-    do
-    {
-      thumb_loop:
-
-      collapse_flags();
-      step_debug(pc, cycles_remaining);
-
-      old_pc = pc;
-      execute_thumb_instruction();
-      cycles_remaining -= cycles_per_instruction;
-    } while(cycles_remaining > 0);
-
-    collapse_flags();
-    update_gba();
-    return;
-
-    alert:
-
-    if(cpu_alert == CPU_ALERT_IRQ)
-    {
-      cycles = cycles_remaining;
-    }
-    else
-    {
-      collapse_flags();
-      while(reg[CPU_HALT_STATE] != CPU_ACTIVE)
-      {
-        cycles = update_gba();
-      }
-      return;
-    }
-  }
+  g_execute_arm_step_mode = 1;
+  execute_arm(cycles);
+  g_execute_arm_step_mode = 0;
 }
 
 void init_cpu()
