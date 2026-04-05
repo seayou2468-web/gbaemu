@@ -569,37 +569,51 @@ void CPULoop(int ticks)
                 cpuNextEvent = 1;
 #endif
 
-            if (IF && (IME & 1) && armIrqEnable) {
+            if (IF) {
                 int res = IF & IE;
                 if (stopState)
                     res &= 0x3080;
+
                 if (res) {
-                    if (intState) {
-                        if (!IRQTicks) {
+                    if (holdState) {
+                        // HALT/STOP wake condition is based on pending enabled IRQ
+                        // requests, even when IME=0 (no IRQ handler entry).
+                        holdState = false;
+                        stopState = false;
+                        holdType = 0;
+
+                        if ((IME & 1) && armIrqEnable) {
                             CPUInterrupt();
-                            intState = false;
-                            holdState = false;
-                            stopState = false;
-                            holdType = 0;
+                            // Stops the SWI Ticks emulation if an IRQ is executed
+                            //(to avoid problems with nested IRQ/SWI)
+                            if (SWITicks)
+                                SWITicks = 0;
                         }
-                    } else {
-                        if (!holdState) {
+                    } else if ((IME & 1) && armIrqEnable) {
+                        if (intState) {
+                            if (!IRQTicks) {
+                                CPUInterrupt();
+                                intState = false;
+                                holdState = false;
+                                stopState = false;
+                                holdType = 0;
+                                // Stops the SWI Ticks emulation if an IRQ is executed
+                                //(to avoid problems with nested IRQ/SWI)
+                                if (SWITicks)
+                                    SWITicks = 0;
+                            }
+                        } else {
                             intState = true;
                             IRQTicks = 7;
                             if (cpuNextEvent > IRQTicks)
                                 cpuNextEvent = IRQTicks;
-                        } else {
-                            CPUInterrupt();
-                            holdState = false;
-                            stopState = false;
-                            holdType = 0;
                         }
-                    }
 
-                    // Stops the SWI Ticks emulation if an IRQ is executed
-                    //(to avoid problems with nested IRQ/SWI)
-                    if (SWITicks)
-                        SWITicks = 0;
+                        // Stops the SWI Ticks emulation if an IRQ is pending/executed
+                        //(to avoid problems with nested IRQ/SWI)
+                        if (SWITicks)
+                            SWITicks = 0;
+                    }
                 }
             }
 

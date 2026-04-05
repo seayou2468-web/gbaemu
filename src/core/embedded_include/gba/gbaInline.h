@@ -863,7 +863,11 @@ static inline void CPUWriteByte(uint32_t address, uint8_t b)
                     stopState = true;
                 holdState = 1;
                 holdType = -1;
-                cpuNextEvent = cpuTotalTicks;
+                // HALT/STOP should continue advancing hardware time until the
+                // next scheduled event can raise IF and release holdState.
+                cpuNextEvent = CPUUpdateTicks();
+                if (cpuNextEvent <= 0)
+                    cpuNextEvent = 1;
                 break;
             default: // every other register
                 uint32_t lowerBits = address & 0x3fe;
