@@ -214,8 +214,6 @@ struct GBACoreHandle {
     uint16_t keys_pressed;
     bool has_bios;
     bool has_rom;
-    bool bios_boot_watchdog;
-    int bios_boot_frames;
     uint32_t frame_cache[240 * 160];
 };
 
@@ -292,8 +290,6 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     CPUInit(use_bios_file ? handle->bios_path : "", use_bios_file);
     soundInit();
     CPUReset();
-    handle->bios_boot_watchdog = use_bios_file;
-    handle->bios_boot_frames = 0;
 
     std::snprintf(handle->rom_path, sizeof(handle->rom_path), "%s", path);
     handle->has_rom = true;
@@ -317,16 +313,6 @@ void GBA_StepFrame(GBACoreHandle* handle) {
     }
     g_keys = handle->keys_pressed;
     GBAEmulate(kFrameTicks);
-
-    if (handle->bios_boot_watchdog) {
-        if (reg[15].I >= 0x08000000u) {
-            handle->bios_boot_watchdog = false;
-        } else if (++handle->bios_boot_frames >= 300) {
-            coreOptions.useBios = false;
-            CPUReset();
-            handle->bios_boot_watchdog = false;
-        }
-    }
 
     SetError(handle, "");
 }

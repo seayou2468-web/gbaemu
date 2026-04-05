@@ -204,6 +204,11 @@ void CPULoop(int ticks)
                                 UPDATE_REG(IO_REG_IF, IF);
                             }
                             CPUCheckDMA(1, 0x0f);
+
+                            // Let VBlank begin and its IRQ become observable before
+                            // ending the frame loop.
+                            if (has_frames)
+                                cpuBreakLoop = true;
                         }
 
                         UPDATE_REG(IO_REG_DISPSTAT, DISPSTAT);
@@ -401,7 +406,6 @@ void CPULoop(int ticks)
                             }
                             
                             has_frames = true;
-                            cpuBreakLoop = true;
                         }
                     }
                 }
