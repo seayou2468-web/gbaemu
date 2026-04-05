@@ -167,11 +167,6 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
             self.biosLoaded = YES;
             self.biosStatusLabel.text = [NSString stringWithFormat:@"BIOS: %@", url.lastPathComponent ?: @"(不明)"];
             self.statusLabel.text = @"BIOSを読み込みました";
-            if (self.romLoaded) {
-                [self.engine reset];
-                [self.engine setKeysPressedMask:0x0000];
-                [self renderCurrentFrame];
-            }
         } else {
             self.biosLoaded = NO;
             self.biosStatusLabel.text = @"BIOS: 読み込み失敗";
@@ -182,17 +177,9 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
         if (loaded) {
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
-            if (self.biosLoaded) {
-                [self.engine reset];
-                [self.engine setKeysPressedMask:0x0000];
-                [self renderCurrentFrame];
-                if (self.displayLink == nil) {
-                    [self togglePlayback];
-                }
-                self.statusLabel.text = @"ROMを読み込みました";
-            } else {
-                self.statusLabel.text = @"ROMを読み込みました。次にBIOSを選択してください";
-            }
+            self.statusLabel.text = self.biosLoaded
+                ? @"ROMを読み込みました。再生を押してください"
+                : @"ROMを読み込みました。次にBIOSを選択してください";
         } else {
             self.romLoaded = NO;
             self.romStatusLabel.text = @"ROM: 読み込み失敗";
@@ -223,6 +210,14 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
         return;
     }
 
+    [self.engine reset];
+    NSString *resetError = self.engine.lastErrorMessage;
+    if (resetError.length > 0 && ![resetError isEqualToString:@"(no error)"]) {
+        self.statusLabel.text = [NSString stringWithFormat:@"開始失敗: %@", resetError];
+        return;
+    }
+
+    [self renderCurrentFrame];
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(handleDisplayLink:)];
     [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.statusLabel.text = @"再生中";
@@ -236,6 +231,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
     if (![self.engine stepFrameAndGetPointer:&pixels pixelCount:&pixelCount] ||
         pixels == NULL || pixelCount == 0) {
         self.statusLabel.text = [NSString stringWithFormat:@"描画失敗: %@", self.engine.lastErrorMessage];
+        [self stopPlayback];
         return;
     }
     [self presentFramePixels:pixels pixelCount:pixelCount];

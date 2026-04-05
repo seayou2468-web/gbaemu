@@ -139,8 +139,6 @@ bool GBA_LoadROMFromPath(GBACoreHandle *handle, const char *path) {
     }
 
     handle->has_rom = true;
-    reset_gba();
-    RefreshFrameBuffer(handle);
     SetError(handle, "");
     return true;
 }
