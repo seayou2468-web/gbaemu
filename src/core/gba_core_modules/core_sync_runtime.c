@@ -1,6 +1,15 @@
 #if defined(__cplusplus)
 void CPUInterrupt()
 {
+    // Real BIOS IntrWait checks the IRQ mirror at 0x03FFFFF8.
+    // Some BIOS images rely on this mirror being updated as soon as an IRQ is
+    // taken; if it remains zero, BIOS can spin forever in the wait loop.
+    if (g_internalRAM) {
+        uint16_t irqMirror = READ16LE(&g_internalRAM[0x7ff8]);
+        irqMirror |= IF;
+        WRITE16LE(&g_internalRAM[0x7ff8], irqMirror);
+    }
+
     uint32_t PC = reg[15].I;
     bool savedState = armState;
     CPUSwitchMode(0x12, true, false);
@@ -40,6 +49,8 @@ void CPULoop(int ticks)
 
     cpuBreakLoop = false;
     cpuNextEvent = CPUUpdateTicks();
+    if (cpuNextEvent <= 0)
+        cpuNextEvent = 1;
     if (cpuNextEvent > ticks)
         cpuNextEvent = ticks;
     
@@ -204,6 +215,54 @@ void CPULoop(int ticks)
                                 UPDATE_REG(IO_REG_IF, IF);
                             }
                             CPUCheckDMA(1, 0x0f);
+
+                            g_count++;
+                            systemFrame();
+
+                            if ((g_count % 10) == 0) {
+                                system10Frames();
+                            }
+                            if (g_count == 60) {
+                                uint32_t time = systemGetClock();
+                                if (time != lastTime) {
+                                    uint32_t t = 100000 / (time - lastTime);
+                                    systemShowSpeed(t);
+                                } else
+                                    systemShowSpeed(0);
+                                lastTime = time;
+                                g_count = 0;
+                            }
+
+                            uint32_t ext = (joy >> 10);
+                            // If no (m) code is enabled, apply the cheats at each LCDline
+                            if ((coreOptions.cheatsEnabled) && (mastercode == 0))
+                                remainingTicks += cheatsCheckKeys(P1 ^ 0x3FF, ext);
+
+                            coreOptions.speedup = false;
+
+                            if (ext & 1 && !speedup_throttle_set)
+                                coreOptions.speedup = true;
+
+                            capture = (ext & 2) ? true : false;
+
+                            if (capture && !capturePrevious) {
+                                captureNumber++;
+                                systemScreenCapture(captureNumber);
+                            }
+                            capturePrevious = capture;
+
+                            if (frameCount >= framesToSkip) {
+                                systemDrawScreen();
+                                frameCount = 0;
+                            } else {
+                                frameCount++;
+                                systemSendScreen();
+                            }
+                            if (systemPauseOnFrame()) {
+                                ticks = 0;
+                            }
+
+                            has_frames = true;
                         }
 
                         UPDATE_REG(IO_REG_DISPSTAT, DISPSTAT);
@@ -353,56 +412,6 @@ void CPULoop(int ticks)
                             IF |= 2;
                             UPDATE_REG(IO_REG_IF, IF);
                         }
-                        if (VCOUNT == 159) {
-                            g_count++;
-                            systemFrame();
-
-                            if ((g_count % 10) == 0) {
-                                system10Frames();
-                            }
-                            if (g_count == 60) {
-                                uint32_t time = systemGetClock();
-                                if (time != lastTime) {
-                                    uint32_t t = 100000 / (time - lastTime);
-                                    systemShowSpeed(t);
-                                } else
-                                    systemShowSpeed(0);
-                                lastTime = time;
-                                g_count = 0;
-                            }
-
-                            uint32_t ext = (joy >> 10);
-                            // If no (m) code is enabled, apply the cheats at each LCDline
-                            if ((coreOptions.cheatsEnabled) && (mastercode == 0))
-                                remainingTicks += cheatsCheckKeys(P1 ^ 0x3FF, ext);
-
-                            coreOptions.speedup = false;
-
-                            if (ext & 1 && !speedup_throttle_set)
-                                coreOptions.speedup = true;
-
-                            capture = (ext & 2) ? true : false;
-
-                            if (capture && !capturePrevious) {
-                                captureNumber++;
-                                systemScreenCapture(captureNumber);
-                            }
-                            capturePrevious = capture;
-
-                            if (frameCount >= framesToSkip) {
-                                systemDrawScreen();
-                                frameCount = 0;
-                            } else {
-                                frameCount++;
-                                systemSendScreen();
-                            }
-                            if (systemPauseOnFrame()) {
-                                ticks = 0;
-                            }
-                            
-                            has_frames = true;
-                            cpuBreakLoop = true;
-                        }
                     }
                 }
             }
@@ -551,6 +560,8 @@ void CPULoop(int ticks)
 #endif
 
             cpuNextEvent = CPUUpdateTicks();
+            if (cpuNextEvent <= 0)
+                cpuNextEvent = 1;
 
             if (cpuDmaTicksToUpdate > 0) {
                 if (cpuDmaTicksToUpdate > cpuNextEvent)
@@ -619,6 +630,8 @@ void CPULoop(int ticks)
 
             if (cpuNextEvent > ticks)
                 cpuNextEvent = ticks;
+            if (cpuNextEvent <= 0)
+                cpuNextEvent = 1;
 
             // end loop when a frame is done
             if (ticks <= 0 || cpuBreakLoop)

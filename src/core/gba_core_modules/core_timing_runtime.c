@@ -36,6 +36,12 @@ inline int CPUUpdateTicks()
             cpuLoopTicks = IRQTicks;
     }
 
+    // CPU event scheduling must never return 0 or a negative value.
+    // If it does (e.g. while halted and a timer has underflowed), the core
+    // can stop advancing LCD/interrupt timing and BIOS boot can deadlock.
+    if (cpuLoopTicks <= 0)
+        cpuLoopTicks = 1;
+
     return cpuLoopTicks;
 }
 
