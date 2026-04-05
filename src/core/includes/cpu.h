@@ -93,6 +93,7 @@ extern u32 instruction_count;
 extern u32 last_instruction;
 
 void execute_arm(u32 cycles);
+void execute_arm_step(u32 cycles);
 void raise_interrupt(irq_type irq_raised);
 void set_cpu_mode(cpu_mode_type new_mode);
 

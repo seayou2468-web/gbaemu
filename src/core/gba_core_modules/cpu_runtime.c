@@ -4334,6 +4334,8 @@ void raise_interrupt(irq_type irq_raised)
   }
 }
 
+static int g_execute_arm_step_budget = 0;
+
 void execute_arm(u32 cycles)
 {
   u32 pc = reg[REG_PC];
@@ -4352,61 +4354,89 @@ void execute_arm(u32 cycles)
   if(pc_address_block == NULL)
     pc_address_block = load_gamepak_page(pc_region & 0x3FF);
 
-  cycles_remaining = cycles;
-  pc = reg[REG_PC];
-  extract_flags();
-
-  if(reg[REG_CPSR] & 0x20)
-    goto thumb_loop;
-
-  do
+  while(1)
   {
-    arm_loop:
+    cycles_remaining = cycles;
+    pc = reg[REG_PC];
+    extract_flags();
 
-    collapse_flags();
-    step_debug(pc, cycles_remaining);
-    cycles_per_instruction = global_cycles_per_instruction;
+    if(reg[REG_CPSR] & 0x20)
+      goto thumb_loop;
 
-    old_pc = pc;
-    execute_arm_instruction();
-    cycles_remaining -= cycles_per_instruction;
-  } while(cycles_remaining > 0);
-
-  collapse_flags();
-  update_gba();
-  return;
-
-  do
-  {
-    thumb_loop:
-
-    collapse_flags();
-    step_debug(pc, cycles_remaining);
-
-    old_pc = pc;
-    execute_thumb_instruction();
-    cycles_remaining -= cycles_per_instruction;
-  } while(cycles_remaining > 0);
-
-  collapse_flags();
-  update_gba();
-  return;
-
-  alert:
-
-  if(cpu_alert == CPU_ALERT_IRQ)
-  {
-    (void)cycles_remaining;
-  }
-  else
-  {
-    collapse_flags();
-
-    while(reg[CPU_HALT_STATE] != CPU_ACTIVE)
+    do
     {
-      update_gba();
+      arm_loop:
+
+      collapse_flags();
+      step_debug(pc, cycles_remaining);
+      cycles_per_instruction = global_cycles_per_instruction;
+
+      old_pc = pc;
+      execute_arm_instruction();
+      cycles_remaining -= cycles_per_instruction;
+    } while(cycles_remaining > 0);
+
+    collapse_flags();
+    cycles = update_gba();
+    if(g_execute_arm_step_budget > 0)
+    {
+      g_execute_arm_step_budget--;
+      if(g_execute_arm_step_budget == 0)
+        return;
+    }
+    continue;
+
+    do
+    {
+      thumb_loop:
+
+      collapse_flags();
+      step_debug(pc, cycles_remaining);
+
+      old_pc = pc;
+      execute_thumb_instruction();
+      cycles_remaining -= cycles_per_instruction;
+    } while(cycles_remaining > 0);
+
+    collapse_flags();
+    cycles = update_gba();
+    if(g_execute_arm_step_budget > 0)
+    {
+      g_execute_arm_step_budget--;
+      if(g_execute_arm_step_budget == 0)
+        return;
+    }
+    continue;
+
+    alert:
+
+    if(cpu_alert == CPU_ALERT_IRQ)
+    {
+      cycles = cycles_remaining;
+    }
+    else
+    {
+      collapse_flags();
+
+      while(reg[CPU_HALT_STATE] != CPU_ACTIVE)
+      {
+        cycles = update_gba();
+        if(g_execute_arm_step_budget > 0)
+        {
+          g_execute_arm_step_budget--;
+          if(g_execute_arm_step_budget == 0)
+            return;
+        }
+      }
     }
   }
+}
+
+void execute_arm_step(u32 cycles)
+{
+  g_execute_arm_step_budget = 1;
+  execute_arm(cycles);
+  g_execute_arm_step_budget = 0;
 }
 
 void init_cpu()

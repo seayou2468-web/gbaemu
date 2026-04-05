@@ -43,8 +43,9 @@ static uint32_t Bgr555ToRgba8888(uint16_t px) {
     const uint8_t g8 = static_cast<uint8_t>((g5 << 3u) | (g5 >> 2u));
     const uint8_t b8 = static_cast<uint8_t>((b5 << 3u) | (b5 >> 2u));
 
-    return 0xFF000000u | (static_cast<uint32_t>(r8) << 16u) |
-           (static_cast<uint32_t>(g8) << 8u) | static_cast<uint32_t>(b8);
+    // Store pixels in little-endian RGBA byte order (R,G,B,A in memory).
+    return 0xFF000000u | (static_cast<uint32_t>(b8) << 16u) |
+           (static_cast<uint32_t>(g8) << 8u) | static_cast<uint32_t>(r8);
 }
 
 }  // namespace
@@ -190,8 +191,11 @@ void GBA_StepFrame(GBACoreHandle *handle) {
         return;
     }
 
-    const uint32_t executed = execute_cycles > 0 ? execute_cycles : 1;
-    execute_arm_translate(executed);
+    constexpr int kSlicesPerStep = 2;
+    for (int i = 0; i < kSlicesPerStep; ++i) {
+        const uint32_t executed = execute_cycles > 0 ? execute_cycles : 1;
+        execute_arm_translate(executed);
+    }
     RefreshFrameBuffer(handle);
     SetError(handle, "");
 }

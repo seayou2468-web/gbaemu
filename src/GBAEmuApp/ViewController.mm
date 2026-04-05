@@ -304,8 +304,8 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
                                         32,
                                         bytesPerRow,
                                         self.frameColorSpace,
-                                        static_cast<CGBitmapInfo>(kCGBitmapByteOrder32Little |
-                                                                  static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedFirst)),
+                                        static_cast<CGBitmapInfo>(kCGBitmapByteOrder32Big |
+                                                                  static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast)),
                                         provider,
                                         NULL,
                                         false,

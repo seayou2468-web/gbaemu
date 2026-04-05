@@ -736,7 +736,7 @@ int disThumb(uint32_t offset, char* dest, unsigned dest_sz, int flags)
 
 int cpuRunArmStep(u32 cycles)
 {
-    execute_arm(cycles);
+    execute_arm_step(cycles);
     return 1;
 }
 #endif
