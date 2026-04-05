@@ -2,6 +2,7 @@
 
 
 #include "common.h"
+#include <ctype.h>
 
 #ifdef PSP_BUILD
 

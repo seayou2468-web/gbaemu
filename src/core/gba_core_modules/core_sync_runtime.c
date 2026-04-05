@@ -1,5 +1,6 @@
 // Imported from reference implementation: disasm.c
 
+#include "common.h"
 
 
 #define arm_decode_data_proc_reg()                                            \

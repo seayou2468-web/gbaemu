@@ -63,7 +63,9 @@ typedef struct GBA_AudioSpec {
   int freq;
   Uint16 format;
   Uint8 channels;
+  Uint8 silence;
   Uint16 samples;
+  Uint16 padding;
   Uint32 size;
   GBA_AudioCallback callback;
   void *userdata;
@@ -75,6 +77,8 @@ typedef struct GBA_AudioSpec {
 
 #define GBA_HWSURFACE 0x00000001u
 #define GBA_ENABLE 1
+
+#define AUDIO_S16 0x8010
 
 #define GBA_QUIT 0x100
 #define GBA_KEYDOWN 0x300

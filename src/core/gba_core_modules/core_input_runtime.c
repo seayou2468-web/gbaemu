@@ -866,15 +866,15 @@ u32 update_input()
             key &= ~(BUTTON_LEFT|BUTTON_RIGHT);
          if (event.jaxis.value < -3200)  key |= BUTTON_LEFT;
            else if (event.jaxis.value > 3200)  key |= BUTTON_RIGHT;
-       } 
+       }
          if (event.jaxis.axis==1) {  //Up-Down
             key &= ~(BUTTON_UP|BUTTON_DOWN);
          if (event.jaxis.value < -3200)  key |= BUTTON_UP;
            else if (event.jaxis.value > 3200)  key |= BUTTON_DOWN;
        }
        break;
-#endif
       }
+#endif
     }
   }
 

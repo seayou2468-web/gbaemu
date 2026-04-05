@@ -2,7 +2,7 @@
 
 
 #include "common.h"
-#include "font.h"
+#include "../includes/font.h"
 
 #ifndef _WIN32_WCE
 

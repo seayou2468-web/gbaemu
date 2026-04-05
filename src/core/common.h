@@ -211,17 +211,18 @@ typedef u32 fixed8_24;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include "gba_platform.h"
-#include "../../reference implementation/cpu.h"
-#include "../../reference implementation/memory.h"
-#include "../../reference implementation/video.h"
-#include "../../reference implementation/input.h"
-#include "../../reference implementation/sound.h"
-#include "../../reference implementation/main.h"
-#include "../../reference implementation/gui.h"
-#include "../../reference implementation/zip.h"
-#include "../../reference implementation/cheats.h"
+#include "includes/cpu.h"
+#include "includes/memory.h"
+#include "includes/video.h"
+#include "includes/input.h"
+#include "includes/sound.h"
+#include "includes/main.h"
+#include "includes/gui.h"
+#include "includes/zip.h"
+#include "includes/cheats.h"
 
 #ifdef ARM_ARCH
   #include "arm/warm.h"

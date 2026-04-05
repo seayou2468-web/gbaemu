@@ -3,7 +3,7 @@
 
 #include "common.h"
 #define WANT_FONT_BITS
-#include "font.h"
+#include "../includes/font.h"
 
 #ifdef PSP_BUILD
 
