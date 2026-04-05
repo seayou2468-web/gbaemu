@@ -31,6 +31,61 @@ struct TinyCPU {
     }
 };
 
+#if defined(__GNUC__) || defined(__clang__)
+#define GBA_WEAK __attribute__((weak))
+#else
+#define GBA_WEAK
+#endif
+
+extern "C" {
+GBA_WEAK int GBA_ModuleCPU_IsAvailable(void);
+GBA_WEAK size_t GBA_ModuleCPU_StateSize(void);
+GBA_WEAK void GBA_ModuleCPU_Reset(void* state, uint32_t start_pc);
+GBA_WEAK void GBA_ModuleCPU_StepFrame(void* state, const uint8_t* rom, size_t rom_size,
+                                      uint32_t rom_hash, uint16_t keys_pressed_mask,
+                                      uint32_t steps_per_frame);
+}
+
+struct ModuleCPUBridge {
+    bool available = false;
+    std::vector<uint8_t> state;
+};
+
+static void InitModuleBridge(ModuleCPUBridge* bridge) {
+    if (!bridge) return;
+    bridge->available = false;
+    bridge->state.clear();
+
+    if (!GBA_ModuleCPU_IsAvailable || !GBA_ModuleCPU_StateSize || !GBA_ModuleCPU_Reset ||
+        !GBA_ModuleCPU_StepFrame) {
+        return;
+    }
+    if (GBA_ModuleCPU_IsAvailable() == 0) {
+        return;
+    }
+
+    const size_t sz = GBA_ModuleCPU_StateSize();
+    if (sz == 0) {
+        return;
+    }
+
+    bridge->state.assign(sz, 0);
+    bridge->available = true;
+}
+
+static void ResetModuleBridge(ModuleCPUBridge* bridge, uint32_t start_pc) {
+    if (!bridge || !bridge->available || bridge->state.empty()) return;
+    GBA_ModuleCPU_Reset(bridge->state.data(), start_pc);
+}
+
+static void StepModuleBridge(ModuleCPUBridge* bridge, const uint8_t* rom, size_t rom_size,
+                             uint32_t rom_hash, uint16_t keys_pressed_mask,
+                             uint32_t steps_per_frame) {
+    if (!bridge || !bridge->available || bridge->state.empty() || !rom || rom_size == 0) return;
+    GBA_ModuleCPU_StepFrame(bridge->state.data(), rom, rom_size, rom_hash, keys_pressed_mask,
+                            steps_per_frame);
+}
+
 static bool ReadAllBytes(const char* path, std::vector<uint8_t>* out) {
     if (!path || !path[0] || !out) return false;
     FILE* fp = std::fopen(path, "rb");
@@ -87,6 +142,8 @@ struct GBACoreHandle {
     std::vector<uint8_t> rom;
 
     TinyCPU cpu;
+    ModuleCPUBridge module_bridge;
+
     uint16_t keys_pressed_mask = 0;
     uint32_t rom_hash = 0;
     uint32_t frame_counter = 0;
@@ -103,6 +160,7 @@ GBACoreHandle* GBA_Create(void) {
     GBACoreHandle* h = new GBACoreHandle();
     h->framebuffer.assign(kPixelCount, 0xFF000000u);
     h->cpu.reset(0);
+    InitModuleBridge(&h->module_bridge);
     SetError(h, "");
     return h;
 }
@@ -155,9 +213,9 @@ bool GBA_LoadROMFromPath(GBACoreHandle* handle, const char* path) {
     handle->has_rom = true;
     handle->frame_counter = 0;
 
-    // BIOSありならBIOS先頭、無ければROM先頭から開始。
     const uint32_t start_pc = (handle->has_bios && !handle->use_builtin_bios) ? 0x00000000u : 0x08000000u;
     handle->cpu.reset(start_pc);
+    ResetModuleBridge(&handle->module_bridge, start_pc);
 
     SetError(handle, "");
     return true;
@@ -171,6 +229,7 @@ void GBA_Reset(GBACoreHandle* handle) {
     }
     const uint32_t start_pc = (handle->has_bios && !handle->use_builtin_bios) ? 0x00000000u : 0x08000000u;
     handle->cpu.reset(start_pc);
+    ResetModuleBridge(&handle->module_bridge, start_pc);
     handle->frame_counter = 0;
     SetError(handle, "");
 }
@@ -182,7 +241,6 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         return;
     }
 
-    // --- tiny CPU execution ---
     constexpr uint32_t kStepsPerFrame = 50000;
     const size_t rom_size = handle->rom.size();
 
@@ -229,6 +287,10 @@ void GBA_StepFrame(GBACoreHandle* handle) {
         handle->cpu.cycles += 1;
     }
 
+    // 現在の tiny CPU を主実装として維持しつつ、外部CPU実装があれば同一入力で進める。
+    StepModuleBridge(&handle->module_bridge, handle->rom.data(), handle->rom.size(),
+                     handle->rom_hash, handle->keys_pressed_mask, kStepsPerFrame);
+
     // --- software framebuffer generation (external dependency free) ---
     const uint32_t t = ++handle->frame_counter;
     const uint32_t r0 = handle->cpu.regs[0];
@@ -252,6 +314,10 @@ void GBA_StepFrame(GBACoreHandle* handle) {
 void GBA_SetKeys(GBACoreHandle* handle, uint16_t keys_pressed_mask) {
     if (!handle) return;
     handle->keys_pressed_mask = keys_pressed_mask;
+}
+
+bool GBA_IsModuleCPUBridgeActive(GBACoreHandle* handle) {
+    return handle ? handle->module_bridge.available : false;
 }
 
 size_t GBA_GetFrameBufferSize(GBACoreHandle* handle) {

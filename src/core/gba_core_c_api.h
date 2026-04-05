@@ -21,6 +21,9 @@ void GBA_Reset(GBACoreHandle* handle);
 void GBA_StepFrame(GBACoreHandle* handle);
 void GBA_SetKeys(GBACoreHandle* handle, uint16_t keys_pressed_mask);
 
+// True when optional external module CPU hooks are connected and active.
+bool GBA_IsModuleCPUBridgeActive(GBACoreHandle* handle);
+
 size_t GBA_GetFrameBufferSize(GBACoreHandle* handle);
 const uint32_t* GBA_GetFrameBufferRGBA(GBACoreHandle* handle, size_t* out_size);
 bool GBA_CopyFrameBufferRGBA(GBACoreHandle* handle, uint32_t* out_pixels, size_t out_size);
