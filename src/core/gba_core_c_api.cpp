@@ -200,7 +200,7 @@ void GBA_StepFrame(GBACoreHandle *handle) {
         return;
     }
 
-    constexpr int kSlicesPerStep = 2;
+    constexpr int kSlicesPerStep = 4;
     for (int i = 0; i < kSlicesPerStep; ++i) {
         const uint32_t executed = execute_cycles > 0 ? execute_cycles : 1;
         execute_arm_translate(executed);
