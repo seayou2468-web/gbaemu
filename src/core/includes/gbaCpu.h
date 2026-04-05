@@ -3,8 +3,8 @@
 
 #include <cstdint>
 
-#include "../base/system.h"
-#include "gbaCheats.h"
+#include "system.h"
+#include "cheats.h"
 #include "gbaGlobals.h"
 
 extern int armExecute();

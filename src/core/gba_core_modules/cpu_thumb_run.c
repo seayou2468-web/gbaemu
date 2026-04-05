@@ -9,17 +9,17 @@
 #include <strings.h>
 #endif
 
-#include "../embedded_include/gba/gba.h"
-#include "../embedded_include/gba/gbaCpu.h"
-#include "../embedded_include/gba/gbaInline.h"
-#include "../embedded_include/gba/gbaGlobals.h"
+#include "../includes/gba.h"
+#include "../includes/gbaCpu.h"
+#include "../includes/gbaInline.h"
+#include "../includes/gbaGlobals.h"
 
 #if defined(VBAM_ENABLE_DEBUGGER)
-#include "../embedded_include/gba/gbaRemote.h"
+#include "../includes/gbaRemote.h"
 #endif  // defined(VBAM_ENABLE_DEBUGGER)
 
 #ifdef PROFILING
-#include "../embedded_include/gba/prof/prof.h"
+#include "../includes/prof/prof.h"
 #endif
 
 #ifdef _MSC_VER

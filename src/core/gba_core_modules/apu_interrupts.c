@@ -5,12 +5,12 @@
 #include <array>
 #include <cassert>
 
-#include "../embedded_include/apu/Blip_Buffer.h"
-#include "../embedded_include/apu/Multi_Buffer.h"
-#include "../embedded_include/apu/Gb_Apu.h"
-#include "../embedded_include/gba/gba.h"
-#include "../embedded_include/gba/gbaSound.h"
-#include "../embedded_include/gba/gbaRtc.h"
+#include "../includes/apu/Blip_Buffer.h"
+#include "../includes/apu/Multi_Buffer.h"
+#include "../includes/apu/Gb_Apu.h"
+#include "../includes/gba.h"
+#include "../includes/gbaSound.h"
+#include "../includes/gbaRtc.h"
 
 #define NR10 0x60
 #define NR11 0x62
