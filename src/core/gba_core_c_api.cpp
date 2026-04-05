@@ -23,6 +23,7 @@ uint32_t execute_arm_translate(uint32_t cycles);
 uint32_t update_gba(void);
 uint16_t *copy_screen(void);
 extern uint32_t execute_cycles;
+extern uint32_t frame_ticks;
 extern int current_frameskip_type;
 extern uint32_t frameskip_value;
 extern uint32_t skip_next_frame;
@@ -58,6 +59,8 @@ struct GBACoreHandle {
     bool has_bios = false;
     bool has_rom = false;
     uint16_t keys_pressed_mask = 0;
+    uint32_t last_presented_frame_tick = 0;
+    bool has_presented_frame_tick = false;
     std::vector<uint32_t> framebuffer;
 };
 
@@ -141,6 +144,8 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle *handle, const char *path) {
     if (handle->has_rom) {
         reset_gba();
         RefreshFrameBuffer(handle);
+        handle->last_presented_frame_tick = frame_ticks;
+        handle->has_presented_frame_tick = true;
     }
     SetError(handle, "");
     return true;
@@ -159,6 +164,8 @@ bool GBA_LoadROMFromPath(GBACoreHandle *handle, const char *path) {
     if (handle->has_bios) {
         reset_gba();
         RefreshFrameBuffer(handle);
+        handle->last_presented_frame_tick = frame_ticks;
+        handle->has_presented_frame_tick = true;
     }
     SetError(handle, "");
     return true;
@@ -177,6 +184,8 @@ void GBA_Reset(GBACoreHandle *handle) {
 
     reset_gba();
     RefreshFrameBuffer(handle);
+    handle->last_presented_frame_tick = frame_ticks;
+    handle->has_presented_frame_tick = true;
     SetError(handle, "");
 }
 
@@ -196,7 +205,12 @@ void GBA_StepFrame(GBACoreHandle *handle) {
         const uint32_t executed = execute_cycles > 0 ? execute_cycles : 1;
         execute_arm_translate(executed);
     }
-    RefreshFrameBuffer(handle);
+
+    if (!handle->has_presented_frame_tick || frame_ticks != handle->last_presented_frame_tick) {
+        RefreshFrameBuffer(handle);
+        handle->last_presented_frame_tick = frame_ticks;
+        handle->has_presented_frame_tick = true;
+    }
     SetError(handle, "");
 }
 
