@@ -4352,62 +4352,59 @@ void execute_arm(u32 cycles)
   if(pc_address_block == NULL)
     pc_address_block = load_gamepak_page(pc_region & 0x3FF);
 
-  while(1)
+  cycles_remaining = cycles;
+  pc = reg[REG_PC];
+  extract_flags();
+
+  if(reg[REG_CPSR] & 0x20)
+    goto thumb_loop;
+
+  do
   {
-    cycles_remaining = cycles;
-    pc = reg[REG_PC];
-    extract_flags();
-
-    if(reg[REG_CPSR] & 0x20)
-      goto thumb_loop;
-
-    do
-    {
-      arm_loop:
-
-      collapse_flags();
-      step_debug(pc, cycles_remaining);
-      cycles_per_instruction = global_cycles_per_instruction;
-
-      old_pc = pc;
-      execute_arm_instruction();
-      cycles_remaining -= cycles_per_instruction;
-    } while(cycles_remaining > 0);
+    arm_loop:
 
     collapse_flags();
-    cycles = update_gba();
-    continue;
+    step_debug(pc, cycles_remaining);
+    cycles_per_instruction = global_cycles_per_instruction;
 
-    do
-    {
-      thumb_loop:
+    old_pc = pc;
+    execute_arm_instruction();
+    cycles_remaining -= cycles_per_instruction;
+  } while(cycles_remaining > 0);
 
-      collapse_flags();
-      step_debug(pc, cycles_remaining);
+  collapse_flags();
+  update_gba();
+  return;
 
-      old_pc = pc;
-      execute_thumb_instruction();
-      cycles_remaining -= cycles_per_instruction;
-    } while(cycles_remaining > 0);
+  do
+  {
+    thumb_loop:
 
     collapse_flags();
-    cycles = update_gba();
-    continue;
+    step_debug(pc, cycles_remaining);
 
-    alert:
+    old_pc = pc;
+    execute_thumb_instruction();
+    cycles_remaining -= cycles_per_instruction;
+  } while(cycles_remaining > 0);
 
-    if(cpu_alert == CPU_ALERT_IRQ)
+  collapse_flags();
+  update_gba();
+  return;
+
+  alert:
+
+  if(cpu_alert == CPU_ALERT_IRQ)
+  {
+    (void)cycles_remaining;
+  }
+  else
+  {
+    collapse_flags();
+
+    while(reg[CPU_HALT_STATE] != CPU_ACTIVE)
     {
-      cycles = cycles_remaining;
-    }
-    else
-    {
-      collapse_flags();
-
-      while(reg[CPU_HALT_STATE] != CPU_ACTIVE)
-      {
-        cycles = update_gba();
-      }
+      update_gba();
     }
   }
 }
