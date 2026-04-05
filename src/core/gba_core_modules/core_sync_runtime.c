@@ -138,32 +138,6 @@ const char *data_proc_opcode_table[] =
 
 u32 print_disasm_arm_instruction(u32 opcode)
 {
-  u32 condition = opcode >> 28;
-
-  switch((opcode >> 25) & 0x07)
-  {
-    // Data processing reg, multiply, bx, memory transfer half/byte, swap,
-    // PSR reg
-    case 0x0:
-
-    // Data processing imm, PSR imm
-    case 0x1:
-
-    // Memory transfer imm
-    case 0x2:
-
-    // Memory transfer reg, undefined
-    case 0x3:
-
-    // Block memory transfer
-    case 0x4:
-
-    // Branch
-    case 0x5:
-
-    // Coprocessor
-    case 0x6:
-
-    // Coprocessor, SWI
-    case 0x7:
-  }
+  (void)opcode;
+  return 0;
+}

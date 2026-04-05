@@ -4125,9 +4125,9 @@ void step_debug(u32 pc, u32 cycles)
     }
 
     if(thumb)
-      print_thumb_instruction(cycles);
+      print_thumb_instruction();
     else
-      print_arm_instruction(cycles);
+      print_arm_instruction();
 
     print_arm_registers();
     print_flags();

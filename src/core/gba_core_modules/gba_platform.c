@@ -2,22 +2,24 @@
 #include "../gba_platform_gp2x.h"
 
 #include <pthread.h>
+#include <sys/select.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
-typedef struct GBA_Mutex {
+struct GBA_Mutex {
   pthread_mutex_t impl;
-} GBA_Mutex;
+};
 
-typedef struct GBA_Cond {
+struct GBA_Cond {
   pthread_cond_t impl;
-} GBA_Cond;
+};
 
-typedef struct GBA_Joystick {
+struct GBA_Joystick {
   int index;
-} GBA_Joystick;
+};
 
 typedef struct AudioRuntime {
   GBA_AudioSpec spec;
@@ -32,13 +34,20 @@ typedef struct AudioRuntime {
 
 static AudioRuntime g_audio;
 
+static void SleepForMilliseconds(Uint32 ms) {
+  struct timeval tv;
+  tv.tv_sec = (time_t)(ms / 1000u);
+  tv.tv_usec = (suseconds_t)((ms % 1000u) * 1000u);
+  select(0, NULL, NULL, NULL, &tv);
+}
+
 static void* AudioThreadMain(void* arg) {
   (void)arg;
   while (g_audio.running) {
     if (!g_audio.paused && g_audio.spec.callback && g_audio.mix_buffer && g_audio.mix_size) {
       g_audio.spec.callback(g_audio.spec.userdata, g_audio.mix_buffer, (int)g_audio.mix_size);
     }
-    usleep(1000);
+    SleepForMilliseconds(1);
   }
   return NULL;
 }
@@ -218,13 +227,13 @@ void GBA_PauseAudio(int pause_on) {
 }
 
 Uint32 GBA_GetTicks(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (Uint32)((ts.tv_sec * 1000ull) + ((uint64_t)ts.tv_nsec / 1000000ull));
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (Uint32)((tv.tv_sec * 1000ull) + ((uint64_t)tv.tv_usec / 1000ull));
 }
 
 void GBA_Delay(Uint32 ms) {
-  usleep((useconds_t)ms * 1000u);
+  SleepForMilliseconds(ms);
 }
 
 void GBA_GP2X_AllowGfxMemory(void *ptr, int size) {

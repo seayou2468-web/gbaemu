@@ -192,6 +192,6 @@ extern u32 memory_writes_u16;
 extern u32 memory_writes_u32;
 
 void init_cpu();
-void move_reg();
+void move_reg(u32 *new_reg);
 
 #endif
