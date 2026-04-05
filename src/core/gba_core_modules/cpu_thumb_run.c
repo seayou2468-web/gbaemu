@@ -2106,3 +2106,14 @@ int thumbExecute()
 #else
 /* C translation unit stub: compiled in C++ aggregate mode only. */
 #endif
+
+#if !defined(__cplusplus)
+#include "../common.h"
+
+extern int cpuRunArmStep(u32 cycles);
+
+int thumbExecute()
+{
+    return cpuRunArmStep(execute_cycles);
+}
+#endif

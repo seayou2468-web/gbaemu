@@ -3217,3 +3217,20 @@ int armExecute()
 #else
 /* C translation unit stub: compiled in C++ aggregate mode only. */
 #endif
+
+#if !defined(__cplusplus)
+#include "../common.h"
+
+extern int cpuRunArmStep(u32 cycles);
+
+u32 execute_arm_translate(u32 cycles)
+{
+    cpuRunArmStep(cycles);
+    return 0;
+}
+
+int armExecute()
+{
+    return cpuRunArmStep(execute_cycles);
+}
+#endif

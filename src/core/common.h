@@ -69,8 +69,6 @@
   #include <pspaudiolib.h>
   #include <psprtc.h>
 
-  #define 
-
   #define convert_palette(value)                                              \
     value = ((value & 0x7FE0) << 1) | (value & 0x1F)                          \
 

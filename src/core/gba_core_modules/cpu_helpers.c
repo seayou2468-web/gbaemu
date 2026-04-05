@@ -729,3 +729,13 @@ int disThumb(uint32_t offset, char* dest, unsigned dest_sz, int flags)
 #else
 /* C translation unit stub: compiled in C++ aggregate mode only. */
 #endif
+
+#if !defined(__cplusplus)
+#include "../common.h"
+
+int cpuRunArmStep(u32 cycles)
+{
+    execute_arm(cycles);
+    return 1;
+}
+#endif

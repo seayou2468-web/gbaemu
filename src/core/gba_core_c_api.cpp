@@ -20,6 +20,7 @@ void reset_gba(void);
 int load_bios(char *name);
 unsigned load_gamepak(char *name);
 uint32_t execute_arm_translate(uint32_t cycles);
+uint32_t update_gba(void);
 uint16_t *copy_screen(void);
 extern uint32_t execute_cycles;
 }
@@ -178,7 +179,7 @@ void GBA_StepFrame(GBACoreHandle *handle) {
         return;
     }
 
-    execute_arm_translate(execute_cycles);
+    update_gba();
     RefreshFrameBuffer(handle);
     SetError(handle, "");
 }
