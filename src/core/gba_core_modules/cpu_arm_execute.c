@@ -4364,7 +4364,11 @@ void execute_arm(u32 cycles)
 
     collapse_flags();
     cycles = update_gba();
+#if defined(IOS_BUILD) || defined(PC_BUILD)
+    return;
+#else
     continue;
+#endif
 
     do
     {
@@ -4380,7 +4384,11 @@ void execute_arm(u32 cycles)
 
     collapse_flags();
     cycles = update_gba();
+#if defined(IOS_BUILD) || defined(PC_BUILD)
+    return;
+#else
     continue;
+#endif
 
     alert:
 
