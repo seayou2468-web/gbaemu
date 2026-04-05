@@ -166,7 +166,11 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
         if (biosLoaded) {
             self.biosLoaded = YES;
             self.biosStatusLabel.text = [NSString stringWithFormat:@"BIOS: %@", url.lastPathComponent ?: @"(不明)"];
-            self.statusLabel.text = @"BIOSを読み込みました";
+            if (self.romLoaded && ![self resetAndRenderInitialFrame]) {
+                self.statusLabel.text = [NSString stringWithFormat:@"初期描画失敗: %@", self.engine.lastErrorMessage];
+            } else {
+                self.statusLabel.text = @"BIOSを読み込みました";
+            }
         } else {
             self.biosLoaded = NO;
             self.biosStatusLabel.text = @"BIOS: 読み込み失敗";
@@ -177,9 +181,15 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
         if (loaded) {
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
-            self.statusLabel.text = self.biosLoaded
-                ? @"ROMを読み込みました。再生を押してください"
-                : @"ROMを読み込みました。次にBIOSを選択してください";
+            if (self.biosLoaded) {
+                if (![self resetAndRenderInitialFrame]) {
+                    self.statusLabel.text = [NSString stringWithFormat:@"初期描画失敗: %@", self.engine.lastErrorMessage];
+                } else {
+                    self.statusLabel.text = @"ROMを読み込みました。再生を押してください";
+                }
+            } else {
+                self.statusLabel.text = @"ROMを読み込みました。次にBIOSを選択してください";
+            }
         } else {
             self.romLoaded = NO;
             self.romStatusLabel.text = @"ROM: 読み込み失敗";
@@ -192,6 +202,18 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
         [url stopAccessingSecurityScopedResource];
     }
     [self refreshPlayState];
+}
+
+- (BOOL)resetAndRenderInitialFrame {
+    [self.engine reset];
+    [self.engine setKeysPressedMask:0x0000];
+    NSString *resetError = self.engine.lastErrorMessage;
+    if (resetError.length > 0 && ![resetError isEqualToString:@"(no error)"]) {
+        return NO;
+    }
+
+    [self renderCurrentFrame];
+    return YES;
 }
 
 - (void)togglePlayback {
@@ -210,14 +232,11 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
         return;
     }
 
-    [self.engine reset];
-    NSString *resetError = self.engine.lastErrorMessage;
-    if (resetError.length > 0 && ![resetError isEqualToString:@"(no error)"]) {
-        self.statusLabel.text = [NSString stringWithFormat:@"開始失敗: %@", resetError];
+    if (![self resetAndRenderInitialFrame]) {
+        self.statusLabel.text = [NSString stringWithFormat:@"開始失敗: %@", self.engine.lastErrorMessage];
         return;
     }
 
-    [self renderCurrentFrame];
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(handleDisplayLink:)];
     [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.statusLabel.text = @"再生中";
