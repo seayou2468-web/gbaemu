@@ -125,6 +125,10 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle *handle, const char *path) {
     }
 
     handle->has_bios = true;
+    if (handle->has_rom) {
+        reset_gba();
+        RefreshFrameBuffer(handle);
+    }
     SetError(handle, "");
     return true;
 }
@@ -139,6 +143,10 @@ bool GBA_LoadROMFromPath(GBACoreHandle *handle, const char *path) {
     }
 
     handle->has_rom = true;
+    if (handle->has_bios) {
+        reset_gba();
+        RefreshFrameBuffer(handle);
+    }
     SetError(handle, "");
     return true;
 }
