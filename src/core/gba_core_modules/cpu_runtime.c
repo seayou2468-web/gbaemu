@@ -1553,26 +1553,28 @@ static u32 get_valid_cpu_mode(u32 mode)
 
 static u32 get_cpu_mode_index(void)
 {
-  u32 cpsr_mode = cpu_modes[reg[REG_CPSR] & 0x1F];
   u32 cpu_mode = get_valid_cpu_mode(reg[CPU_MODE]);
-
-  if(cpsr_mode != MODE_INVALID)
-    return cpsr_mode;
+  u32 cpsr_mode = cpu_modes[reg[REG_CPSR] & 0x1F];
 
   if(cpu_mode != MODE_INVALID)
     return cpu_mode;
+
+  if(cpsr_mode != MODE_INVALID)
+    return cpsr_mode;
 
   return MODE_USER;
 }
 
 static void repair_cpu_mode_state(void)
 {
-  u32 cpsr_mode = cpu_modes[reg[REG_CPSR] & 0x1F];
   u32 cpu_mode = get_valid_cpu_mode(reg[CPU_MODE]);
+  u32 cpsr_mode = cpu_modes[reg[REG_CPSR] & 0x1F];
 
   if(cpsr_mode != MODE_INVALID)
   {
-    reg[CPU_MODE] = cpsr_mode;
+    if(cpu_mode != cpsr_mode)
+      set_cpu_mode(cpsr_mode);
+
     return;
   }
 
@@ -1582,7 +1584,7 @@ static void repair_cpu_mode_state(void)
     return;
   }
 
-  reg[CPU_MODE] = MODE_USER;
+  set_cpu_mode(MODE_USER);
   reg[REG_CPSR] = (reg[REG_CPSR] & ~0x1F) | cpu_modes_cpsr[MODE_USER];
 }
 
@@ -4328,7 +4330,10 @@ void step_debug(u32 pc, u32 cycles)
 void set_cpu_mode(cpu_mode_type new_mode)
 {
   u32 i;
-  cpu_mode_type cpu_mode = get_cpu_mode_index();
+  cpu_mode_type cpu_mode = get_valid_cpu_mode(reg[CPU_MODE]);
+  if(cpu_mode == MODE_INVALID)
+    cpu_mode = MODE_USER;
+
   reg[CPU_MODE] = cpu_mode;
   new_mode = get_valid_cpu_mode(new_mode);
   if(new_mode == MODE_INVALID)
