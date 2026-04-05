@@ -32,11 +32,8 @@ struct TinyCPU {
 };
 
 #if defined(__GNUC__) || defined(__clang__)
+#define GBA_MODULE_CPU_BRIDGE_SUPPORTED 1
 #define GBA_WEAK __attribute__((weak))
-#else
-#define GBA_WEAK
-#endif
-
 extern "C" {
 GBA_WEAK int GBA_ModuleCPU_IsAvailable(void);
 GBA_WEAK size_t GBA_ModuleCPU_StateSize(void);
@@ -45,6 +42,9 @@ GBA_WEAK void GBA_ModuleCPU_StepFrame(void* state, const uint8_t* rom, size_t ro
                                       uint32_t rom_hash, uint16_t keys_pressed_mask,
                                       uint32_t steps_per_frame);
 }
+#else
+#define GBA_MODULE_CPU_BRIDGE_SUPPORTED 0
+#endif
 
 struct ModuleCPUBridge {
     bool available = false;
@@ -56,6 +56,7 @@ static void InitModuleBridge(ModuleCPUBridge* bridge) {
     bridge->available = false;
     bridge->state.clear();
 
+#if GBA_MODULE_CPU_BRIDGE_SUPPORTED
     if (!GBA_ModuleCPU_IsAvailable || !GBA_ModuleCPU_StateSize || !GBA_ModuleCPU_Reset ||
         !GBA_ModuleCPU_StepFrame) {
         return;
@@ -71,19 +72,34 @@ static void InitModuleBridge(ModuleCPUBridge* bridge) {
 
     bridge->state.assign(sz, 0);
     bridge->available = true;
+#endif
 }
 
 static void ResetModuleBridge(ModuleCPUBridge* bridge, uint32_t start_pc) {
+#if GBA_MODULE_CPU_BRIDGE_SUPPORTED
     if (!bridge || !bridge->available || bridge->state.empty()) return;
     GBA_ModuleCPU_Reset(bridge->state.data(), start_pc);
+#else
+    (void)bridge;
+    (void)start_pc;
+#endif
 }
 
 static void StepModuleBridge(ModuleCPUBridge* bridge, const uint8_t* rom, size_t rom_size,
                              uint32_t rom_hash, uint16_t keys_pressed_mask,
                              uint32_t steps_per_frame) {
+#if GBA_MODULE_CPU_BRIDGE_SUPPORTED
     if (!bridge || !bridge->available || bridge->state.empty() || !rom || rom_size == 0) return;
     GBA_ModuleCPU_StepFrame(bridge->state.data(), rom, rom_size, rom_hash, keys_pressed_mask,
                             steps_per_frame);
+#else
+    (void)bridge;
+    (void)rom;
+    (void)rom_size;
+    (void)rom_hash;
+    (void)keys_pressed_mask;
+    (void)steps_per_frame;
+#endif
 }
 
 static bool ReadAllBytes(const char* path, std::vector<uint8_t>* out) {
