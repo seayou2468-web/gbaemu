@@ -102,7 +102,7 @@ static u16 *screen_pixels = NULL;
 #else
 
 #ifdef GP2X_BUILD
-#include "gba_platform_gp2x.h"
+#include "../gba_platform_gp2x.h"
 GBA_Surface *hw_screen;
 #endif
 GBA_Surface *screen;
@@ -4135,5 +4135,4 @@ void video_##type##_savestate(file_tag_type savestate_file)                   \
 
 video_savestate_builder(read);
 video_savestate_builder(write_mem);
-
 

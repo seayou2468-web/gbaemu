@@ -3,7 +3,7 @@
 
 
 #include "../common.h"
-#include "gba_platform.h"
+#include "../gba_platform.h"
 u32 global_enable_audio = 1;
 
 direct_sound_struct direct_sound_channel[2];
@@ -800,4 +800,3 @@ void sound_##type##_savestate(file_tag_type savestate_file)                 \
 
 sound_savestate_builder(read);
 sound_savestate_builder(write_mem);
-
