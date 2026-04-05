@@ -151,6 +151,10 @@ void GBA_Reset(GBACoreHandle *handle) {
         SetError(handle, "rom not loaded");
         return;
     }
+    if (!handle->has_bios) {
+        SetError(handle, "bios not loaded");
+        return;
+    }
 
     reset_gba();
     RefreshFrameBuffer(handle);
@@ -161,6 +165,10 @@ void GBA_StepFrame(GBACoreHandle *handle) {
     if (!handle) return;
     if (!handle->has_rom) {
         SetError(handle, "rom not loaded");
+        return;
+    }
+    if (!handle->has_bios) {
+        SetError(handle, "bios not loaded");
         return;
     }
 
