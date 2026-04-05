@@ -26,14 +26,14 @@ typedef struct AudioRuntime {
   int thread_started;
   int running;
   int paused;
-  Uint8 *mix_buffer;
+  uint8_t *mix_buffer;
   size_t mix_size;
   GBA_Mutex *lock;
 } AudioRuntime;
 
 static AudioRuntime g_audio;
 
-static void SleepForMilliseconds(Uint32 ms) {
+static void SleepForMilliseconds(uint32_t ms) {
   struct timeval tv;
   tv.tv_sec = (time_t)(ms / 1000u);
   tv.tv_usec = (suseconds_t)((ms % 1000u) * 1000u);
@@ -51,7 +51,7 @@ static void* AudioThreadMain(void* arg) {
   return NULL;
 }
 
-int GBA_Init(Uint32 flags) {
+int GBA_Init(uint32_t flags) {
   (void)flags;
   return 0;
 }
@@ -83,7 +83,7 @@ GBA_Joystick *GBA_JoystickOpen(int index) {
 
 int GBA_JoystickEventState(int state) { return state; }
 
-GBA_Surface *GBA_SetVideoMode(int w, int h, int bpp, Uint32 flags) {
+GBA_Surface *GBA_SetVideoMode(int w, int h, int bpp, uint32_t flags) {
   (void)bpp;
   (void)flags;
   GBA_Surface *s = (GBA_Surface *)calloc(1, sizeof(GBA_Surface));
@@ -95,8 +95,8 @@ GBA_Surface *GBA_SetVideoMode(int w, int h, int bpp, Uint32 flags) {
   return s;
 }
 
-GBA_Surface *GBA_CreateRGBSurface(Uint32 flags, int w, int h, int depth,
-                                  Uint32 rmask, Uint32 gmask, Uint32 bmask, Uint32 amask) {
+GBA_Surface *GBA_CreateRGBSurface(uint32_t flags, int w, int h, int depth,
+                                  uint32_t rmask, uint32_t gmask, uint32_t bmask, uint32_t amask) {
   (void)flags; (void)depth; (void)rmask; (void)gmask; (void)bmask; (void)amask;
   return GBA_SetVideoMode(w, h, depth, 0);
 }
@@ -108,8 +108,8 @@ int GBA_BlitSurface(GBA_Surface *src, const GBA_Rect *srcrect, GBA_Surface *dst,
   const int copy_h = (src->h < dst->h) ? src->h : dst->h;
   const int copy_pitch = (src->pitch < dst->pitch) ? src->pitch : dst->pitch;
   for (int y = 0; y < copy_h; ++y) {
-    memcpy((Uint8*)dst->pixels + (size_t)y * (size_t)dst->pitch,
-           (const Uint8*)src->pixels + (size_t)y * (size_t)src->pitch,
+    memcpy((uint8_t*)dst->pixels + (size_t)y * (size_t)dst->pitch,
+           (const uint8_t*)src->pixels + (size_t)y * (size_t)src->pitch,
            (size_t)copy_pitch);
   }
   return 0;
@@ -192,9 +192,9 @@ int GBA_OpenAudio(GBA_AudioSpec *desired, GBA_AudioSpec *obtained) {
   g_audio.spec = *desired;
   if (g_audio.spec.samples == 0) g_audio.spec.samples = 1024;
   if (g_audio.spec.channels == 0) g_audio.spec.channels = 2;
-  g_audio.spec.size = (Uint32)g_audio.spec.samples * (Uint32)g_audio.spec.channels * 2u;
+  g_audio.spec.size = (uint32_t)g_audio.spec.samples * (uint32_t)g_audio.spec.channels * 2u;
   g_audio.mix_size = g_audio.spec.size;
-  g_audio.mix_buffer = (Uint8 *)calloc(1, g_audio.mix_size);
+  g_audio.mix_buffer = (uint8_t *)calloc(1, g_audio.mix_size);
   g_audio.lock = GBA_CreateMutex();
   g_audio.paused = 1;
   g_audio.running = 1;
@@ -233,13 +233,13 @@ void GBA_PauseAudio(int pause_on) {
   g_audio.paused = (pause_on != 0);
 }
 
-Uint32 GBA_GetTicks(void) {
+uint32_t GBA_GetTicks(void) {
   struct timeval tv;
   gettimeofday(&tv, NULL);
-  return (Uint32)((tv.tv_sec * 1000ull) + ((uint64_t)tv.tv_usec / 1000ull));
+  return (uint32_t)((tv.tv_sec * 1000ull) + ((uint64_t)tv.tv_usec / 1000ull));
 }
 
-void GBA_Delay(Uint32 ms) {
+void GBA_Delay(uint32_t ms) {
   SleepForMilliseconds(ms);
 }
 

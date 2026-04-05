@@ -585,7 +585,7 @@ void update_gbc_sound(u32 cpu_ticks)
   }                                                                           \
 
 
-void sound_callback(void *userdata, Uint8 *stream, int length)
+void sound_callback(void *userdata, uint8_t *stream, int length)
 {
   u32 sample_length = length / 2;
   u32 _length;
