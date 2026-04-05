@@ -103,9 +103,9 @@ static u16 *screen_pixels = NULL;
 
 #ifdef GP2X_BUILD
 #include "../gba_platform_gp2x.h"
-GBA_Surface *hw_screen;
+PlatformSurface *hw_screen;
 #endif
-GBA_Surface *screen;
+PlatformSurface *screen;
 const u32 video_scale = 1;
 
 #define get_screen_pixels()                                                   \
@@ -3461,17 +3461,17 @@ void flip_screen()
       {
         case unscaled:
         {
-          GBA_Rect srect = {0, 0, 240, 160};
-          GBA_Rect drect = {40, 40, 240, 160};
+          PlatformRect srect = {0, 0, 240, 160};
+          PlatformRect drect = {40, 40, 240, 160};
           warm_cache_op_all(WOP_D_CLEAN);
-          GBA_BlitSurface(screen, &srect, hw_screen, &drect);
+          PlatformBlitSurface(screen, &srect, hw_screen, &drect);
           return;
         }
         case scaled_aspect:
         {
-          GBA_Rect drect = {0, 10, 0, 0};
+          PlatformRect drect = {0, 10, 0, 0};
           warm_cache_op_all(WOP_D_CLEAN);
-          GBA_BlitSurface(screen, NULL, hw_screen, &drect);
+          PlatformBlitSurface(screen, NULL, hw_screen, &drect);
           return;
         }
         case scaled_aspect_sw:
@@ -3484,10 +3484,10 @@ void flip_screen()
       }
     }
     warm_cache_op_all(WOP_D_CLEAN);
-    GBA_BlitSurface(screen, NULL, hw_screen, NULL);
+    PlatformBlitSurface(screen, NULL, hw_screen, NULL);
   }
 #else
-  GBA_Flip(screen);
+  PlatformFlip(screen);
 #endif
 }
 
@@ -3598,22 +3598,22 @@ void init_video()
 
 void init_video()
 {
-  GBA_Init(0x00000020u | 0x00000200u | 0x00100000u);
+  PlatformInit(0x00000020u | 0x00000200u | 0x00100000u);
 
 #ifdef GP2X_BUILD
-  GBA_GP2X_AllowGfxMemory(NULL, 0);
+  PlatformAllowGfxMemory(NULL, 0);
 
-  hw_screen = GBA_SetVideoMode(320 * video_scale, 240 * video_scale,
+  hw_screen = PlatformSetVideoMode(320 * video_scale, 240 * video_scale,
    16, 0x00000001u);
 
-  screen = GBA_CreateRGBSurface(0x00000001u, 240 * video_scale,
+  screen = PlatformCreateRGBSurface(0x00000001u, 240 * video_scale,
    160 * video_scale, 16, 0xFFFF, 0xFFFF, 0xFFFF, 0);
 
   warm_change_cb_upper(WCB_C_BIT|WCB_B_BIT, 1);
 #else
-  screen = GBA_SetVideoMode(240 * video_scale, 160 * video_scale, 16, 0);
+  screen = PlatformSetVideoMode(240 * video_scale, 160 * video_scale, 16, 0);
 #endif
-  GBA_ShowCursor(0);
+  PlatformShowCursor(0);
 }
 
 #endif
@@ -3831,18 +3831,18 @@ void video_resolution_large()
   current_scale = unscaled;
 
 #ifdef GP2X_BUILD
-  GBA_FreeSurface(screen);
-  GBA_GP2X_AllowGfxMemory(NULL, 0);
-    hw_screen = GBA_SetVideoMode(320, 240, 16, 0x00000001u);
-  screen = GBA_CreateRGBSurface(0x00000001u, 320, 240, 16, 0xFFFF,
+  PlatformFreeSurface(screen);
+  PlatformAllowGfxMemory(NULL, 0);
+    hw_screen = PlatformSetVideoMode(320, 240, 16, 0x00000001u);
+  screen = PlatformCreateRGBSurface(0x00000001u, 320, 240, 16, 0xFFFF,
    0xFFFF, 0xFFFF, 0);
   resolution_width = 320;
     resolution_height = 240;
-  GBA_ShowCursor(0);
+  PlatformShowCursor(0);
 
   warm_change_cb_upper(WCB_C_BIT|WCB_B_BIT, 1);
 #else
-  screen = GBA_SetVideoMode(480, 272, 16, 0);
+  screen = PlatformSetVideoMode(480, 272, 16, 0);
   resolution_width = 480;
   resolution_height = 272;
 #endif
@@ -3854,8 +3854,8 @@ void video_resolution_small()
 
 #ifdef GP2X_BUILD
   int w, h;
-  GBA_FreeSurface(screen);
-  GBA_GP2X_AllowGfxMemory(NULL, 0);
+  PlatformFreeSurface(screen);
+  PlatformAllowGfxMemory(NULL, 0);
 
   w = 320; h = 240;
   if (screen_scale == scaled_aspect || screen_scale == fullscreen)
@@ -3864,20 +3864,20 @@ void video_resolution_small()
     h = small_resolution_height * video_scale;
   }
   if (screen_scale == scaled_aspect) h += 20;
-  hw_screen = GBA_SetVideoMode(w, h, 16, 0x00000001u);
+  hw_screen = PlatformSetVideoMode(w, h, 16, 0x00000001u);
 
   w = small_resolution_width * video_scale;
   if (screen_scale == scaled_aspect_sw)
     w = 320;
-  screen = GBA_CreateRGBSurface(0x00000001u,
+  screen = PlatformCreateRGBSurface(0x00000001u,
    w, small_resolution_height * video_scale,
    16, 0xFFFF, 0xFFFF, 0xFFFF, 0);
 
-  GBA_ShowCursor(0);
+  PlatformShowCursor(0);
 
   warm_change_cb_upper(WCB_C_BIT|WCB_B_BIT, 1);
 #else
-  screen = GBA_SetVideoMode(small_resolution_width * video_scale,
+  screen = PlatformSetVideoMode(small_resolution_width * video_scale,
    small_resolution_height * video_scale, 16, 0);
 #endif
   resolution_width = small_resolution_width;

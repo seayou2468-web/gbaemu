@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 
-void GBA_GP2X_AllowGfxMemory(void *ptr, int size);
+void PlatformAllowGfxMemory(void *ptr, int size);
 
 #ifdef __cplusplus
 }

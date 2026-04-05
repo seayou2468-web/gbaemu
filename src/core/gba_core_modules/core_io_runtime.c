@@ -1685,12 +1685,12 @@ u32 menu(u16 *original_screen)
   video_resolution_large();
 
 #ifndef GP2X_BUILD
-  GBA_LockMutex(sound_mutex);
+  PlatformLockMutex(sound_mutex);
 #endif
-  GBA_PauseAudio(1);
+  PlatformPauseAudio(1);
 
 #ifndef GP2X_BUILD
-  GBA_UnlockMutex(sound_mutex);
+  PlatformUnlockMutex(sound_mutex);
 #endif
 
   if(gamepak_filename[0] == 0)
@@ -1840,7 +1840,7 @@ u32 menu(u16 *original_screen)
   menu_get_clock_speed();
   set_clock_speed();
 
-  GBA_PauseAudio(0);
+  PlatformPauseAudio(0);
   num_skipped_frames = 100;
   menu_context = NULL;
 

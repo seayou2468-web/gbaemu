@@ -8,52 +8,52 @@
 extern "C" {
 #endif
 
-typedef int GBAKey;
-typedef struct GBA_Mutex GBA_Mutex;
-typedef struct GBA_Cond GBA_Cond;
-typedef struct GBA_Joystick GBA_Joystick;
+typedef int PlatformKey;
+typedef struct PlatformMutex PlatformMutex;
+typedef struct PlatformCond PlatformCond;
+typedef struct PlatformJoystick PlatformJoystick;
 
-typedef struct GBA_Rect {
+typedef struct PlatformRect {
   int16_t x, y;
   uint16_t w, h;
-} GBA_Rect;
+} PlatformRect;
 
-typedef struct GBA_Surface {
+typedef struct PlatformSurface {
   int w;
   int h;
   int pitch;
   void *pixels;
-} GBA_Surface;
+} PlatformSurface;
 
-typedef struct GBA_keysym {
-  GBAKey sym;
-} GBA_keysym;
+typedef struct PlatformKeysym {
+  PlatformKey sym;
+} PlatformKeysym;
 
-typedef struct GBA_KeyboardEvent {
+typedef struct PlatformKeyboardEvent {
   uint8_t type;
-  GBA_keysym keysym;
-} GBA_KeyboardEvent;
+  PlatformKeysym keysym;
+} PlatformKeyboardEvent;
 
-typedef struct GBA_JoyButtonEvent {
+typedef struct PlatformJoyButtonEvent {
   uint8_t type;
   uint8_t button;
-} GBA_JoyButtonEvent;
+} PlatformJoyButtonEvent;
 
-typedef struct GBA_JoyAxisEvent {
+typedef struct PlatformJoyAxisEvent {
   uint8_t type;
   uint8_t axis;
   int16_t value;
-} GBA_JoyAxisEvent;
+} PlatformJoyAxisEvent;
 
-typedef union GBA_Event {
+typedef union PlatformEvent {
   uint8_t type;
-  GBA_KeyboardEvent key;
-  GBA_JoyButtonEvent jbutton;
-  GBA_JoyAxisEvent jaxis;
-} GBA_Event;
+  PlatformKeyboardEvent key;
+  PlatformJoyButtonEvent jbutton;
+  PlatformJoyAxisEvent jaxis;
+} PlatformEvent;
 
-typedef void (*GBA_AudioCallback)(void *userdata, uint8_t *stream, int len);
-typedef struct GBA_AudioSpec {
+typedef void (*PlatformAudioCallback)(void *userdata, uint8_t *stream, int len);
+typedef struct PlatformAudioSpec {
   int freq;
   uint16_t format;
   uint8_t channels;
@@ -61,42 +61,42 @@ typedef struct GBA_AudioSpec {
   uint16_t samples;
   uint16_t padding;
   uint32_t size;
-  GBA_AudioCallback callback;
+  PlatformAudioCallback callback;
   void *userdata;
-} GBA_AudioSpec;
+} PlatformAudioSpec;
 
-int GBA_Init(uint32_t flags);
-void GBA_Quit(void);
-int GBA_PollEvent(GBA_Event *event);
-int GBA_NumJoysticks(void);
-GBA_Joystick *GBA_JoystickOpen(int index);
-int GBA_JoystickEventState(int state);
+int PlatformInit(uint32_t flags);
+void PlatformQuit(void);
+int PlatformPollEvent(PlatformEvent *event);
+int PlatformNumJoysticks(void);
+PlatformJoystick *PlatformJoystickOpen(int index);
+int PlatformJoystickEventState(int state);
 
-GBA_Surface *GBA_SetVideoMode(int w, int h, int bpp, uint32_t flags);
-GBA_Surface *GBA_CreateRGBSurface(uint32_t flags, int w, int h, int depth,
+PlatformSurface *PlatformSetVideoMode(int w, int h, int bpp, uint32_t flags);
+PlatformSurface *PlatformCreateRGBSurface(uint32_t flags, int w, int h, int depth,
                                   uint32_t rmask, uint32_t gmask, uint32_t bmask, uint32_t amask);
-int GBA_BlitSurface(GBA_Surface *src, const GBA_Rect *srcrect, GBA_Surface *dst, GBA_Rect *dstrect);
-int GBA_Flip(GBA_Surface *screen);
-void GBA_FreeSurface(GBA_Surface *surface);
-int GBA_ShowCursor(int toggle);
-void GBA_SetCaption(const char *title, const char *icon);
+int PlatformBlitSurface(PlatformSurface *src, const PlatformRect *srcrect, PlatformSurface *dst, PlatformRect *dstrect);
+int PlatformFlip(PlatformSurface *screen);
+void PlatformFreeSurface(PlatformSurface *surface);
+int PlatformShowCursor(int toggle);
+void PlatformSetCaption(const char *title, const char *icon);
 
-GBA_Mutex *GBA_CreateMutex(void);
-void GBA_DestroyMutex(GBA_Mutex *mutex);
-int GBA_LockMutex(GBA_Mutex *mutex);
-int GBA_UnlockMutex(GBA_Mutex *mutex);
+PlatformMutex *PlatformCreateMutex(void);
+void PlatformDestroyMutex(PlatformMutex *mutex);
+int PlatformLockMutex(PlatformMutex *mutex);
+int PlatformUnlockMutex(PlatformMutex *mutex);
 
-GBA_Cond *GBA_CreateCond(void);
-void GBA_DestroyCond(GBA_Cond *cond);
-int GBA_CondWait(GBA_Cond *cond, GBA_Mutex *mutex);
-int GBA_CondSignal(GBA_Cond *cond);
+PlatformCond *PlatformCreateCond(void);
+void PlatformDestroyCond(PlatformCond *cond);
+int PlatformCondWait(PlatformCond *cond, PlatformMutex *mutex);
+int PlatformCondSignal(PlatformCond *cond);
 
-int GBA_OpenAudio(GBA_AudioSpec *desired, GBA_AudioSpec *obtained);
-void GBA_CloseAudio(void);
-void GBA_PauseAudio(int pause_on);
+int PlatformOpenAudio(PlatformAudioSpec *desired, PlatformAudioSpec *obtained);
+void PlatformCloseAudio(void);
+void PlatformPauseAudio(int pause_on);
 
-uint32_t GBA_GetTicks(void);
-void GBA_Delay(uint32_t ms);
+uint32_t PlatformGetTicks(void);
+void PlatformDelay(uint32_t ms);
 
 void gpsp_plat_init(void);
 void gpsp_plat_quit(void);

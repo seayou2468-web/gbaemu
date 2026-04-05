@@ -541,7 +541,7 @@ void init_input()
 
 #if defined(RPI_BUILD)
 
-u32 key_map(GBAKey key_sym)
+u32 key_map(PlatformKey key_sym)
 {
   switch(key_sym)
   {
@@ -583,7 +583,7 @@ u32 key_map(GBAKey key_sym)
 
 #if defined(PC_BUILD)
 
-u32 key_map(GBAKey key_sym)
+u32 key_map(PlatformKey key_sym)
 {
   switch(key_sym)
   {
@@ -653,12 +653,12 @@ u32 joy_map(u32 button)
 
 gui_action_type get_gui_input()
 {
-  GBA_Event event;
+  PlatformEvent event;
   gui_action_type gui_action = CURSOR_NONE;
 
   delay_us(30000);
 
-  while(GBA_PollEvent(&event))
+  while(PlatformPollEvent(&event))
   { 
     switch(event.type)
     {
@@ -744,9 +744,9 @@ gui_action_type get_gui_input()
 
 u32 update_input()
 {
-  GBA_Event event;
+  PlatformEvent event;
 
-  while(GBA_PollEvent(&event))
+  while(PlatformPollEvent(&event))
   {
     switch(event.type)
     {
@@ -885,12 +885,12 @@ u32 update_input()
 
 void init_input()
 {
-  u32 joystick_count = GBA_NumJoysticks();
+  u32 joystick_count = PlatformNumJoysticks();
 
   if(joystick_count > 0)
   {
-    GBA_JoystickOpen(0);
-    GBA_JoystickEventState(1);
+    PlatformJoystickOpen(0);
+    PlatformJoystickEventState(1);
   }
 }
 

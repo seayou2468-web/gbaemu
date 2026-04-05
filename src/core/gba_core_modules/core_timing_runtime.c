@@ -15,8 +15,8 @@ u32 sound_frequency = 22050;
 u32 sound_frequency = 44100;
 #endif
 
-GBA_Mutex *sound_mutex;
-static GBA_Cond *sound_cv;
+PlatformMutex *sound_mutex;
+static PlatformCond *sound_cv;
 
 #ifdef PSP_BUILD
 u32 audio_buffer_size_number = 1;
@@ -437,7 +437,7 @@ void update_gbc_sound(u32 cpu_ticks)
     gbc_sound_partial_ticks &= 0xFFFF;
   }
 
-  GBA_LockMutex(sound_mutex);
+  PlatformLockMutex(sound_mutex);
   if(synchronize_flag)
   {
     if(((gbc_sound_buffer_index - sound_buffer_base) % BUFFER_SIZE) >=
@@ -446,7 +446,7 @@ void update_gbc_sound(u32 cpu_ticks)
       while(((gbc_sound_buffer_index - sound_buffer_base) % BUFFER_SIZE) >
        (audio_buffer_size * 3 / 2))
       {
-        GBA_CondWait(sound_cv, sound_mutex);
+        PlatformCondWait(sound_cv, sound_mutex);
       }
 
 #ifdef PSP_BUILD
@@ -552,9 +552,9 @@ void update_gbc_sound(u32 cpu_ticks)
   gbc_sound_buffer_index =
    (gbc_sound_buffer_index + (buffer_ticks * 2)) % BUFFER_SIZE;
 
-  GBA_UnlockMutex(sound_mutex);
+  PlatformUnlockMutex(sound_mutex);
 
-  GBA_CondSignal(sound_cv);
+  PlatformCondSignal(sound_cv);
 }
 
 #define sound_copy_normal()                                                   \
@@ -594,12 +594,12 @@ void sound_callback(void *userdata, uint8_t *stream, int length)
   s16 *source;
   s32 current_sample;
 
-  GBA_LockMutex(sound_mutex);
+  PlatformLockMutex(sound_mutex);
 
   while(((gbc_sound_buffer_index - sound_buffer_base) % BUFFER_SIZE) <
    length && !sound_exit_flag)
   {
-    GBA_CondWait(sound_cv, sound_mutex);
+    PlatformCondWait(sound_cv, sound_mutex);
   }
 
   if(global_enable_audio)
@@ -635,9 +635,9 @@ void sound_callback(void *userdata, uint8_t *stream, int length)
     }
   }
 
-  GBA_CondSignal(sound_cv);
+  PlatformCondSignal(sound_cv);
 
-  GBA_UnlockMutex(sound_mutex);
+  PlatformUnlockMutex(sound_mutex);
 }
 
 // Special thanks to blarrg for the LSFR frequency used in Meridian, as posted
@@ -679,7 +679,7 @@ void reset_sound()
   gbc_sound_struct *gs = gbc_sound_channel;
   u32 i;
 
-  GBA_LockMutex(sound_mutex);
+  PlatformLockMutex(sound_mutex);
 
   sound_on = 0;
   sound_buffer_base = 0;
@@ -713,27 +713,27 @@ void reset_sound()
     gs->active_flag = 0;
   }
 
-  GBA_UnlockMutex(sound_mutex);
+  PlatformUnlockMutex(sound_mutex);
 }
 
 void sound_exit()
 {
   gbc_sound_buffer_index =
    (sound_buffer_base + audio_buffer_size) % BUFFER_SIZE;
-  GBA_PauseAudio(1);
+  PlatformPauseAudio(1);
   sound_exit_flag = 1;
-  GBA_CondSignal(sound_cv);
-  GBA_CloseAudio();
-  GBA_Delay(200);
-  GBA_DestroyMutex(sound_mutex);
+  PlatformCondSignal(sound_cv);
+  PlatformCloseAudio();
+  PlatformDelay(200);
+  PlatformDestroyMutex(sound_mutex);
   sound_mutex = NULL;
-  GBA_DestroyCond(sound_cv);
+  PlatformDestroyCond(sound_cv);
   sound_cv = NULL;
 }
 
 void init_sound(int need_reset)
 {
-  GBA_AudioSpec sound_settings;
+  PlatformAudioSpec sound_settings;
 
   sound_exit_flag = 0;
 #ifdef PSP_BUILD
@@ -743,7 +743,7 @@ void init_sound(int need_reset)
 //  audio_buffer_size = 16384;
 #endif
 
-  GBA_AudioSpec desired_spec =
+  PlatformAudioSpec desired_spec =
   {
     sound_frequency,
     0x8010,
@@ -756,10 +756,10 @@ void init_sound(int need_reset)
     NULL
   };
 
-  sound_mutex = GBA_CreateMutex();
-  sound_cv = GBA_CreateCond();
+  sound_mutex = PlatformCreateMutex();
+  sound_cv = PlatformCreateCond();
 
-  GBA_OpenAudio(&desired_spec, &sound_settings);
+  PlatformOpenAudio(&desired_spec, &sound_settings);
   sound_frequency = sound_settings.freq;
   audio_buffer_size = sound_settings.size;
   u32 i = audio_buffer_size / 16;
@@ -778,7 +778,7 @@ void init_sound(int need_reset)
   if (need_reset)
     reset_sound();
 
-  GBA_PauseAudio(0);
+  PlatformPauseAudio(0);
 }
 
 #define sound_savestate_builder(type)                                       \
