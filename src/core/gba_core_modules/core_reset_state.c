@@ -1,3015 +1,1822 @@
-#if defined(__cplusplus)
-// Imported from reference implementation: gbaPrint.cpp
-/* BEGIN gbaPrint.cpp */
+// Fully migrated from reference implementation/gui.c
 
-static bool agbPrintEnabled = false;
-static bool agbPrintProtect = false;
 
-bool agbPrintWrite(uint32_t address, uint16_t value)
-{
-    if (agbPrintEnabled) {
-        if (address == 0x9fe2ffe) { // protect
-            agbPrintProtect = (value != 0);
-            debuggerWriteHalfWord(address, value);
-            return true;
-        } else {
-            if (agbPrintProtect && ((address >= 0x9fe20f8 && address <= 0x9fe20ff) // control structure
-                                       || (address >= 0x8fd0000 && address <= 0x8fdffff)
-                                       || (address >= 0x9fd0000 && address <= 0x9fdffff))) {
-                debuggerWriteHalfWord(address, value);
-                return true;
-            }
-        }
-    }
-    return false;
-}
+#include "../../../reference implementation/common.h"
+#include "../../../reference implementation/font.h"
 
-void agbPrintReset()
-{
-    agbPrintProtect = false;
-}
+#ifndef _WIN32_WCE
 
-void agbPrintEnable(bool enable)
-{
-    agbPrintEnabled = enable;
-}
+#include <sys/stat.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <dirent.h>
 
-bool agbPrintIsEnabled()
-{
-    return agbPrintEnabled;
-}
-
-void agbPrintFlush()
-{
-    uint16_t get = debuggerReadHalfWord(0x9fe20fc);
-    uint16_t put = debuggerReadHalfWord(0x9fe20fe);
-
-    uint32_t address = (debuggerReadHalfWord(0x9fe20fa) << 16);
-    if (address != 0xfd0000 && address != 0x1fd0000) {
-#ifdef VBAM_ENABLE_DEBUGGER
-        dbgOutput("Did you forget to call AGBPrintInit?\n", 0);
 #endif
-        // get rid of the text otherwise we will continue to be called
-        debuggerWriteHalfWord(0x9fe20fc, put);
-        return;
-    }
 
-    uint8_t* data = &g_rom[address];
+#define MAX_PATH 1024
 
-    while (get != put) {
-        char c = data[get++];
-#ifdef VBAM_ENABLE_DEBUGGER
-        char s[2];
-        s[0] = c;
-        s[1] = 0;
-        if (systemVerbose & VERBOSE_AGBPRINT)
-            dbgOutput(s, 0);
-#endif
-        if (c == '\n')
-            break;
-    }
-    debuggerWriteHalfWord(0x9fe20fc, get);
-}
-/* END gbaPrint.cpp */
+// Blatantly stolen and trimmed from MZX (megazeux.sourceforge.net)
 
-// Imported from reference implementation: gbaElf.cpp
-/* BEGIN gbaElf.cpp */
-#include "../embedded_include/gba/gbaElf.h"
+#ifdef GP2X_BUILD
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#define FILE_LIST_ROWS 20
+#define FILE_LIST_POSITION 5
+#define DIR_LIST_POSITION 260
 
-#include "../embedded_include/base/message.h"
-#include "../embedded_include/base/port.h"
-#include "../embedded_include/gba/gba.h"
-#include "../embedded_include/gba/gbaGlobals.h"
-
-#define elfReadMemory(addr) \
-    READ32LE((&map[(addr) >> 24].address[(addr)&map[(addr) >> 24].mask]))
-
-#define DW_TAG_array_type 0x01
-#define DW_TAG_enumeration_type 0x04
-#define DW_TAG_formal_parameter 0x05
-#define DW_TAG_label 0x0a
-#define DW_TAG_lexical_block 0x0b
-#define DW_TAG_member 0x0d
-#define DW_TAG_pointer_type 0x0f
-#define DW_TAG_reference_type 0x10
-#define DW_TAG_compile_unit 0x11
-#define DW_TAG_structure_type 0x13
-#define DW_TAG_subroutine_type 0x15
-#define DW_TAG_typedef 0x16
-#define DW_TAG_union_type 0x17
-#define DW_TAG_unspecified_parameters 0x18
-#define DW_TAG_inheritance 0x1c
-#define DW_TAG_inlined_subroutine 0x1d
-#define DW_TAG_subrange_type 0x21
-#define DW_TAG_base_type 0x24
-#define DW_TAG_const_type 0x26
-#define DW_TAG_enumerator 0x28
-#define DW_TAG_subprogram 0x2e
-#define DW_TAG_variable 0x34
-#define DW_TAG_volatile_type 0x35
-
-#define DW_AT_sibling 0x01
-#define DW_AT_location 0x02
-#define DW_AT_name 0x03
-#define DW_AT_byte_size 0x0b
-#define DW_AT_bit_offset 0x0c
-#define DW_AT_bit_size 0x0d
-#define DW_AT_stmt_list 0x10
-#define DW_AT_low_pc 0x11
-#define DW_AT_high_pc 0x12
-#define DW_AT_language 0x13
-#define DW_AT_compdir 0x1b
-#define DW_AT_const_value 0x1c
-#define DW_AT_containing_type 0x1d
-#define DW_AT_inline 0x20
-#define DW_AT_producer 0x25
-#define DW_AT_prototyped 0x27
-#define DW_AT_upper_bound 0x2f
-#define DW_AT_abstract_origin 0x31
-#define DW_AT_accessibility 0x32
-#define DW_AT_artificial 0x34
-#define DW_AT_data_member_location 0x38
-#define DW_AT_decl_file 0x3a
-#define DW_AT_decl_line 0x3b
-#define DW_AT_declaration 0x3c
-#define DW_AT_encoding 0x3e
-#define DW_AT_external 0x3f
-#define DW_AT_frame_base 0x40
-#define DW_AT_macro_info 0x43
-#define DW_AT_specification 0x47
-#define DW_AT_type 0x49
-#define DW_AT_virtuality 0x4c
-#define DW_AT_vtable_elem_location 0x4d
-// DWARF 2.1/3.0 extensions
-#define DW_AT_entry_pc 0x52
-#define DW_AT_ranges 0x55
-// ARM Compiler extensions
-#define DW_AT_proc_body 0x2000
-#define DW_AT_save_offset 0x2001
-#define DW_AT_user_2002 0x2002
-// MIPS extensions
-#define DW_AT_MIPS_linkage_name 0x2007
-
-#define DW_FORM_addr 0x01
-#define DW_FORM_data2 0x05
-#define DW_FORM_data4 0x06
-#define DW_FORM_string 0x08
-#define DW_FORM_block 0x09
-#define DW_FORM_block1 0x0a
-#define DW_FORM_data1 0x0b
-#define DW_FORM_flag 0x0c
-#define DW_FORM_sdata 0x0d
-#define DW_FORM_strp 0x0e
-#define DW_FORM_udata 0x0f
-#define DW_FORM_ref_addr 0x10
-#define DW_FORM_ref4 0x13
-#define DW_FORM_ref_udata 0x15
-#define DW_FORM_indirect 0x16
-
-#define DW_OP_addr 0x03
-#define DW_OP_plus_uconst 0x23
-#define DW_OP_reg0 0x50
-#define DW_OP_reg1 0x51
-#define DW_OP_reg2 0x52
-#define DW_OP_reg3 0x53
-#define DW_OP_reg4 0x54
-#define DW_OP_reg5 0x55
-#define DW_OP_reg6 0x56
-#define DW_OP_reg7 0x57
-#define DW_OP_reg8 0x58
-#define DW_OP_reg9 0x59
-#define DW_OP_reg10 0x5a
-#define DW_OP_reg11 0x5b
-#define DW_OP_reg12 0x5c
-#define DW_OP_reg13 0x5d
-#define DW_OP_reg14 0x5e
-#define DW_OP_reg15 0x5f
-#define DW_OP_fbreg 0x91
-
-#define DW_LNS_extended_op 0x00
-#define DW_LNS_copy 0x01
-#define DW_LNS_advance_pc 0x02
-#define DW_LNS_advance_line 0x03
-#define DW_LNS_set_file 0x04
-#define DW_LNS_set_column 0x05
-#define DW_LNS_negate_stmt 0x06
-#define DW_LNS_set_basic_block 0x07
-#define DW_LNS_const_add_pc 0x08
-#define DW_LNS_fixed_advance_pc 0x09
-
-#define DW_LNE_end_sequence 0x01
-#define DW_LNE_set_address 0x02
-#define DW_LNE_define_file 0x03
-
-#define DW_CFA_advance_loc 0x01
-#define DW_CFA_offset 0x02
-#define DW_CFA_restore 0x03
-#define DW_CFA_set_loc 0x01
-#define DW_CFA_advance_loc1 0x02
-#define DW_CFA_advance_loc2 0x03
-#define DW_CFA_advance_loc4 0x04
-#define DW_CFA_offset_extended 0x05
-#define DW_CFA_restore_extended 0x06
-#define DW_CFA_undefined 0x07
-#define DW_CFA_same_value 0x08
-#define DW_CFA_register 0x09
-#define DW_CFA_remember_state 0x0a
-#define DW_CFA_restore_state 0x0b
-#define DW_CFA_def_cfa 0x0c
-#define DW_CFA_def_cfa_register 0x0d
-#define DW_CFA_def_cfa_offset 0x0e
-#define DW_CFA_nop 0x00
-
-#define CASE_TYPE_TAG             \
-    case DW_TAG_const_type:       \
-    case DW_TAG_volatile_type:    \
-    case DW_TAG_pointer_type:     \
-    case DW_TAG_base_type:        \
-    case DW_TAG_array_type:       \
-    case DW_TAG_structure_type:   \
-    case DW_TAG_union_type:       \
-    case DW_TAG_typedef:          \
-    case DW_TAG_subroutine_type:  \
-    case DW_TAG_enumeration_type: \
-    case DW_TAG_enumerator:       \
-    case DW_TAG_reference_type
-
-struct ELFcie {
-    ELFcie* next;
-    uint32_t offset;
-    uint8_t* augmentation;
-    uint32_t codeAlign;
-    int32_t dataAlign;
-    int returnAddress;
-    uint8_t* data;
-    uint32_t dataLen;
-};
-
-struct ELFfde {
-    ELFcie* cie;
-    uint32_t address;
-    uint32_t end;
-    uint8_t* data;
-    uint32_t dataLen;
-};
-
-enum ELFRegMode {
-    REG_NOT_SET,
-    REG_OFFSET,
-    REG_REGISTER
-};
-
-struct ELFFrameStateRegister {
-    ELFRegMode mode;
-    int reg;
-    int32_t offset;
-};
-
-struct ELFFrameStateRegisters {
-    ELFFrameStateRegister regs[16];
-    ELFFrameStateRegisters* previous;
-};
-
-enum ELFCfaMode {
-    CFA_NOT_SET,
-    CFA_REG_OFFSET
-};
-
-struct ELFFrameState {
-    ELFFrameStateRegisters registers;
-
-    ELFCfaMode cfaMode;
-    int cfaRegister;
-    int32_t cfaOffset;
-
-    uint32_t pc;
-
-    int dataAlign;
-    int codeAlign;
-    int returnAddress;
-};
-
-Symbol* elfSymbols = NULL;
-char* elfSymbolsStrTab = NULL;
-int elfSymbolsCount = 0;
-
-ELFSectionHeader** elfSectionHeaders = NULL;
-char* elfSectionHeadersStringTable = NULL;
-int elfSectionHeadersCount = 0;
-uint8_t* elfFileData = NULL;
-
-CompileUnit* elfCompileUnits = NULL;
-DebugInfo* elfDebugInfo = NULL;
-char* elfDebugStrings = NULL;
-
-ELFcie* elfCies = NULL;
-ELFfde** elfFdes = NULL;
-int elfFdeCount = 0;
-
-CompileUnit* elfCurrentUnit = NULL;
-
-uint32_t elfRead4Bytes(uint8_t*);
-uint16_t elfRead2Bytes(uint8_t*);
-
-CompileUnit* elfGetCompileUnit(uint32_t addr)
-{
-    if (elfCompileUnits) {
-        CompileUnit* unit = elfCompileUnits;
-        while (unit) {
-            if (unit->lowPC) {
-                if (addr >= unit->lowPC && addr < unit->highPC)
-                    return unit;
-            } else {
-                ARanges* r = unit->ranges;
-                if (r) {
-                    int count = r->count;
-                    for (int j = 0; j < count; j++) {
-                        if (addr >= r->ranges[j].lowPC && addr < r->ranges[j].highPC)
-                            return unit;
-                    }
-                }
-            }
-            unit = unit->next;
-        }
-    }
-    return NULL;
-}
-
-const char* elfGetAddressSymbol(uint32_t addr)
-{
-    static char buffer[256];		//defining globalscope here just feels so wrong
-
-    CompileUnit* unit = elfGetCompileUnit(addr);
-    // found unit, need to find function
-    if (unit) {
-        Function* func = unit->functions;
-        while (func) {
-            if (addr >= func->lowPC && addr < func->highPC) {
-                int offset = addr - func->lowPC;
-                const char* name = func->name;
-                if (!name)
-                    name = "";
-                if (offset)
-                    snprintf(buffer, 256, "%s+%d", name, offset);
-                else {
-#if __STDC_WANT_SECURE_LIB__
-                    strncpy_s(buffer, sizeof(buffer), name, 255); //strncpy_s does not allways append a '\0'
 #else
-                    strncpy(buffer, name, 255);		//strncpy does not allways append a '\0'
-#endif
-		    buffer[255] = '\0';
-		}
-                return buffer;
-            }
-            func = func->next;
-        }
-    }
 
-    if (elfSymbolsCount) {
-        for (int i = 0; i < elfSymbolsCount; i++) {
-            Symbol* s = &elfSymbols[i];
-            if ((addr >= s->value) && addr < (s->value + s->size)) {
-                int offset = addr - s->value;
-                const char* name = s->name;
-                if (name == NULL)
-                    name = "";
-                if (offset)
-                    snprintf(buffer, 256,"%s+%d", name, addr - s->value);
-                else {
-#if __STDC_WANT_SECURE_LIB__
-                    strncpy_s(buffer, sizeof(buffer), name, 255);
+#define FILE_LIST_ROWS 25
+#define FILE_LIST_POSITION 5
+#define DIR_LIST_POSITION (resolution_width * 3 / 4)
+
+#endif
+
+#ifdef PSP_BUILD
+
+#define COLOR_BG            color16(2, 8, 10)
+
+#define color16(red, green, blue)                                             \
+  (blue << 11) | (green << 5) | red                                           \
+
 #else
-                    strncpy(buffer, name, 255);
+
+#define COLOR_BG            color16(0, 0, 0)
+
+#define color16(red, green, blue)                                             \
+  (red << 11) | (green << 5) | blue                                           \
+
 #endif
-		    buffer[255] = '\0';
-		}
-                return buffer;
-            } else if (addr == s->value) {
-                if (s->name) {
-#if __STDC_WANT_SECURE_LIB__
-                    strncpy_s(buffer, sizeof(buffer), s->name, 255);
+
+#define COLOR_ROM_INFO      color16(22, 36, 26)
+#define COLOR_ACTIVE_ITEM   color16(31, 63, 31)
+#define COLOR_INACTIVE_ITEM color16(13, 40, 18)
+#define COLOR_FRAMESKIP_BAR color16(15, 31, 31)
+#define COLOR_HELP_TEXT     color16(16, 40, 24)
+
+#ifdef PSP_BUILD
+  static const char *clock_speed_options[] =
+  {
+    "33MHz", "66MHz", "100MHz", "133MHz", "166MHz", "200MHz", "233MHz",
+    "266MHz", "300MHz", "333MHz"
+  };
+  #define menu_get_clock_speed() \
+    clock_speed = (clock_speed_number + 1) * 33
+  #define get_clock_speed_number() \
+    clock_speed_number = (clock_speed / 33) - 1
+#elif defined(POLLUX_BUILD)
+  static const char *clock_speed_options[] =
+  {
+    "300MHz", "333MHz", "366MHz", "400MHz", "433MHz",
+    "466MHz", "500MHz", "533MHz", "566MHz", "600MHz",
+    "633MHz", "666MHz", "700MHz", "733MHz", "766MHz",
+    "800MHz", "833MHz", "866MHz", "900MHz"
+  };
+  #define menu_get_clock_speed() \
+    clock_speed = 300 + (clock_speed_number * 3333) / 100
+  #define get_clock_speed_number() \
+    clock_speed_number = (clock_speed - 300) / 33
+#elif defined(GP2X_BUILD)
+  static const char *clock_speed_options[] =
+  {
+    "150MHz", "160MHz", "170MHz", "180MHz", "190MHz",
+    "200MHz", "210MHz", "220MHz", "230MHz", "240MHz",
+    "250MHz", "260MHz", "270MHz", "280MHz", "290MHz"
+  };
+  #define menu_get_clock_speed() \
+    clock_speed = 150 + clock_speed_number * 10
+  #define get_clock_speed_number() \
+    clock_speed_number = (clock_speed - 150) / 10
 #else
-                    strncpy(buffer, s->name, 255);
+  static const char *clock_speed_options[] =
+  {
+    "0"
+  };
+  #define menu_get_clock_speed()
+  #define get_clock_speed_number()
 #endif
-		    buffer[255] = '\0';
-		} else
-#if __STDC_WANT_SECURE_LIB__
-                    strcpy_s(buffer, sizeof(buffer), "");
+
+
+int sort_function(const void *dest_str_ptr, const void *src_str_ptr)
+{
+  char *dest_str = *((char **)dest_str_ptr);
+  char *src_str = *((char **)src_str_ptr);
+
+  if(src_str[0] == '.')
+    return 1;
+
+  if(dest_str[0] == '.')
+    return -1;
+
+  return strcasecmp(dest_str, src_str);
+}
+
+s32 load_file(const char **wildcards, char *result)
+{
+  DIR *current_dir;
+  struct dirent *current_file;
+  struct stat file_info;
+  char current_dir_name[MAX_PATH];
+  char current_dir_short[81];
+  u32 current_dir_length;
+  u32 total_filenames_allocated;
+  u32 total_dirnames_allocated;
+  char **file_list;
+  char **dir_list;
+  u32 num_files;
+  u32 num_dirs;
+  char *file_name;
+  u32 file_name_length;
+  u32 ext_pos = -1;
+  u32 chosen_file, chosen_dir;
+  s32 return_value = 1;
+  s32 current_file_selection;
+  s32 current_file_scroll_value;
+  u32 current_dir_selection;
+  u32 current_dir_scroll_value;
+  s32 current_file_in_scroll;
+  u32 current_dir_in_scroll;
+  u32 current_file_number, current_dir_number;
+  u32 current_column = 0;
+  u32 repeat;
+  u32 i;
+  gui_action_type gui_action;
+
+  while(return_value == 1)
+  {
+    current_file_selection = 0;
+    current_file_scroll_value = 0;
+    current_dir_selection = 0;
+    current_dir_scroll_value = 0;
+    current_file_in_scroll = 0;
+    current_dir_in_scroll = 0;
+
+    total_filenames_allocated = 32;
+    total_dirnames_allocated = 32;
+    file_list = (char **)malloc(sizeof(char *) * 32);
+    dir_list = (char **)malloc(sizeof(char *) * 32);
+    memset(file_list, 0, sizeof(char *) * 32);
+    memset(dir_list, 0, sizeof(char *) * 32);
+
+    num_files = 0;
+    num_dirs = 0;
+    chosen_file = 0;
+    chosen_dir = 0;
+
+    getcwd(current_dir_name, MAX_PATH);
+
+    current_dir = opendir(current_dir_name);
+
+    do
+    {
+      if(current_dir)
+        current_file = readdir(current_dir);
+      else
+        current_file = NULL;
+
+      if(current_file)
+      {
+        file_name = current_file->d_name;
+        file_name_length = strlen(file_name);
+
+        if((stat(file_name, &file_info) >= 0) &&
+         ((file_name[0] != '.') || (file_name[1] == '.')))
+        {
+          if(S_ISDIR(file_info.st_mode))
+          {
+            dir_list[num_dirs] = malloc(file_name_length + 1);
+
+            sprintf(dir_list[num_dirs], "%s", file_name);
+
+            num_dirs++;
+          }
+          else
+          {
+            // Must match one of the wildcards, also ignore the .
+            if(file_name_length >= 4)
+            {
+              if(file_name[file_name_length - 4] == '.')
+                ext_pos = file_name_length - 4;
+              else
+
+              if(file_name[file_name_length - 3] == '.')
+                ext_pos = file_name_length - 3;
+
+              else
+                ext_pos = 0;
+
+              for(i = 0; wildcards[i] != NULL; i++)
+              {
+                if(!strcasecmp((file_name + ext_pos),
+                 wildcards[i]))
+                {
+                  file_list[num_files] =
+                   malloc(file_name_length + 1);
+
+                  sprintf(file_list[num_files], "%s", file_name);
+
+                  num_files++;
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        if(num_files == total_filenames_allocated)
+        {
+          file_list = (char **)realloc(file_list, sizeof(char *) *
+           total_filenames_allocated * 2);
+          memset(file_list + total_filenames_allocated, 0,
+           sizeof(char *) * total_filenames_allocated);
+          total_filenames_allocated *= 2;
+        }
+
+        if(num_dirs == total_dirnames_allocated)
+        {
+          dir_list = (char **)realloc(dir_list, sizeof(char *) *
+           total_dirnames_allocated * 2);
+          memset(dir_list + total_dirnames_allocated, 0,
+           sizeof(char *) * total_dirnames_allocated);
+          total_dirnames_allocated *= 2;
+        }
+      }
+    } while(current_file);
+
+    qsort((void *)file_list, num_files, sizeof(char *), sort_function);
+    qsort((void *)dir_list, num_dirs, sizeof(char *), sort_function);
+
+    closedir(current_dir);
+
+    current_dir_length = strlen(current_dir_name);
+
+    if(current_dir_length > 80)
+    {
+
+#ifdef GP2X_BUILD
+    snprintf(current_dir_short, 80,
+     "...%s", current_dir_name + current_dir_length - 77);
 #else
-                    strcpy(buffer, "");
+    memcpy(current_dir_short, "...", 3);
+      memcpy(current_dir_short + 3,
+       current_dir_name + current_dir_length - 77, 77);
+      current_dir_short[80] = 0;
 #endif
-                return buffer;
-            }
-        }
     }
-    return "";
-}
-
-bool elfFindLineInModule(uint32_t* addr, const char* name, int line)
-{
-    CompileUnit* unit = elfCompileUnits;
-
-    while (unit) {
-        if (unit->lineInfoTable) {
-            int i;
-            int count = unit->lineInfoTable->fileCount;
-            char* found = NULL;
-            for (i = 0; i < count; i++) {
-                if (strcmp(name, unit->lineInfoTable->files[i]) == 0) {
-                    found = unit->lineInfoTable->files[i];
-                    break;
-                }
-            }
-            // found a matching filename... try to find line now
-            if (found) {
-                LineInfoItem* table = unit->lineInfoTable->lines;
-                count = unit->lineInfoTable->number;
-                for (i = 0; i < count; i++) {
-                    if (table[i].file == found && table[i].line == line) {
-                        *addr = table[i].address;
-                        return true;
-                    }
-                }
-                // we can only find a single match
-                return false;
-            }
-        }
-        unit = unit->next;
-    }
-    return false;
-}
-
-int elfFindLine(CompileUnit* unit, Function* /* func */, uint32_t addr, const char** f)
-{
-    int currentLine = -1;
-    if (unit->hasLineInfo) {
-        int count = unit->lineInfoTable->number;
-        LineInfoItem* table = unit->lineInfoTable->lines;
-        int i;
-        for (i = 0; i < count; i++) {
-            if (addr <= table[i].address)
-                break;
-        }
-        if (i == count)
-            i--;
-        *f = table[i].file;
-        currentLine = table[i].line;
-    }
-    return currentLine;
-}
-
-bool elfFindLineInUnit(uint32_t* addr, CompileUnit* unit, int line)
-{
-    if (unit->hasLineInfo) {
-        int count = unit->lineInfoTable->number;
-        LineInfoItem* table = unit->lineInfoTable->lines;
-        int i;
-        for (i = 0; i < count; i++) {
-            if (line == table[i].line) {
-                *addr = table[i].address;
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-bool elfGetCurrentFunction(uint32_t addr, Function** f, CompileUnit** u)
-{
-    CompileUnit* unit = elfGetCompileUnit(addr);
-    // found unit, need to find function
-    if (unit) {
-        Function* func = unit->functions;
-        while (func) {
-            if (addr >= func->lowPC && addr < func->highPC) {
-                *f = func;
-                *u = unit;
-                return true;
-            }
-            func = func->next;
-        }
-    }
-    return false;
-}
-
-bool elfGetObject(const char* name, Function* f, CompileUnit* u, Object** o)
-{
-    if (f && u) {
-        Object* v = f->variables;
-
-        while (v) {
-            if (strcmp(name, v->name) == 0) {
-                *o = v;
-                return true;
-            }
-            v = v->next;
-        }
-        v = f->parameters;
-        while (v) {
-            if (strcmp(name, v->name) == 0) {
-                *o = v;
-                return true;
-            }
-            v = v->next;
-        }
-        v = u->variables;
-        while (v) {
-            if (strcmp(name, v->name) == 0) {
-                *o = v;
-                return true;
-            }
-            v = v->next;
-        }
+    else
+    {
+#ifdef GP2X_BUILD
+      snprintf(current_dir_short, 80, "%s", current_dir_name);
+#else
+      memcpy(current_dir_short, current_dir_name,
+       current_dir_length + 1);
+#endif
     }
 
-    CompileUnit* c = elfCompileUnits;
+    repeat = 1;
 
-    while (c) {
-        if (c != u) {
-            Object* v = c->variables;
-            while (v) {
-                if (strcmp(name, v->name) == 0) {
-                    *o = v;
-                    return true;
-                }
-                v = v->next;
+    if(num_files == 0)
+      current_column = 1;
+
+    clear_screen(COLOR_BG);
+  {
+    while(repeat)
+    {
+      flip_screen();
+
+      print_string(current_dir_short, COLOR_ACTIVE_ITEM, COLOR_BG, 0, 0);
+#ifdef GP2X_BUILD
+      print_string("Press X to return to the main menu.",
+       COLOR_HELP_TEXT, COLOR_BG, 20, 220);
+#else
+      print_string("Press X to return to the main menu.",
+       COLOR_HELP_TEXT, COLOR_BG, 20, 260);
+#endif
+
+      for(i = 0, current_file_number = i + current_file_scroll_value;
+       i < FILE_LIST_ROWS; i++, current_file_number++)
+      {
+        if(current_file_number < num_files)
+        {
+          if((current_file_number == current_file_selection) &&
+           (current_column == 0))
+          {
+            print_string(file_list[current_file_number], COLOR_ACTIVE_ITEM,
+             COLOR_BG, FILE_LIST_POSITION, ((i + 1) * 10));
+          }
+          else
+          {
+            print_string(file_list[current_file_number], COLOR_INACTIVE_ITEM,
+             COLOR_BG, FILE_LIST_POSITION, ((i + 1) * 10));
+          }
+        }
+      }
+
+      for(i = 0, current_dir_number = i + current_dir_scroll_value;
+       i < FILE_LIST_ROWS; i++, current_dir_number++)
+      {
+        if(current_dir_number < num_dirs)
+        {
+          if((current_dir_number == current_dir_selection) &&
+           (current_column == 1))
+          {
+            print_string(dir_list[current_dir_number], COLOR_ACTIVE_ITEM,
+             COLOR_BG, DIR_LIST_POSITION, ((i + 1) * 10));
+          }
+          else
+          {
+            print_string(dir_list[current_dir_number], COLOR_INACTIVE_ITEM,
+             COLOR_BG, DIR_LIST_POSITION, ((i + 1) * 10));
+          }
+        }
+      }
+
+      gui_action = get_gui_input();
+
+      switch(gui_action)
+      {
+        case CURSOR_DOWN:
+          if(current_column == 0)
+          {
+            if(current_file_selection < (num_files - 1))
+            {
+              current_file_selection++;
+              if(current_file_in_scroll == (FILE_LIST_ROWS - 1))
+              {
+                clear_screen(COLOR_BG);
+                current_file_scroll_value++;
+              }
+              else
+              {
+                current_file_in_scroll++;
+              }
             }
-        }
-        c = c->next;
-    }
-
-    return false;
-}
-
-const char* elfGetSymbol(int i, uint32_t* value, uint32_t* size, int* type)
-{
-    if (i < elfSymbolsCount) {
-        Symbol* s = &elfSymbols[i];
-        *value = s->value;
-        *size = s->size;
-        *type = s->type;
-        return s->name;
-    }
-    return NULL;
-}
-
-bool elfGetSymbolAddress(const char* sym, uint32_t* addr, uint32_t* size, int* type)
-{
-    if (elfSymbolsCount) {
-        for (int i = 0; i < elfSymbolsCount; i++) {
-            Symbol* s = &elfSymbols[i];
-            if (strcmp(sym, s->name) == 0) {
-                *addr = s->value;
-                *size = s->size;
-                *type = s->type;
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-ELFfde* elfGetFde(uint32_t address)
-{
-    if (elfFdes) {
-        int i;
-        for (i = 0; i < elfFdeCount; i++) {
-            if (address >= elfFdes[i]->address && address < elfFdes[i]->end) {
-                return elfFdes[i];
-            }
-        }
-    }
-
-    return NULL;
-}
-
-void elfExecuteCFAInstructions(ELFFrameState* state, uint8_t* data, uint32_t len,
-    uint32_t pc)
-{
-    uint8_t* end = data + len;
-    int _bytes;
-    int _reg;
-    ELFFrameStateRegisters* fs;
-
-    while (data < end && state->pc < pc) {
-        uint8_t op = *data++;
-
-        switch (op >> 6) {
-        case DW_CFA_advance_loc:
-            state->pc += (op & 0x3f) * state->codeAlign;
-            break;
-        case DW_CFA_offset:
-            _reg = op & 0x3f;
-            state->registers.regs[_reg].mode = REG_OFFSET;
-            state->registers.regs[_reg].offset = state->dataAlign * (int32_t)elfReadLEB128(data, &_bytes);
-            data += _bytes;
-            break;
-        case DW_CFA_restore:
-            // we don't care much about the other possible settings,
-            // so just setting to unset is enough for now
-            state->registers.regs[op & 0x3f].mode = REG_NOT_SET;
-            break;
-        case 0:
-            switch (op & 0x3f) {
-            case DW_CFA_nop:
-                break;
-            case DW_CFA_advance_loc1:
-                state->pc += state->codeAlign * (*data++);
-                break;
-            case DW_CFA_advance_loc2:
-                state->pc += state->codeAlign * elfRead2Bytes(data);
-                data += 2;
-                break;
-            case DW_CFA_advance_loc4:
-                state->pc += state->codeAlign * elfRead4Bytes(data);
-                data += 4;
-                break;
-            case DW_CFA_offset_extended:
-                _reg = elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                state->registers.regs[_reg].mode = REG_OFFSET;
-                state->registers.regs[_reg].offset = state->dataAlign * (int32_t)elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                break;
-            case DW_CFA_restore_extended:
-            case DW_CFA_undefined:
-            case DW_CFA_same_value:
-                _reg = elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                state->registers.regs[_reg].mode = REG_NOT_SET;
-                break;
-            case DW_CFA_register:
-                _reg = elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                state->registers.regs[_reg].mode = REG_REGISTER;
-                state->registers.regs[_reg].reg = elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                break;
-            case DW_CFA_remember_state:
-                fs = (ELFFrameStateRegisters*)calloc(1,
-                    sizeof(ELFFrameStateRegisters));
-                memcpy(fs, &state->registers, sizeof(ELFFrameStateRegisters));
-                state->registers.previous = fs;
-                break;
-            case DW_CFA_restore_state:
-                if (state->registers.previous == NULL) {
-                    printf("Error: previous frame state is NULL.\n");
-                    return;
-                }
-                fs = state->registers.previous;
-                memcpy(&state->registers, fs, sizeof(ELFFrameStateRegisters));
-                free(fs);
-                break;
-            case DW_CFA_def_cfa:
-                state->cfaRegister = elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                state->cfaOffset = (int32_t)elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                state->cfaMode = CFA_REG_OFFSET;
-                break;
-            case DW_CFA_def_cfa_register:
-                state->cfaRegister = elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                state->cfaMode = CFA_REG_OFFSET;
-                break;
-            case DW_CFA_def_cfa_offset:
-                state->cfaOffset = (int32_t)elfReadLEB128(data, &_bytes);
-                data += _bytes;
-                state->cfaMode = CFA_REG_OFFSET;
-                break;
-            default:
-                printf("Unknown CFA opcode %08x\n", op);
-                return;
-            }
-            break;
-        default:
-            printf("Unknown CFA opcode %08x\n", op);
-            return;
-        }
-    }
-}
-
-ELFFrameState* elfGetFrameState(ELFfde* fde, uint32_t address)
-{
-    ELFFrameState* state = (ELFFrameState*)calloc(1, sizeof(ELFFrameState));
-    state->pc = fde->address;
-    state->dataAlign = fde->cie->dataAlign;
-    state->codeAlign = fde->cie->codeAlign;
-    state->returnAddress = fde->cie->returnAddress;
-
-    elfExecuteCFAInstructions(state,
-        fde->cie->data,
-        fde->cie->dataLen,
-        0xffffffff);
-    elfExecuteCFAInstructions(state,
-        fde->data,
-        fde->dataLen,
-        address);
-
-    return state;
-}
-
-void elfPrintCallChain(uint32_t address)
-{
-    int count = 1;
-
-    reg_pair regs[15];
-    reg_pair newRegs[15];
-
-    memcpy(&regs[0], &reg[0], sizeof(reg_pair) * 15);
-
-    while (count < 20) {
-        const char* addr = elfGetAddressSymbol(address);
-        if (*addr == 0)
-            addr = "???";
-
-        printf("%08x %s\n", address, addr);
-
-        ELFfde* fde = elfGetFde(address);
-
-        if (fde == NULL) {
-            break;
-        }
-
-        ELFFrameState* state = elfGetFrameState(fde, address);
-
-        if (!state) {
-            break;
-        }
-
-        if (state->cfaMode == CFA_REG_OFFSET) {
-            memcpy(&newRegs[0], &regs[0], sizeof(reg_pair) * 15);
-            uint32_t _addr = 0;
-            for (int i = 0; i < 15; i++) {
-                ELFFrameStateRegister* r = &state->registers.regs[i];
-
-                switch (r->mode) {
-                case REG_NOT_SET:
-                    newRegs[i].I = regs[i].I;
-                    break;
-                case REG_OFFSET:
-                    newRegs[i].I = elfReadMemory(regs[state->cfaRegister].I + state->cfaOffset + r->offset);
-                    break;
-                case REG_REGISTER:
-                    newRegs[i].I = regs[r->reg].I;
-                    break;
-                default:
-                    printf("Unknown register mode: %d\n", r->mode);
-                    break;
-                }
-            }
-            memcpy(regs, newRegs, sizeof(reg_pair) * 15);
-            _addr = newRegs[14].I;
-            _addr &= 0xfffffffe;
-            address = _addr;
-            count++;
-        } else {
-            printf("CFA not set\n");
-            break;
-        }
-        if (state->registers.previous) {
-            ELFFrameStateRegisters* prev = state->registers.previous;
-
-            while (prev) {
-                ELFFrameStateRegisters* p = prev->previous;
-                free(prev);
-                prev = p;
-            }
-        }
-        free(state);
-    }
-}
-
-uint32_t elfDecodeLocation(Function* f, ELFBlock* o, LocationType* type, uint32_t base)
-{
-    uint32_t framebase = 0;
-    if (f && f->frameBase) {
-        ELFBlock* b = f->frameBase;
-        switch (*b->data) {
-        case DW_OP_reg0:
-        case DW_OP_reg1:
-        case DW_OP_reg2:
-        case DW_OP_reg3:
-        case DW_OP_reg4:
-        case DW_OP_reg5:
-        case DW_OP_reg6:
-        case DW_OP_reg7:
-        case DW_OP_reg8:
-        case DW_OP_reg9:
-        case DW_OP_reg10:
-        case DW_OP_reg11:
-        case DW_OP_reg12:
-        case DW_OP_reg13:
-        case DW_OP_reg14:
-        case DW_OP_reg15:
-            framebase = reg[*b->data - 0x50].I;
-            break;
-        default:
-            fprintf(stderr, "Unknown frameBase %02x\n", *b->data);
-            break;
-        }
-    }
-
-    ELFBlock* loc = o;
-    uint32_t location = 0;
-    int _bytes = 0;
-    if (loc) {
-        switch (*loc->data) {
-        case DW_OP_addr:
-            location = elfRead4Bytes(loc->data + 1);
-            *type = LOCATION_memory;
-            break;
-        case DW_OP_plus_uconst:
-            location = base + elfReadLEB128(loc->data + 1, &_bytes);
-            *type = LOCATION_memory;
-            break;
-        case DW_OP_reg0:
-        case DW_OP_reg1:
-        case DW_OP_reg2:
-        case DW_OP_reg3:
-        case DW_OP_reg4:
-        case DW_OP_reg5:
-        case DW_OP_reg6:
-        case DW_OP_reg7:
-        case DW_OP_reg8:
-        case DW_OP_reg9:
-        case DW_OP_reg10:
-        case DW_OP_reg11:
-        case DW_OP_reg12:
-        case DW_OP_reg13:
-        case DW_OP_reg14:
-        case DW_OP_reg15:
-            location = *loc->data - 0x50;
-            *type = LOCATION_register;
-            break;
-        case DW_OP_fbreg: {
-            int bytes;
-            int32_t off = elfReadSignedLEB128(loc->data + 1, &bytes);
-            location = framebase + off;
-            *type = LOCATION_memory;
-        } break;
-        default:
-            fprintf(stderr, "Unknown location %02x\n", *loc->data);
-            break;
-        }
-    }
-    return location;
-}
-
-uint32_t elfDecodeLocation(Function* f, ELFBlock* o, LocationType* type)
-{
-    return elfDecodeLocation(f, o, type, 0);
-}
-
-// reading function
-
-uint32_t elfRead4Bytes(uint8_t* data)
-{
-    uint32_t value = *data++;
-    value |= (*data++ << 8);
-    value |= (*data++ << 16);
-    value |= (*data << 24);
-    return value;
-}
-
-uint16_t elfRead2Bytes(uint8_t* data)
-{
-    uint16_t value = *data++;
-    value |= (*data << 8);
-    return value;
-}
-
-char* elfReadString(uint8_t* data, int* bytesRead)
-{
-    if (*data == 0) {
-        *bytesRead = 1;
-        return NULL;
-    }
-    *bytesRead = (int)strlen((char*)data) + 1;
-    return (char*)data;
-}
-
-int32_t elfReadSignedLEB128(uint8_t* data, int* bytesRead)
-{
-    int32_t result = 0;
-    int shift = 0;
-    int count = 0;
-
-    uint8_t byte;
-    do {
-        byte = *data++;
-        count++;
-        result |= (byte & 0x7f) << shift;
-        shift += 7;
-    } while (byte & 0x80);
-    if ((shift < 32) && (byte & 0x40))
-        result |= -(1 << shift);
-    *bytesRead = count;
-    return result;
-}
-
-uint32_t elfReadLEB128(uint8_t* data, int* bytesRead)
-{
-    uint32_t result = 0;
-    int shift = 0;
-    int count = 0;
-    uint8_t byte;
-    do {
-        byte = *data++;
-        count++;
-        result |= (byte & 0x7f) << shift;
-        shift += 7;
-    } while (byte & 0x80);
-    *bytesRead = count;
-    return result;
-}
-
-uint8_t* elfReadSection(uint8_t* data, ELFSectionHeader* sh)
-{
-    return data + READ32LE(&sh->offset);
-}
-
-ELFSectionHeader* elfGetSectionByName(const char* name)
-{
-    if (elfSectionHeadersStringTable == NULL)
-        return NULL;
-
-    for (int i = 0; i < elfSectionHeadersCount; i++) {
-        if (strcmp(name,
-                &elfSectionHeadersStringTable[READ32LE(&elfSectionHeaders[i]->name)])
-            == 0) {
-            return elfSectionHeaders[i];
-        }
-    }
-    return NULL;
-}
-
-ELFSectionHeader* elfGetSectionByNumber(int number)
-{
-    if (number < elfSectionHeadersCount) {
-        return elfSectionHeaders[number];
-    }
-    return NULL;
-}
-
-CompileUnit* elfGetCompileUnitForData(uint8_t* data)
-{
-    uint8_t* end = elfCurrentUnit->top + 4 + elfCurrentUnit->length;
-
-    if (data >= elfCurrentUnit->top && data < end)
-        return elfCurrentUnit;
-
-    CompileUnit* unit = elfCompileUnits;
-
-    while (unit) {
-        end = unit->top + 4 + unit->length;
-
-        if (data >= unit->top && data < end)
-            return unit;
-
-        unit = unit->next;
-    }
-
-    printf("Error: cannot find reference to compile unit at offset %08x\n",
-        (int)(data - elfDebugInfo->infodata));
-    exit(-1);
-}
-
-uint8_t* elfReadAttribute(uint8_t* data, ELFAttr* attr)
-{
-    int bytes;
-    int form = attr->form;
-start:
-    switch (form) {
-    case DW_FORM_addr:
-        attr->value = elfRead4Bytes(data);
-        data += 4;
-        break;
-    case DW_FORM_data2:
-        attr->value = elfRead2Bytes(data);
-        data += 2;
-        break;
-    case DW_FORM_data4:
-        attr->value = elfRead4Bytes(data);
-        data += 4;
-        break;
-    case DW_FORM_string:
-        attr->string = (char*)data;
-        data += strlen(attr->string) + 1;
-        break;
-    case DW_FORM_strp:
-        attr->string = elfDebugStrings + elfRead4Bytes(data);
-        data += 4;
-        break;
-    case DW_FORM_block:
-        attr->block = (ELFBlock*)malloc(sizeof(ELFBlock));
-        attr->block->length = elfReadLEB128(data, &bytes);
-        data += bytes;
-        attr->block->data = data;
-        data += attr->block->length;
-        break;
-    case DW_FORM_block1:
-        attr->block = (ELFBlock*)malloc(sizeof(ELFBlock));
-        attr->block->length = *data++;
-        attr->block->data = data;
-        data += attr->block->length;
-        break;
-    case DW_FORM_data1:
-        attr->value = *data++;
-        break;
-    case DW_FORM_flag:
-        attr->flag = (*data++) ? true : false;
-        break;
-    case DW_FORM_sdata:
-        attr->value = elfReadSignedLEB128(data, &bytes);
-        data += bytes;
-        break;
-    case DW_FORM_udata:
-        attr->value = elfReadLEB128(data, &bytes);
-        data += bytes;
-        break;
-    case DW_FORM_ref_addr:
-        attr->value = (uint32_t)((elfDebugInfo->infodata + elfRead4Bytes(data)) - elfGetCompileUnitForData(data)->top);
-        data += 4;
-        break;
-    case DW_FORM_ref4:
-        attr->value = elfRead4Bytes(data);
-        data += 4;
-        break;
-    case DW_FORM_ref_udata:
-        attr->value = (uint32_t)((elfDebugInfo->infodata + (elfGetCompileUnitForData(data)->top - elfDebugInfo->infodata) + elfReadLEB128(data, &bytes)) - elfCurrentUnit->top);
-        data += bytes;
-        break;
-    case DW_FORM_indirect:
-        form = elfReadLEB128(data, &bytes);
-        data += bytes;
-        goto start;
-    default:
-        fprintf(stderr, "Unsupported FORM %02x\n", form);
-        exit(-1);
-    }
-    return data;
-}
-
-ELFAbbrev* elfGetAbbrev(ELFAbbrev** table, uint32_t number)
-{
-    int hash = number % 121;
-
-    ELFAbbrev* abbrev = table[hash];
-
-    while (abbrev) {
-        if (abbrev->number == number)
-            return abbrev;
-        abbrev = abbrev->next;
-    }
-    return NULL;
-}
-
-ELFAbbrev** elfReadAbbrevs(uint8_t* data, uint32_t offset)
-{
-    data += offset;
-    ELFAbbrev** abbrevs = (ELFAbbrev**)calloc(sizeof(ELFAbbrev*) * 121, 1);
-    int bytes = 0;
-    uint32_t number = elfReadLEB128(data, &bytes);
-    data += bytes;
-    while (number) {
-        ELFAbbrev* abbrev = (ELFAbbrev*)calloc(1, sizeof(ELFAbbrev));
-
-        // read tag information
-        abbrev->number = number;
-        abbrev->tag = elfReadLEB128(data, &bytes);
-        data += bytes;
-        abbrev->hasChildren = *data++ ? true : false;
-
-        // read attributes
-        int name = elfReadLEB128(data, &bytes);
-        data += bytes;
-        int form = elfReadLEB128(data, &bytes);
-        data += bytes;
-
-        while (name) {
-            if ((abbrev->numAttrs % 4) == 0) {
-                abbrev->attrs = (ELFAttr*)realloc(abbrev->attrs,
-                    (abbrev->numAttrs + 4) * sizeof(ELFAttr));
-            }
-            abbrev->attrs[abbrev->numAttrs].name = name;
-            abbrev->attrs[abbrev->numAttrs++].form = form;
-
-            name = elfReadLEB128(data, &bytes);
-            data += bytes;
-            form = elfReadLEB128(data, &bytes);
-            data += bytes;
-        }
-
-        int hash = number % 121;
-        abbrev->next = abbrevs[hash];
-        abbrevs[hash] = abbrev;
-
-        number = elfReadLEB128(data, &bytes);
-        data += bytes;
-
-        if (elfGetAbbrev(abbrevs, number) != NULL)
-            break;
-    }
-
-    return abbrevs;
-}
-
-void elfParseCFA(uint8_t* top)
-{
-    ELFSectionHeader* h = elfGetSectionByName(".debug_frame");
-
-    if (h == NULL) {
-        return;
-    }
-
-    uint8_t* data = elfReadSection(top, h);
-
-    uint8_t* topOffset = data;
-
-    uint8_t* end = data + READ32LE(&h->size);
-
-    ELFcie* cies = NULL;
-
-    while (data < end) {
-        uint32_t offset = (uint32_t)(data - topOffset);
-        uint32_t len = elfRead4Bytes(data);
-        data += 4;
-
-        uint8_t* dataEnd = data + len;
-
-        uint32_t id = elfRead4Bytes(data);
-        data += 4;
-
-        if (id == 0xffffffff) {
-            // skip version
-            (*data)++;
-
-            ELFcie* cie = (ELFcie*)calloc(1, sizeof(ELFcie));
-
-            cie->next = cies;
-            cies = cie;
-
-            cie->offset = offset;
-
-            cie->augmentation = data;
-            while (*data)
-                data++;
-            data++;
-
-            if (*cie->augmentation) {
-                fprintf(stderr, "Error: augmentation not supported\n");
-                exit(-1);
-            }
-
-            int bytes;
-            cie->codeAlign = elfReadLEB128(data, &bytes);
-            data += bytes;
-
-            cie->dataAlign = elfReadSignedLEB128(data, &bytes);
-            data += bytes;
-
-            cie->returnAddress = *data++;
-
-            cie->data = data;
-            cie->dataLen = (uint32_t)(dataEnd - data);
-        } else {
-            ELFfde* fde = (ELFfde*)calloc(1, sizeof(ELFfde));
-
-            ELFcie* cie = cies;
-
-            while (cie != NULL) {
-                if (cie->offset == id)
-                    break;
-                cie = cie->next;
-            }
-
-            if (!cie) {
-                fprintf(stderr, "Cannot find CIE %08x\n", id);
-                exit(-1);
-            }
-
-            fde->cie = cie;
-
-            fde->address = elfRead4Bytes(data);
-            data += 4;
-
-            fde->end = fde->address + elfRead4Bytes(data);
-            data += 4;
-
-            fde->data = data;
-            fde->dataLen = (uint32_t)(dataEnd - data);
-
-            if ((elfFdeCount % 10) == 0) {
-                elfFdes = (ELFfde**)realloc(elfFdes, (elfFdeCount + 10) * sizeof(ELFfde*));
-            }
-            elfFdes[elfFdeCount++] = fde;
-        }
-        data = dataEnd;
-    }
-
-    elfCies = cies;
-}
-
-void elfAddLine(LineInfo* l, uint32_t a, int file, int line, int* max)
-{
-    if (l->number == *max) {
-        *max += 1000;
-        l->lines = (LineInfoItem*)realloc(l->lines, *max * sizeof(LineInfoItem));
-    }
-    LineInfoItem* li = &l->lines[l->number];
-    li->file = l->files[file - 1];
-    li->address = a;
-    li->line = line;
-    l->number++;
-}
-
-void elfParseLineInfo(CompileUnit* unit, uint8_t* top)
-{
-    ELFSectionHeader* h = elfGetSectionByName(".debug_line");
-    if (h == NULL) {
-        fprintf(stderr, "No line information found\n");
-        return;
-    }
-    LineInfo* l = unit->lineInfoTable = (LineInfo*)calloc(1, sizeof(LineInfo));
-    l->number = 0;
-    int max = 1000;
-    l->lines = (LineInfoItem*)malloc(1000 * sizeof(LineInfoItem));
-
-    uint8_t* data = elfReadSection(top, h);
-    data += unit->lineInfo;
-    uint32_t totalLen = elfRead4Bytes(data);
-    data += 4;
-    uint8_t* end = data + totalLen;
-    //  uint16_t version = elfRead2Bytes(data);
-    data += 2;
-    //  uint32_t offset = elfRead4Bytes(data);
-    data += 4;
-    int minInstrSize = *data++;
-    int defaultIsStmt = *data++;
-    int lineBase = (int8_t)*data++;
-    int lineRange = *data++;
-    int opcodeBase = *data++;
-    uint8_t* stdOpLen = (uint8_t*)malloc(opcodeBase * sizeof(uint8_t));
-    stdOpLen[0] = 1;
-    int i;
-    for (i = 1; i < opcodeBase; i++)
-        stdOpLen[i] = *data++;
-
-    free(stdOpLen); // todo
-    int bytes = 0;
-
-    char* s;
-    while ((s = elfReadString(data, &bytes)) != NULL) {
-        data += bytes;
-        //    fprintf(stderr, "Directory is %s\n", s);
-    }
-    data += bytes;
-    int count = 4;
-    int index = 0;
-    l->files = (char**)malloc(sizeof(char*) * count);
-
-    while ((s = elfReadString(data, &bytes)) != NULL) {
-        l->files[index++] = s;
-
-        data += bytes;
-        // directory
-        elfReadLEB128(data, &bytes);
-        data += bytes;
-        // time
-        elfReadLEB128(data, &bytes);
-        data += bytes;
-        // size
-        elfReadLEB128(data, &bytes);
-        data += bytes;
-        //    fprintf(stderr, "File is %s\n", s);
-        if (index == count) {
-            count += 4;
-            l->files = (char**)realloc(l->files, sizeof(char*) * count);
-        }
-    }
-    l->fileCount = index;
-    data += bytes;
-
-    while (data < end) {
-        uint32_t address = 0;
-        int file = 1;
-        int line = 1;
-        int isStmt = defaultIsStmt;
-        int endSeq = 0;
-
-        while (!endSeq) {
-            int op = *data++;
-            switch (op) {
-            case DW_LNS_extended_op: {
-                data++;
-                op = *data++;
-                switch (op) {
-                case DW_LNE_end_sequence:
-                    endSeq = 1;
-                    break;
-                case DW_LNE_set_address:
-                    address = elfRead4Bytes(data);
-                    data += 4;
-                    break;
-                default:
-                    fprintf(stderr, "Unknown extended LINE opcode %02x\n", op);
-                    exit(-1);
-                }
-            } break;
-            case DW_LNS_copy:
-                //      fprintf(stderr, "Address %08x line %d (%d)\n", address, line, file);
-                elfAddLine(l, address, file, line, &max);
-                break;
-            case DW_LNS_advance_pc:
-                address += minInstrSize * elfReadLEB128(data, &bytes);
-                data += bytes;
-                break;
-            case DW_LNS_advance_line:
-                line += elfReadSignedLEB128(data, &bytes);
-                data += bytes;
-                break;
-            case DW_LNS_set_file:
-                file = elfReadLEB128(data, &bytes);
-                data += bytes;
-                break;
-            case DW_LNS_set_column:
-                elfReadLEB128(data, &bytes);
-                data += bytes;
-                break;
-            case DW_LNS_negate_stmt:
-                isStmt = !isStmt;
-                break;
-            case DW_LNS_set_basic_block:
-                break;
-            case DW_LNS_const_add_pc:
-                address += (minInstrSize * ((255 - opcodeBase) / lineRange));
-                break;
-            case DW_LNS_fixed_advance_pc:
-                address += elfRead2Bytes(data);
-                data += 2;
-                break;
-            default:
-                op = op - opcodeBase;
-                address += (op / lineRange) * minInstrSize;
-                line += lineBase + (op % lineRange);
-                elfAddLine(l, address, file, line, &max);
-                //        fprintf(stderr, "Address %08x line %d (%d)\n", address, line,file);
-                break;
-            }
-        }
-    }
-    l->lines = (LineInfoItem*)realloc(l->lines, l->number * sizeof(LineInfoItem));
-}
-
-uint8_t* elfSkipData(uint8_t* data, ELFAbbrev* abbrev, ELFAbbrev** abbrevs)
-{
-    int i;
-    int bytes;
-
-    for (i = 0; i < abbrev->numAttrs; i++) {
-        data = elfReadAttribute(data, &abbrev->attrs[i]);
-        if (abbrev->attrs[i].form == DW_FORM_block1)
-            free(abbrev->attrs[i].block);
-    }
-
-    if (abbrev->hasChildren) {
-        int nesting = 1;
-        while (nesting) {
-            uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-            data += bytes;
-
-            if (!abbrevNum) {
-                nesting--;
-                continue;
-            }
-
-            abbrev = elfGetAbbrev(abbrevs, abbrevNum);
-
-            for (i = 0; i < abbrev->numAttrs; i++) {
-                data = elfReadAttribute(data, &abbrev->attrs[i]);
-                if (abbrev->attrs[i].form == DW_FORM_block1)
-                    free(abbrev->attrs[i].block);
-            }
-
-            if (abbrev->hasChildren) {
-                nesting++;
-            }
-        }
-    }
-    return data;
-}
-
-Type* elfParseType(CompileUnit* unit, uint32_t);
-uint8_t* elfParseObject(uint8_t* data, ELFAbbrev* abbrev, CompileUnit* unit,
-    Object** object);
-uint8_t* elfParseFunction(uint8_t* data, ELFAbbrev* abbrev, CompileUnit* unit,
-    Function** function);
-void elfCleanUp(Function*);
-
-void elfAddType(Type* type, CompileUnit* unit, uint32_t offset)
-{
-    if (type->next == NULL) {
-        if (unit->types != type && type->offset == 0) {
-            type->offset = offset;
-            type->next = unit->types;
-            unit->types = type;
-        }
-    }
-}
-
-void elfParseType(uint8_t* data, uint32_t offset, ELFAbbrev* abbrev, CompileUnit* unit,
-    Type** type)
-{
-    switch (abbrev->tag) {
-    case DW_TAG_typedef: {
-        uint32_t typeref = 0;
-        char* name = NULL;
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_name:
-                name = attr->string;
-                break;
-            case DW_AT_type:
-                typeref = attr->value;
-                break;
-            case DW_AT_decl_file:
-            case DW_AT_decl_line:
-                break;
-            default:
-                fprintf(stderr, "Unknown attribute for typedef %02x\n", attr->name);
-                break;
-            }
-        }
-        if (abbrev->hasChildren)
-            fprintf(stderr, "Unexpected children for typedef\n");
-        *type = elfParseType(unit, typeref);
-        if (name)
-            (*type)->name = name;
-        return;
-    } break;
-    case DW_TAG_union_type:
-    case DW_TAG_structure_type: {
-        Type* t = (Type*)calloc(1, sizeof(Type));
-        if (abbrev->tag == DW_TAG_structure_type)
-            t->type = TYPE_struct;
-        else
-            t->type = TYPE_union;
-
-        Struct* s = (Struct*)calloc(1, sizeof(Struct));
-        t->structure = s;
-        elfAddType(t, unit, offset);
-
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_name:
-                t->name = attr->string;
-                break;
-            case DW_AT_byte_size:
-                t->size = attr->value;
-                break;
-            case DW_AT_decl_file:
-            case DW_AT_decl_line:
-            case DW_AT_sibling:
-            case DW_AT_containing_type: // todo?
-            case DW_AT_declaration:
-            case DW_AT_specification: // TODO:
-                break;
-            default:
-                fprintf(stderr, "Unknown attribute for struct %02x\n", attr->name);
-                break;
-            }
-        }
-        if (abbrev->hasChildren) {
-            int bytes;
-            uint32_t num = elfReadLEB128(data, &bytes);
-            data += bytes;
-            int index = 0;
-            while (num) {
-                ELFAbbrev* abbr = elfGetAbbrev(unit->abbrevs, num);
-
-                switch (abbr->tag) {
-                case DW_TAG_member: {
-                    if ((index % 4) == 0)
-                        s->members = (Member*)realloc(s->members,
-                            sizeof(Member) * (index + 4));
-                    Member* m = &s->members[index];
-                    m->location = NULL;
-                    m->bitOffset = 0;
-                    m->bitSize = 0;
-                    m->byteSize = 0;
-                    for (int i = 0; i < abbr->numAttrs; i++) {
-                        ELFAttr* attr = &abbr->attrs[i];
-                        data = elfReadAttribute(data, attr);
-                        switch (attr->name) {
-                        case DW_AT_name:
-                            m->name = attr->string;
-                            break;
-                        case DW_AT_type:
-                            m->type = elfParseType(unit, attr->value);
-                            break;
-                        case DW_AT_data_member_location:
-                            m->location = attr->block;
-                            break;
-                        case DW_AT_byte_size:
-                            m->byteSize = attr->value;
-                            break;
-                        case DW_AT_bit_offset:
-                            m->bitOffset = attr->value;
-                            break;
-                        case DW_AT_bit_size:
-                            m->bitSize = attr->value;
-                            break;
-                        case DW_AT_decl_file:
-                        case DW_AT_decl_line:
-                        case DW_AT_accessibility:
-                        case DW_AT_artificial: // todo?
-                            break;
-                        default:
-                            fprintf(stderr, "Unknown member attribute %02x\n",
-                                attr->name);
-                        }
-                    }
-                    index++;
-                } break;
-                case DW_TAG_subprogram: {
-                    Function* fnc = NULL;
-                    data = elfParseFunction(data, abbr, unit, &fnc);
-                    if (fnc != NULL) {
-                        if (unit->lastFunction)
-                            unit->lastFunction->next = fnc;
-                        else
-                            unit->functions = fnc;
-                        unit->lastFunction = fnc;
-                    }
-                } break;
-                case DW_TAG_inheritance:
-                    // TODO: add support
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                CASE_TYPE_TAG:
-                    // skip types... parsed only when used
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                case DW_TAG_variable:
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                default:
-                    fprintf(stderr, "Unknown struct tag %02x %s\n", abbr->tag, t->name);
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                }
-                num = elfReadLEB128(data, &bytes);
-                data += bytes;
-            }
-            s->memberCount = index;
-        }
-        *type = t;
-        return;
-    } break;
-    case DW_TAG_base_type: {
-        Type* t = (Type*)calloc(1, sizeof(Type));
-
-        t->type = TYPE_base;
-        elfAddType(t, unit, offset);
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_name:
-                t->name = attr->string;
-                break;
-            case DW_AT_encoding:
-                t->encoding = attr->value;
-                break;
-            case DW_AT_byte_size:
-                t->size = attr->value;
-                break;
-            case DW_AT_bit_size:
-                t->bitSize = attr->value;
-                break;
-            default:
-                fprintf(stderr, "Unknown attribute for base type %02x\n",
-                    attr->name);
-                break;
-            }
-        }
-        if (abbrev->hasChildren)
-            fprintf(stderr, "Unexpected children for base type\n");
-        *type = t;
-        return;
-    } break;
-    case DW_TAG_pointer_type: {
-        Type* t = (Type*)calloc(1, sizeof(Type));
-
-        t->type = TYPE_pointer;
-
-        elfAddType(t, unit, offset);
-
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_type:
-                t->pointer = elfParseType(unit, attr->value);
-                break;
-            case DW_AT_byte_size:
-                t->size = attr->value;
-                break;
-            default:
-                fprintf(stderr, "Unknown pointer type attribute %02x\n", attr->name);
-                break;
-            }
-        }
-        if (abbrev->hasChildren)
-            fprintf(stderr, "Unexpected children for pointer type\n");
-        *type = t;
-        return;
-    } break;
-    case DW_TAG_reference_type: {
-        Type* t = (Type*)calloc(1, sizeof(Type));
-
-        t->type = TYPE_reference;
-
-        elfAddType(t, unit, offset);
-
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_type:
-                t->pointer = elfParseType(unit, attr->value);
-                break;
-            case DW_AT_byte_size:
-                t->size = attr->value;
-                break;
-            default:
-                fprintf(stderr, "Unknown ref type attribute %02x\n", attr->name);
-                break;
-            }
-        }
-        if (abbrev->hasChildren)
-            fprintf(stderr, "Unexpected children for ref type\n");
-        *type = t;
-        return;
-    } break;
-    case DW_TAG_volatile_type: {
-        uint32_t typeref = 0;
-
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_type:
-                typeref = attr->value;
-                break;
-            default:
-                fprintf(stderr, "Unknown volatile attribute for type %02x\n",
-                    attr->name);
-                break;
-            }
-        }
-        if (abbrev->hasChildren)
-            fprintf(stderr, "Unexpected children for volatile type\n");
-        *type = elfParseType(unit, typeref);
-        return;
-    } break;
-    case DW_TAG_const_type: {
-        uint32_t typeref = 0;
-
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_type:
-                typeref = attr->value;
-                break;
-            default:
-                fprintf(stderr, "Unknown const attribute for type %02x\n",
-                    attr->name);
-                break;
-            }
-        }
-        if (abbrev->hasChildren)
-            fprintf(stderr, "Unexpected children for const type\n");
-        *type = elfParseType(unit, typeref);
-        return;
-    } break;
-    case DW_TAG_enumeration_type: {
-        Type* t = (Type*)calloc(1, sizeof(Type));
-        t->type = TYPE_enum;
-        Enum* e = (Enum*)calloc(1, sizeof(Enum));
-        t->enumeration = e;
-        elfAddType(t, unit, offset);
-        int count = 0;
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_name:
-                t->name = attr->string;
-                break;
-            case DW_AT_byte_size:
-                t->size = attr->value;
-                break;
-            case DW_AT_sibling:
-            case DW_AT_decl_file:
-            case DW_AT_decl_line:
-                break;
-            default:
-                fprintf(stderr, "Unknown enum attribute %02x\n", attr->name);
-            }
-        }
-        if (abbrev->hasChildren) {
-            int bytes;
-            uint32_t num = elfReadLEB128(data, &bytes);
-            data += bytes;
-            while (num) {
-                ELFAbbrev* abbr = elfGetAbbrev(unit->abbrevs, num);
-
-                switch (abbr->tag) {
-                case DW_TAG_enumerator: {
-                    count++;
-                    e->members = (EnumMember*)realloc(e->members,
-                        count * sizeof(EnumMember));
-                    EnumMember* m = &e->members[count - 1];
-                    for (int i = 0; i < abbr->numAttrs; i++) {
-                        ELFAttr* attr = &abbr->attrs[i];
-                        data = elfReadAttribute(data, attr);
-                        switch (attr->name) {
-                        case DW_AT_name:
-                            m->name = attr->string;
-                            break;
-                        case DW_AT_const_value:
-                            m->value = attr->value;
-                            break;
-                        default:
-                            fprintf(stderr, "Unknown sub param attribute %02x\n",
-                                attr->name);
-                        }
-                    }
-                } break;
-                default:
-                    fprintf(stderr, "Unknown enum tag %02x\n", abbr->tag);
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                }
-                num = elfReadLEB128(data, &bytes);
-                data += bytes;
-            }
-        }
-        e->count = count;
-        *type = t;
-        return;
-    } break;
-    case DW_TAG_subroutine_type: {
-        Type* t = (Type*)calloc(1, sizeof(Type));
-        t->type = TYPE_function;
-        FunctionType* f = (FunctionType*)calloc(1, sizeof(FunctionType));
-        t->function = f;
-        elfAddType(t, unit, offset);
-        for (int i = 0; i < abbrev->numAttrs; i++) {
-            ELFAttr* attr = &abbrev->attrs[i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_prototyped:
-            case DW_AT_sibling:
-                break;
-            case DW_AT_type:
-                f->returnType = elfParseType(unit, attr->value);
-                break;
-            default:
-                fprintf(stderr, "Unknown subroutine attribute %02x\n", attr->name);
-            }
-        }
-        if (abbrev->hasChildren) {
-            int bytes;
-            uint32_t num = elfReadLEB128(data, &bytes);
-            data += bytes;
-            Object* lastVar = NULL;
-            while (num) {
-                ELFAbbrev* abbr = elfGetAbbrev(unit->abbrevs, num);
-
-                switch (abbr->tag) {
-                case DW_TAG_formal_parameter: {
-                    Object* o;
-                    data = elfParseObject(data, abbr, unit, &o);
-                    if (f->args)
-                        lastVar->next = o;
-                    else
-                        f->args = o;
-                    lastVar = o;
-                } break;
-                case DW_TAG_unspecified_parameters:
-                    // no use in the debugger yet
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                CASE_TYPE_TAG:
-                    // skip types... parsed only when used
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                default:
-                    fprintf(stderr, "Unknown subroutine tag %02x\n", abbr->tag);
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                }
-                num = elfReadLEB128(data, &bytes);
-                data += bytes;
-            }
-        }
-        *type = t;
-        return;
-    } break;
-    case DW_TAG_array_type: {
-        uint32_t typeref = 0;
-        int _i;
-        Array* array = (Array*)calloc(1, sizeof(Array));
-        Type* t = (Type*)calloc(1, sizeof(Type));
-        t->type = TYPE_array;
-        elfAddType(t, unit, offset);
-
-        for (_i = 0; _i < abbrev->numAttrs; _i++) {
-            ELFAttr* attr = &abbrev->attrs[_i];
-            data = elfReadAttribute(data, attr);
-            switch (attr->name) {
-            case DW_AT_sibling:
-                break;
-            case DW_AT_type:
-                typeref = attr->value;
-                array->type = elfParseType(unit, typeref);
-                break;
-            default:
-                fprintf(stderr, "Unknown array attribute %02x\n", attr->name);
-            }
-        }
-        if (abbrev->hasChildren) {
-            int bytes;
-            uint32_t num = elfReadLEB128(data, &bytes);
-            data += bytes;
-            int index = 0;
-            int maxBounds = 0;
-            while (num) {
-                ELFAbbrev* abbr = elfGetAbbrev(unit->abbrevs, num);
-
-                switch (abbr->tag) {
-                case DW_TAG_subrange_type: {
-                    if (maxBounds == index) {
-                        maxBounds += 4;
-                        array->bounds = (int*)realloc(array->bounds,
-                            sizeof(int) * maxBounds);
-                    }
-                    for (int i = 0; i < abbr->numAttrs; i++) {
-                        ELFAttr* attr = &abbr->attrs[i];
-                        data = elfReadAttribute(data, attr);
-                        switch (attr->name) {
-                        case DW_AT_upper_bound:
-                            array->bounds[index] = attr->value + 1;
-                            break;
-                        case DW_AT_type: // ignore
-                            break;
-                        default:
-                            fprintf(stderr, "Unknown subrange attribute %02x\n",
-                                attr->name);
-                        }
-                    }
-                    index++;
-                } break;
-                default:
-                    fprintf(stderr, "Unknown array tag %02x\n", abbr->tag);
-                    data = elfSkipData(data, abbr, unit->abbrevs);
-                    break;
-                }
-                num = elfReadLEB128(data, &bytes);
-                data += bytes;
-            }
-            array->maxBounds = index;
-        }
-        t->size = array->type->size;
-        for (_i = 0; _i < array->maxBounds; _i++)
-            t->size *= array->bounds[_i];
-        t->array = array;
-        *type = t;
-        return;
-    } break;
-    default:
-        fprintf(stderr, "Unknown type TAG %02x\n", abbrev->tag);
-        exit(-1);
-    }
-}
-
-Type* elfParseType(CompileUnit* unit, uint32_t offset)
-{
-    Type* _t = unit->types;
-
-    while (_t) {
-        if (_t->offset == offset)
-            return _t;
-        _t = _t->next;
-    }
-    if (offset == 0) {
-        Type* t = (Type*)calloc(1, sizeof(Type));
-        t->type = TYPE_void;
-        t->offset = 0;
-        elfAddType(t, unit, 0);
-        return t;
-    }
-    uint8_t* data = unit->top + offset;
-    int bytes;
-    int abbrevNum = elfReadLEB128(data, &bytes);
-    data += bytes;
-    Type* type = NULL;
-
-    ELFAbbrev* abbrev = elfGetAbbrev(unit->abbrevs, abbrevNum);
-
-    elfParseType(data, offset, abbrev, unit, &type);
-    return type;
-}
-
-void elfGetObjectAttributes(CompileUnit* unit, uint32_t offset, Object* o)
-{
-    uint8_t* data = unit->top + offset;
-    int bytes;
-    uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-    data += bytes;
-
-    if (!abbrevNum) {
-        return;
-    }
-
-    ELFAbbrev* abbrev = elfGetAbbrev(unit->abbrevs, abbrevNum);
-
-    for (int i = 0; i < abbrev->numAttrs; i++) {
-        ELFAttr* attr = &abbrev->attrs[i];
-        data = elfReadAttribute(data, attr);
-        switch (attr->name) {
-        case DW_AT_location:
-            o->location = attr->block;
-            break;
-        case DW_AT_name:
-            if (o->name == NULL)
-                o->name = attr->string;
-            break;
-        case DW_AT_MIPS_linkage_name:
-            o->name = attr->string;
-            break;
-        case DW_AT_decl_file:
-            o->file = attr->value;
-            break;
-        case DW_AT_decl_line:
-            o->line = attr->value;
-            break;
-        case DW_AT_type:
-            o->type = elfParseType(unit, attr->value);
-            break;
-        case DW_AT_external:
-            o->external = attr->flag;
-            break;
-        case DW_AT_const_value:
-        case DW_AT_abstract_origin:
-        case DW_AT_declaration:
-        case DW_AT_artificial:
-            // todo
-            break;
-        case DW_AT_specification:
-            // TODO:
-            break;
-        default:
-            fprintf(stderr, "Unknown object attribute %02x\n", attr->name);
-            break;
-        }
-    }
-}
-
-uint8_t* elfParseObject(uint8_t* data, ELFAbbrev* abbrev, CompileUnit* unit,
-    Object** object)
-{
-    Object* o = (Object*)calloc(1, sizeof(Object));
-
-    o->next = NULL;
-
-    for (int i = 0; i < abbrev->numAttrs; i++) {
-        ELFAttr* attr = &abbrev->attrs[i];
-        data = elfReadAttribute(data, attr);
-        switch (attr->name) {
-        case DW_AT_location:
-            o->location = attr->block;
-            break;
-        case DW_AT_name:
-            if (o->name == NULL)
-                o->name = attr->string;
-            break;
-        case DW_AT_MIPS_linkage_name:
-            o->name = attr->string;
-            break;
-        case DW_AT_decl_file:
-            o->file = attr->value;
-            break;
-        case DW_AT_decl_line:
-            o->line = attr->value;
-            break;
-        case DW_AT_type:
-            o->type = elfParseType(unit, attr->value);
-            break;
-        case DW_AT_external:
-            o->external = attr->flag;
-            break;
-        case DW_AT_abstract_origin:
-            elfGetObjectAttributes(unit, attr->value, o);
-            break;
-        case DW_AT_const_value:
-        case DW_AT_declaration:
-        case DW_AT_artificial:
-            break;
-        case DW_AT_specification:
-            // TODO:
-            break;
-        default:
-            fprintf(stderr, "Unknown object attribute %02x\n", attr->name);
-            break;
-        }
-    }
-    *object = o;
-    return data;
-}
-
-uint8_t* elfParseBlock(uint8_t* data, ELFAbbrev* abbrev, CompileUnit* unit,
-    Function* func, Object** lastVar)
-{
-    int bytes;
-    uint32_t start = func->lowPC;
-
-    for (int i = 0; i < abbrev->numAttrs; i++) {
-        ELFAttr* attr = &abbrev->attrs[i];
-        data = elfReadAttribute(data, attr);
-        switch (attr->name) {
-        case DW_AT_sibling:
-            break;
-        case DW_AT_low_pc:
-            start = attr->value;
-            break;
-        case DW_AT_high_pc:
-            break;
-        case DW_AT_ranges: // ignore for now
-            break;
-        default:
-            fprintf(stderr, "Unknown block attribute %02x\n", attr->name);
-            break;
-        }
-    }
-
-    if (abbrev->hasChildren) {
-        int nesting = 1;
-
-        while (nesting) {
-            uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-            data += bytes;
-
-            if (!abbrevNum) {
-                nesting--;
-                continue;
-            }
-
-            abbrev = elfGetAbbrev(unit->abbrevs, abbrevNum);
-
-            switch (abbrev->tag) {
-            CASE_TYPE_TAG: // types only parsed when used
-            case DW_TAG_label: // not needed
-                data = elfSkipData(data, abbrev, unit->abbrevs);
-                break;
-            case DW_TAG_lexical_block:
-                data = elfParseBlock(data, abbrev, unit, func, lastVar);
-                break;
-            case DW_TAG_subprogram: {
-                Function* f = NULL;
-                data = elfParseFunction(data, abbrev, unit, &f);
-                if (f != NULL) {
-                    if (unit->lastFunction)
-                        unit->lastFunction->next = f;
-                    else
-                        unit->functions = f;
-                    unit->lastFunction = f;
-                }
-            } break;
-            case DW_TAG_variable: {
-                Object* o;
-                data = elfParseObject(data, abbrev, unit, &o);
-                if (o->startScope == 0)
-                    o->startScope = start;
-                if (o->endScope == 0)
-                    o->endScope = 0;
-                if (func->variables)
-                    (*lastVar)->next = o;
-                else
-                    func->variables = o;
-                *lastVar = o;
-            } break;
-            case DW_TAG_inlined_subroutine:
-                // TODO:
-                data = elfSkipData(data, abbrev, unit->abbrevs);
-                break;
-            default: {
-                fprintf(stderr, "Unknown block TAG %02x\n", abbrev->tag);
-                data = elfSkipData(data, abbrev, unit->abbrevs);
-            } break;
-            }
-        }
-    }
-    return data;
-}
-
-void elfGetFunctionAttributes(CompileUnit* unit, uint32_t offset, Function* func)
-{
-    uint8_t* data = unit->top + offset;
-    int bytes;
-    uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-    data += bytes;
-
-    if (!abbrevNum) {
-        return;
-    }
-
-    ELFAbbrev* abbrev = elfGetAbbrev(unit->abbrevs, abbrevNum);
-
-    for (int i = 0; i < abbrev->numAttrs; i++) {
-        ELFAttr* attr = &abbrev->attrs[i];
-        data = elfReadAttribute(data, attr);
-
-        switch (attr->name) {
-        case DW_AT_sibling:
-            break;
-        case DW_AT_name:
-            if (func->name == NULL)
-                func->name = attr->string;
-            break;
-        case DW_AT_MIPS_linkage_name:
-            func->name = attr->string;
-            break;
-        case DW_AT_low_pc:
-            func->lowPC = attr->value;
-            break;
-        case DW_AT_high_pc:
-            func->highPC = attr->value;
-            break;
-        case DW_AT_decl_file:
-            func->file = attr->value;
-            break;
-        case DW_AT_decl_line:
-            func->line = attr->value;
-            break;
-        case DW_AT_external:
-            func->external = attr->flag;
-            break;
-        case DW_AT_frame_base:
-            func->frameBase = attr->block;
-            break;
-        case DW_AT_type:
-            func->returnType = elfParseType(unit, attr->value);
-            break;
-        case DW_AT_inline:
-        case DW_AT_specification:
-        case DW_AT_declaration:
-        case DW_AT_artificial:
-        case DW_AT_prototyped:
-        case DW_AT_proc_body:
-        case DW_AT_save_offset:
-        case DW_AT_user_2002:
-        case DW_AT_virtuality:
-        case DW_AT_containing_type:
-        case DW_AT_accessibility:
-            // todo;
-            break;
-        case DW_AT_vtable_elem_location:
-            free(attr->block);
-            break;
-        default:
-            fprintf(stderr, "Unknown function attribute %02x\n", attr->name);
-            break;
-        }
-    }
-
-    return;
-}
-
-uint8_t* elfParseFunction(uint8_t* data, ELFAbbrev* abbrev, CompileUnit* unit,
-    Function** f)
-{
-    Function* func = (Function*)calloc(1, sizeof(Function));
-    *f = func;
-
-    int bytes;
-    bool declaration = false;
-    for (int i = 0; i < abbrev->numAttrs; i++) {
-        ELFAttr* attr = &abbrev->attrs[i];
-        data = elfReadAttribute(data, attr);
-        switch (attr->name) {
-        case DW_AT_sibling:
-            break;
-        case DW_AT_name:
-            if (func->name == NULL)
-                func->name = attr->string;
-            break;
-        case DW_AT_MIPS_linkage_name:
-            func->name = attr->string;
-            break;
-        case DW_AT_low_pc:
-            func->lowPC = attr->value;
-            break;
-        case DW_AT_high_pc:
-            func->highPC = attr->value;
-            break;
-        case DW_AT_prototyped:
-            break;
-        case DW_AT_decl_file:
-            func->file = attr->value;
-            break;
-        case DW_AT_decl_line:
-            func->line = attr->value;
-            break;
-        case DW_AT_external:
-            func->external = attr->flag;
-            break;
-        case DW_AT_frame_base:
-            func->frameBase = attr->block;
-            break;
-        case DW_AT_type:
-            func->returnType = elfParseType(unit, attr->value);
-            break;
-        case DW_AT_abstract_origin:
-            elfGetFunctionAttributes(unit, attr->value, func);
-            break;
-        case DW_AT_declaration:
-            declaration = attr->flag;
-            break;
-        case DW_AT_inline:
-        case DW_AT_specification:
-        case DW_AT_artificial:
-        case DW_AT_proc_body:
-        case DW_AT_save_offset:
-        case DW_AT_user_2002:
-        case DW_AT_virtuality:
-        case DW_AT_containing_type:
-        case DW_AT_accessibility:
-            // todo;
-            break;
-        case DW_AT_vtable_elem_location:
-            free(attr->block);
-            break;
-        default:
-            fprintf(stderr, "Unknown function attribute %02x\n", attr->name);
-            break;
-        }
-    }
-
-    if (declaration) {
-        elfCleanUp(func);
-        free(func);
-        *f = NULL;
-
-        while (1) {
-            uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-            data += bytes;
-
-            if (!abbrevNum) {
-                return data;
-            }
-
-            abbrev = elfGetAbbrev(unit->abbrevs, abbrevNum);
-
-            data = elfSkipData(data, abbrev, unit->abbrevs);
-        }
-    }
-
-    if (abbrev->hasChildren) {
-        int nesting = 1;
-        Object* lastParam = NULL;
-        Object* lastVar = NULL;
-
-        while (nesting) {
-            uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-            data += bytes;
-
-            if (!abbrevNum) {
-                nesting--;
-                continue;
-            }
-
-            abbrev = elfGetAbbrev(unit->abbrevs, abbrevNum);
-
-            switch (abbrev->tag) {
-            CASE_TYPE_TAG: // no need to parse types. only parsed when used
-            case DW_TAG_label: // not needed
-                data = elfSkipData(data, abbrev, unit->abbrevs);
-                break;
-            case DW_TAG_subprogram: {
-                Function* fnc = NULL;
-                data = elfParseFunction(data, abbrev, unit, &fnc);
-                if (fnc != NULL) {
-                    if (unit->lastFunction == NULL)
-                        unit->functions = fnc;
-                    else
-                        unit->lastFunction->next = fnc;
-                    unit->lastFunction = fnc;
-                }
-            } break;
-            case DW_TAG_lexical_block: {
-                data = elfParseBlock(data, abbrev, unit, func, &lastVar);
-            } break;
-            case DW_TAG_formal_parameter: {
-                Object* o;
-                data = elfParseObject(data, abbrev, unit, &o);
-                if (func->parameters)
-                    lastParam->next = o;
-                else
-                    func->parameters = o;
-                lastParam = o;
-            } break;
-            case DW_TAG_variable: {
-                Object* o;
-                data = elfParseObject(data, abbrev, unit, &o);
-                if (func->variables)
-                    lastVar->next = o;
-                else
-                    func->variables = o;
-                lastVar = o;
-            } break;
-            case DW_TAG_unspecified_parameters:
-            case DW_TAG_inlined_subroutine: {
-                // todo
-                for (int i = 0; i < abbrev->numAttrs; i++) {
-                    data = elfReadAttribute(data, &abbrev->attrs[i]);
-                    if (abbrev->attrs[i].form == DW_FORM_block1)
-                        free(abbrev->attrs[i].block);
-                }
-
-                if (abbrev->hasChildren)
-                    nesting++;
-            } break;
-            default: {
-                fprintf(stderr, "Unknown function TAG %02x\n", abbrev->tag);
-                data = elfSkipData(data, abbrev, unit->abbrevs);
-            } break;
-            }
-        }
-    }
-    return data;
-}
-
-uint8_t* elfParseUnknownData(uint8_t* data, ELFAbbrev* abbrev, ELFAbbrev** abbrevs)
-{
-    int i;
-    int bytes;
-    //  switch(abbrev->tag) {
-    //  default:
-    fprintf(stderr, "Unknown TAG %02x\n", abbrev->tag);
-
-    for (i = 0; i < abbrev->numAttrs; i++) {
-        data = elfReadAttribute(data, &abbrev->attrs[i]);
-        if (abbrev->attrs[i].form == DW_FORM_block1)
-            free(abbrev->attrs[i].block);
-    }
-
-    if (abbrev->hasChildren) {
-        int nesting = 1;
-        while (nesting) {
-            uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-            data += bytes;
-
-            if (!abbrevNum) {
-                nesting--;
-                continue;
-            }
-
-            abbrev = elfGetAbbrev(abbrevs, abbrevNum);
-
-            fprintf(stderr, "Unknown TAG %02x\n", abbrev->tag);
-
-            for (i = 0; i < abbrev->numAttrs; i++) {
-                data = elfReadAttribute(data, &abbrev->attrs[i]);
-                if (abbrev->attrs[i].form == DW_FORM_block1)
-                    free(abbrev->attrs[i].block);
-            }
-
-            if (abbrev->hasChildren) {
-                nesting++;
-            }
-        }
-    }
-    //  }
-    return data;
-}
-
-uint8_t* elfParseCompileUnitChildren(uint8_t* data, CompileUnit* unit)
-{
-    int bytes;
-    uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-    data += bytes;
-    Object* lastObj = NULL;
-    while (abbrevNum) {
-        ELFAbbrev* abbrev = elfGetAbbrev(unit->abbrevs, abbrevNum);
-        switch (abbrev->tag) {
-        case DW_TAG_subprogram: {
-            Function* func = NULL;
-            data = elfParseFunction(data, abbrev, unit, &func);
-            if (func != NULL) {
-                if (unit->lastFunction)
-                    unit->lastFunction->next = func;
-                else
-                    unit->functions = func;
-                unit->lastFunction = func;
-            }
-        } break;
-        CASE_TYPE_TAG:
-            data = elfSkipData(data, abbrev, unit->abbrevs);
-            break;
-        case DW_TAG_variable: {
-            Object* var = NULL;
-            data = elfParseObject(data, abbrev, unit, &var);
-            if (lastObj)
-                lastObj->next = var;
             else
-                unit->variables = var;
-            lastObj = var;
-        } break;
-        default:
-            data = elfParseUnknownData(data, abbrev, unit->abbrevs);
-            break;
-        }
-
-        abbrevNum = elfReadLEB128(data, &bytes);
-        data += bytes;
-    }
-    return data;
-}
-
-CompileUnit* elfParseCompUnit(uint8_t* data, uint8_t* abbrevData)
-{
-    int bytes;
-    uint8_t* top = data;
-
-    uint32_t length = elfRead4Bytes(data);
-    data += 4;
-
-    uint16_t version = elfRead2Bytes(data);
-    data += 2;
-
-    uint32_t offset = elfRead4Bytes(data);
-    data += 4;
-
-    uint8_t addrSize = *data++;
-
-    if (version != 2) {
-        fprintf(stderr, "Unsupported debugging information version %d\n", version);
-        return NULL;
-    }
-
-    if (addrSize != 4) {
-        fprintf(stderr, "Unsupported address size %d\n", addrSize);
-        return NULL;
-    }
-
-    ELFAbbrev** abbrevs = elfReadAbbrevs(abbrevData, offset);
-
-    uint32_t abbrevNum = elfReadLEB128(data, &bytes);
-    data += bytes;
-
-    ELFAbbrev* abbrev = elfGetAbbrev(abbrevs, abbrevNum);
-
-    CompileUnit* unit = (CompileUnit*)calloc(1, sizeof(CompileUnit));
-    unit->top = top;
-    unit->length = length;
-    unit->abbrevs = abbrevs;
-    unit->next = NULL;
-
-    elfCurrentUnit = unit;
-
-    int i;
-
-    for (i = 0; i < abbrev->numAttrs; i++) {
-        ELFAttr* attr = &abbrev->attrs[i];
-        data = elfReadAttribute(data, attr);
-
-        switch (attr->name) {
-        case DW_AT_name:
-            unit->name = attr->string;
-            break;
-        case DW_AT_stmt_list:
-            unit->hasLineInfo = true;
-            unit->lineInfo = attr->value;
-            break;
-        case DW_AT_low_pc:
-            unit->lowPC = attr->value;
-            break;
-        case DW_AT_high_pc:
-            unit->highPC = attr->value;
-            break;
-        case DW_AT_compdir:
-            unit->compdir = attr->string;
-            break;
-        // ignore
-        case DW_AT_language:
-        case DW_AT_producer:
-        case DW_AT_macro_info:
-        case DW_AT_entry_pc:
-            break;
-        default:
-            fprintf(stderr, "Unknown attribute %02x\n", attr->name);
-            break;
-        }
-    }
-
-    if (abbrev->hasChildren)
-        elfParseCompileUnitChildren(data, unit);
-
-    return unit;
-}
-
-void elfParseAranges(uint8_t* data)
-{
-    ELFSectionHeader* sh = elfGetSectionByName(".debug_aranges");
-    if (sh == NULL) {
-        fprintf(stderr, "No aranges found\n");
-        return;
-    }
-
-    data = elfReadSection(data, sh);
-    uint8_t* end = data + READ32LE(&sh->size);
-
-    int max = 4;
-    ARanges* ranges = (ARanges*)calloc(4, sizeof(ARanges));
-
-    int index = 0;
-
-    while (data < end) {
-        uint32_t _len = elfRead4Bytes(data);
-        data += 4;
-        //    uint16_t version = elfRead2Bytes(data);
-        data += 2;
-        uint32_t offset = elfRead4Bytes(data);
-        data += 4;
-        //    uint8_t addrSize = *data++;
-        //    uint8_t segSize = *data++;
-        data += 2; // remove if uncommenting above
-        data += 4;
-        ranges[index].count = (_len - 20) / 8;
-        ranges[index].offset = offset;
-        ranges[index].ranges = (ARange*)calloc((_len - 20) / 8, sizeof(ARange));
-        int i = 0;
-        while (true) {
-            uint32_t addr = elfRead4Bytes(data);
-            data += 4;
-            uint32_t len = elfRead4Bytes(data);
-            data += 4;
-            if (addr == 0 && len == 0)
-                break;
-            ranges[index].ranges[i].lowPC = addr;
-            ranges[index].ranges[i].highPC = addr + len;
-            i++;
-        }
-        index++;
-        if (index == max) {
-            max += 4;
-            ranges = (ARanges*)realloc(ranges, max * sizeof(ARanges));
-        }
-    }
-    elfDebugInfo->numRanges = index;
-    elfDebugInfo->ranges = ranges;
-}
-
-void elfReadSymtab(uint8_t* data)
-{
-    ELFSectionHeader* sh = elfGetSectionByName(".symtab");
-    int table = READ32LE(&sh->link);
-
-    char* strtable = (char*)elfReadSection(data, elfGetSectionByNumber(table));
-
-    ELFSymbol* symtab = (ELFSymbol*)elfReadSection(data, sh);
-
-    int count = READ32LE(&sh->size) / sizeof(ELFSymbol);
-    elfSymbolsCount = 0;
-
-    elfSymbols = (Symbol*)malloc(sizeof(Symbol) * count);
-
-    int i;
-
-    for (i = 0; i < count; i++) {
-        ELFSymbol* s = &symtab[i];
-        int type = s->info & 15;
-        int binding = s->info >> 4;
-
-        if (binding) {
-            Symbol* sym = &elfSymbols[elfSymbolsCount];
-            sym->name = &strtable[READ32LE(&s->name)];
-            sym->binding = binding;
-            sym->type = type;
-            sym->value = READ32LE(&s->value);
-            sym->size = READ32LE(&s->size);
-            elfSymbolsCount++;
-        }
-    }
-    for (i = 0; i < count; i++) {
-        ELFSymbol* s = &symtab[i];
-        int bind = s->info >> 4;
-        int type = s->info & 15;
-
-        if (!bind) {
-            Symbol* sym = &elfSymbols[elfSymbolsCount];
-            sym->name = &strtable[READ32LE(&s->name)];
-            sym->binding = (s->info >> 4);
-            sym->type = type;
-            sym->value = READ32LE(&s->value);
-            sym->size = READ32LE(&s->size);
-            elfSymbolsCount++;
-        }
-    }
-    elfSymbolsStrTab = strtable;
-    //  free(symtab);
-}
-
-bool elfReadProgram(ELFHeader* eh, uint8_t* data, unsigned long data_size, int& size, bool parseDebug)
-{
-    int count = READ16LE(&eh->e_phnum);
-    int _i;
-
-    if (READ32LE(&eh->e_entry) == 0x2000000)
-        coreOptions.cpuIsMultiBoot = true;
-
-    // read program headers... should probably move this code down
-    uint8_t* p = data + READ32LE(&eh->e_phoff);
-    size = 0;
-    for (_i = 0; _i < count; _i++) {
-        ELFProgramHeader* ph = (ELFProgramHeader*)p;
-        p += sizeof(ELFProgramHeader);
-        if (READ16LE(&eh->e_phentsize) != sizeof(ELFProgramHeader)) {
-            p += READ16LE(&eh->e_phentsize) - sizeof(ELFProgramHeader);
-        }
-
-        //    printf("PH %d %08x %08x %08x %08x %08x %08x %08x %08x\n",
-        //     i, ph->type, ph->offset, ph->vaddr, ph->paddr,
-        //     ph->filesz, ph->memsz, ph->flags, ph->align);
-
-        unsigned address      = READ32LE(&ph->paddr);
-        unsigned offset       = READ32LE(&ph->offset);
-        unsigned section_size = READ32LE(&ph->filesz);
-
-        if (offset > data_size || section_size > data_size || offset + section_size > data_size)
-            continue;
-
-        uint8_t* source  = data + offset;
-
-        if (coreOptions.cpuIsMultiBoot) {
-            unsigned effective_address = address - 0x2000000;
-
-            if (effective_address + section_size < SIZE_WRAM) {
-                memcpy(&g_workRAM[effective_address], source, section_size);
-                size += section_size;
+            {
+              clear_screen(COLOR_BG);
+              current_file_selection = 0;
+              current_file_scroll_value = 0;
+              current_file_in_scroll = 0;
             }
-        } else {
-            unsigned effective_address = address - 0x8000000;
-
-            if (effective_address + section_size < SIZE_ROM) {
-                memcpy(&g_rom[effective_address], source, section_size);
-                size += section_size;
+          }
+          else
+          {
+            if(current_dir_selection < (num_dirs - 1))
+            {
+              current_dir_selection++;
+              if(current_dir_in_scroll == (FILE_LIST_ROWS - 1))
+              {
+                clear_screen(COLOR_BG);
+                current_dir_scroll_value++;
+              }
+              else
+              {
+                current_dir_in_scroll++;
+              }
             }
-        }
-    }
+          }
 
-    // these must be pre-declared or clang barfs on the goto statement
-    ELFSectionHeader** sh = NULL;
-    char* stringTable     = NULL;
+          break;
 
-    // read section headers (if string table is good)
-    if (READ16LE(&eh->e_shstrndx) == 0)
-        goto end;
+        case CURSOR_R:
+          if (current_column != 0)
+            break;
+          clear_screen(COLOR_BG);
+	  current_file_selection += FILE_LIST_ROWS;
+          if (current_file_selection > num_files - 1)
+            current_file_selection = num_files - 1;
+          current_file_scroll_value = current_file_selection - FILE_LIST_ROWS / 2;
+          if (current_file_scroll_value < 0)
+          {
+            current_file_scroll_value = 0;
+            current_file_in_scroll = current_file_selection;
+          }
+          else
+          {
+            current_file_in_scroll = FILE_LIST_ROWS / 2;
+          }
+          break;
 
-    p = data + READ32LE(&eh->e_shoff);
-
-    count = READ16LE(&eh->e_shnum);
-
-    sh = (ELFSectionHeader**)
-        malloc(sizeof(ELFSectionHeader*) * count);
-
-    for (_i = 0; _i < count; _i++) {
-        sh[_i] = (ELFSectionHeader*)p;
-        p += sizeof(ELFSectionHeader);
-        if (READ16LE(&eh->e_shentsize) != sizeof(ELFSectionHeader))
-            p += READ16LE(&eh->e_shentsize) - sizeof(ELFSectionHeader);
-    }
-	
-	stringTable = (char*)elfReadSection(data, sh[READ16LE(&eh->e_shstrndx)]);
-
-    elfSectionHeaders            = sh;
-    elfSectionHeadersStringTable = stringTable;
-    elfSectionHeadersCount       = count;
-
-    for (_i = 0; _i < count; _i++) {
-        //    printf("SH %d %-20s %08x %08x %08x %08x %08x %08x %08x %08x\n",
-        //   i, &stringTable[sh[_i]->name], sh[_i]->name, sh[_i]->type,
-        //   sh[_i]->flags, sh[_i]->addr, sh[_i]->offset, sh[_i]->size,
-        //   sh[_i]->link, sh[_i]->info);
-        if (READ32LE(&sh[_i]->flags) & 2) { // load section
-            if (coreOptions.cpuIsMultiBoot) {
-                if (READ32LE(&sh[_i]->addr) >= 0x2000000 && READ32LE(&sh[_i]->addr) <= 0x203ffff) {
-                    memcpy(&g_workRAM[READ32LE(&sh[_i]->addr) & 0x3ffff], data + READ32LE(&sh[_i]->offset),
-                        READ32LE(&sh[_i]->size));
-                    size += READ32LE(&sh[_i]->size);
-                }
-            } else {
-                if (READ32LE(&sh[_i]->addr) >= 0x8000000 && READ32LE(&sh[_i]->addr) <= 0x9ffffff) {
-                    memcpy(&g_rom[READ32LE(&sh[_i]->addr) & 0x1ffffff],
-                        data + READ32LE(&sh[_i]->offset),
-                        READ32LE(&sh[_i]->size));
-                    size += READ32LE(&sh[_i]->size);
-                }
+        case CURSOR_UP:
+          if(current_column == 0)
+          {
+            if(current_file_selection)
+            {
+              current_file_selection--;
+              if(current_file_in_scroll == 0)
+              {
+                clear_screen(COLOR_BG);
+                current_file_scroll_value--;
+              }
+              else
+              {
+                current_file_in_scroll--;
+              }
             }
-        }
-    }
-
-    if (parseDebug) {
-        fprintf(stderr, "Parsing debug info\n");
-
-        ELFSectionHeader* dbgHeader = elfGetSectionByName(".debug_info");
-        if (dbgHeader == NULL) {
-            fprintf(stderr, "Cannot find debug information\n");
-            goto end;
-        }
-
-        ELFSectionHeader* h = elfGetSectionByName(".debug_abbrev");
-        if (h == NULL) {
-            fprintf(stderr, "Cannot find abbreviation table\n");
-            goto end;
-        }
-
-        elfDebugInfo = (DebugInfo*)calloc(1, sizeof(DebugInfo));
-        uint8_t* abbrevdata = elfReadSection(data, h);
-
-        h = elfGetSectionByName(".debug_str");
-
-        if (h == NULL)
-            elfDebugStrings = NULL;
-        else
-            elfDebugStrings = (char*)elfReadSection(data, h);
-
-        uint8_t* debugdata = elfReadSection(data, dbgHeader);
-
-        elfDebugInfo->debugdata = data;
-        elfDebugInfo->infodata = debugdata;
-
-        uint32_t total = READ32LE(&dbgHeader->size);
-        uint8_t* end = debugdata + total;
-        uint8_t* ddata = debugdata;
-
-        CompileUnit* last = NULL;
-        CompileUnit* unit = NULL;
-
-        while (ddata < end) {
-            unit = elfParseCompUnit(ddata, abbrevdata);
-            unit->offset = (uint32_t)(ddata - debugdata);
-            elfParseLineInfo(unit, data);
-            if (last == NULL)
-                elfCompileUnits = unit;
             else
-                last->next = unit;
-            last = unit;
-            ddata += 4 + unit->length;
-        }
-        elfParseAranges(data);
-        CompileUnit* comp = elfCompileUnits;
-        while (comp) {
-            ARanges* r = elfDebugInfo->ranges;
-            for (int i = 0; i < elfDebugInfo->numRanges; i++)
-                if (r[i].offset == comp->offset) {
-                    comp->ranges = &r[i];
-                    break;
-                }
-            comp = comp->next;
-        }
-        elfParseCFA(data);
-        elfReadSymtab(data);
-    }
-end:
-    if (sh) {
-        free(sh);
-    }
-
-    elfSectionHeaders = NULL;
-    elfSectionHeadersStringTable = NULL;
-    elfSectionHeadersCount = 0;
-
-    return true;
-}
-
-bool elfRead(const char* name, int& siz, FILE* f)
-{
-    fseek(f, 0, SEEK_END);
-    unsigned long size = ftell(f);
-    elfFileData = (uint8_t*)malloc(size);
-    fseek(f, 0, SEEK_SET);
-    int res = (int)fread(elfFileData, 1, size, f);
-    fclose(f);
-
-    if (res < 0) {
-        free(elfFileData);
-        elfFileData = NULL;
-        return false;
-    }
-
-    ELFHeader* header = (ELFHeader*)elfFileData;
-
-    if (READ32LE(&header->magic) != 0x464C457F || READ16LE(&header->e_machine) != 40 || header->clazz != 1) {
-        systemMessage(0, N_("Not a valid ELF file %s"), name);
-        free(elfFileData);
-        elfFileData = NULL;
-        return false;
-    }
-
-    if (!elfReadProgram(header, elfFileData, size, siz, coreOptions.parseDebug)) {
-        free(elfFileData);
-        elfFileData = NULL;
-        return false;
-    }
-
-    return true;
-}
-
-void elfCleanUp(Object* o)
-{
-    free(o->location);
-}
-
-void elfCleanUp(Function* func)
-{
-    Object* o = func->parameters;
-    while (o) {
-        elfCleanUp(o);
-        Object* next = o->next;
-        free(o);
-        o = next;
-    }
-
-    o = func->variables;
-    while (o) {
-        elfCleanUp(o);
-        Object* next = o->next;
-        free(o);
-        o = next;
-    }
-    free(func->frameBase);
-}
-
-void elfCleanUp(ELFAbbrev** abbrevs)
-{
-    for (int i = 0; i < 121; i++) {
-        ELFAbbrev* abbrev = abbrevs[i];
-
-        while (abbrev) {
-            free(abbrev->attrs);
-            ELFAbbrev* next = abbrev->next;
-            free(abbrev);
-
-            abbrev = next;
-        }
-    }
-}
-
-void elfCleanUp(Type* t)
-{
-    switch (t->type) {
-    case TYPE_function:
-        if (t->function) {
-            Object* o = t->function->args;
-            while (o) {
-                elfCleanUp(o);
-                Object* next = o->next;
-                free(o);
-                o = next;
+            {
+              clear_screen(COLOR_BG);
+              current_file_selection = num_files - 1;
+              current_file_in_scroll = FILE_LIST_ROWS - 1;
+              if (current_file_in_scroll > num_files - 1)
+                current_file_in_scroll = num_files - 1;
+              current_file_scroll_value = num_files - FILE_LIST_ROWS;
+              if (current_file_scroll_value < 0)
+                current_file_scroll_value = 0;
             }
-            free(t->function);
-        }
-        break;
-    case TYPE_array:
-        if (t->array) {
-            free(t->array->bounds);
-            free(t->array);
-        }
-        break;
-    case TYPE_struct:
-    case TYPE_union:
-        if (t->structure) {
-            for (int i = 0; i < t->structure->memberCount; i++) {
-                free(t->structure->members[i].location);
+          }
+          else
+          {
+            if(current_dir_selection)
+            {
+              current_dir_selection--;
+              if(current_dir_in_scroll == 0)
+              {
+                clear_screen(COLOR_BG);
+                current_dir_scroll_value--;
+              }
+              else
+              {
+                current_dir_in_scroll--;
+              }
             }
-            free(t->structure->members);
-            free(t->structure);
-        }
-        break;
-    case TYPE_enum:
-        if (t->enumeration) {
-            free(t->enumeration->members);
-            free(t->enumeration);
-        }
-        break;
-    case TYPE_base:
-    case TYPE_pointer:
-    case TYPE_void:
-    case TYPE_reference:
-        break; // nothing to do
-    }
-}
+          }
+          break;
 
-void elfCleanUp(CompileUnit* comp)
-{
-    elfCleanUp(comp->abbrevs);
-    free(comp->abbrevs);
-    Function* func = comp->functions;
-    while (func) {
-        elfCleanUp(func);
-        Function* next = func->next;
-        free(func);
-        func = next;
-    }
-    Type* t = comp->types;
-    while (t) {
-        elfCleanUp(t);
-        Type* next = t->next;
-        free(t);
-        t = next;
-    }
-    Object* o = comp->variables;
-    while (o) {
-        elfCleanUp(o);
-        Object* next = o->next;
-        free(o);
-        o = next;
-    }
-    if (comp->lineInfoTable) {
-        free(comp->lineInfoTable->lines);
-        free(comp->lineInfoTable->files);
-        free(comp->lineInfoTable);
-    }
-}
+        case CURSOR_L:
+          if (current_column != 0)
+            break;
+          clear_screen(COLOR_BG);
+	  current_file_selection -= FILE_LIST_ROWS;
+          if (current_file_selection < 0)
+            current_file_selection = 0;
+          current_file_scroll_value = current_file_selection - FILE_LIST_ROWS / 2;
+          if (current_file_scroll_value < 0)
+          {
+            current_file_scroll_value = 0;
+            current_file_in_scroll = current_file_selection;
+          }
+          else
+          {
+            current_file_in_scroll = FILE_LIST_ROWS / 2;
+          }
+          break;
 
-void elfCleanUp()
-{
-    CompileUnit* comp = elfCompileUnits;
+         case CURSOR_RIGHT:
+          if(current_column == 0)
+          {
+            if(num_dirs != 0)
+              current_column = 1;
+          }
+          break;
 
-    while (comp) {
-        elfCleanUp(comp);
-        CompileUnit* next = comp->next;
-        free(comp);
-        comp = next;
-    }
-    elfCompileUnits = NULL;
-    free(elfSymbols);
-    elfSymbols = NULL;
-    //  free(elfSymbolsStrTab);
-    elfSymbolsStrTab = NULL;
+        case CURSOR_LEFT:
+          if(current_column == 1)
+          {
+            if(num_files != 0)
+              current_column = 0;
+          }
+          break;
 
-    elfDebugStrings = NULL;
-    if (elfDebugInfo) {
-        int num = elfDebugInfo->numRanges;
-        int i;
-        for (i = 0; i < num; i++) {
-            free(elfDebugInfo->ranges[i].ranges);
-        }
-        free(elfDebugInfo->ranges);
-        free(elfDebugInfo);
-        elfDebugInfo = NULL;
-    }
+        case CURSOR_SELECT:
+          if(current_column == 1)
+          {
+            repeat = 0;
+            chdir(dir_list[current_dir_selection]);
+          }
+          else
+          {
+            if(num_files != 0)
+            {
+              repeat = 0;
+              return_value = 0;
+              strcpy(result, file_list[current_file_selection]);
+            }
+          }
+          break;
 
-    if (elfFdes) {
-        if (elfFdeCount) {
-            for (int i = 0; i < elfFdeCount; i++)
-                free(elfFdes[i]);
-        }
-        free(elfFdes);
-
-        elfFdes = NULL;
-        elfFdeCount = 0;
-    }
-
-    ELFcie* cie = elfCies;
-    while (cie) {
-        ELFcie* next = cie->next;
-        free(cie);
-        cie = next;
-    }
-    elfCies = NULL;
-
-    if (elfFileData) {
-        free(elfFileData);
-        elfFileData = NULL;
-    }
-}
-/* END gbaElf.cpp */
-
-#else
-/* C translation unit stub: compiled in C++ aggregate mode only. */
+        case CURSOR_BACK:
+#ifdef PSP_BUILD
+          if(!strcmp(current_dir_name, "ms0:/PSP"))
+            break;
 #endif
+          repeat = 0;
+          chdir("..");
+          break;
+
+        case CURSOR_EXIT:
+          return_value = -1;
+          repeat = 0;
+          break;
+
+        default:
+          break;
+      }
+    }
+  }
+
+    for(i = 0; i < num_files; i++)
+    {
+      free(file_list[i]);
+    }
+    free(file_list);
+
+    for(i = 0; i < num_dirs; i++)
+    {
+      free(dir_list[i]);
+    }
+    free(dir_list);
+  }
+
+  clear_screen(COLOR_BG);
+
+  return return_value;
+}
+
+typedef enum
+{
+  NUMBER_SELECTION_OPTION = 0x01,
+  STRING_SELECTION_OPTION = 0x02,
+  SUBMENU_OPTION          = 0x04,
+  ACTION_OPTION           = 0x08,
+} menu_option_type_enum;
+
+struct _menu_type
+{
+  void (* init_function)();
+  void (* passive_function)();
+  struct _menu_option_type *options;
+  u32 num_options;
+};
+
+struct _menu_option_type
+{
+  void (* action_function)();
+  void (* passive_function)();
+  struct _menu_type *sub_menu;
+  const char *display_string;
+  void *options;
+  u32 *current_option;
+  u32 num_options;
+  const char *help_string;
+  u32 line_number;
+  menu_option_type_enum option_type;
+};
+
+typedef struct _menu_option_type menu_option_type;
+typedef struct _menu_type menu_type;
+
+#define make_menu(name, init_function, passive_function)                      \
+  menu_type name##_menu =                                                     \
+  {                                                                           \
+    init_function,                                                            \
+    passive_function,                                                         \
+    name##_options,                                                           \
+    sizeof(name##_options) / sizeof(menu_option_type)                         \
+  }                                                                           \
+
+#define gamepad_config_option(display_string, number)                         \
+{                                                                             \
+  NULL,                                                                       \
+  menu_fix_gamepad_help,                                                      \
+  NULL,                                                                       \
+  display_string ": %s",                                                      \
+  gamepad_config_buttons,                                                     \
+  gamepad_config_map + gamepad_config_line_to_button[number],                 \
+  sizeof(gamepad_config_buttons) / sizeof(gamepad_config_buttons[0]),         \
+  gamepad_help[gamepad_config_map[                                            \
+   gamepad_config_line_to_button[number]]],                                   \
+  number,                                                                     \
+  STRING_SELECTION_OPTION                                                     \
+}                                                                             \
+
+#define analog_config_option(display_string, number)                          \
+{                                                                             \
+  NULL,                                                                       \
+  menu_fix_gamepad_help,                                                      \
+  NULL,                                                                       \
+  display_string ": %s",                                                      \
+  gamepad_config_buttons,                                                     \
+  gamepad_config_map + number + 12,                                           \
+  sizeof(gamepad_config_buttons) / sizeof(gamepad_config_buttons[0]),         \
+  gamepad_help[gamepad_config_map[number + 12]],                              \
+  number + 2,                                                                 \
+  STRING_SELECTION_OPTION                                                     \
+}                                                                             \
+
+#define cheat_option(number)                                                  \
+{                                                                             \
+  NULL,                                                                       \
+  NULL,                                                                       \
+  NULL,                                                                       \
+  cheat_format_str[number],                                                   \
+  enable_disable_options,                                                     \
+  &(cheats[number].cheat_active),                                             \
+  2,                                                                          \
+  "Activate/deactivate this cheat code.",                                     \
+  number,                                                                     \
+  STRING_SELECTION_OPTION                                                     \
+}                                                                             \
+
+#define action_option(action_function, passive_function, display_string,      \
+ help_string, line_number)                                                    \
+{                                                                             \
+  action_function,                                                            \
+  passive_function,                                                           \
+  NULL,                                                                       \
+  display_string,                                                             \
+  NULL,                                                                       \
+  NULL,                                                                       \
+  0,                                                                          \
+  help_string,                                                                \
+  line_number,                                                                \
+  ACTION_OPTION                                                               \
+}                                                                             \
+
+#define submenu_option(sub_menu, display_string, help_string, line_number)    \
+{                                                                             \
+  NULL,                                                                       \
+  NULL,                                                                       \
+  sub_menu,                                                                   \
+  display_string,                                                             \
+  NULL,                                                                       \
+  NULL,                                                                       \
+  sizeof(sub_menu) / sizeof(menu_option_type),                                \
+  help_string,                                                                \
+  line_number,                                                                \
+  SUBMENU_OPTION                                                              \
+}                                                                             \
+
+#define selection_option(passive_function, display_string, options,           \
+ option_ptr, num_options, help_string, line_number, type)                     \
+{                                                                             \
+  NULL,                                                                       \
+  passive_function,                                                           \
+  NULL,                                                                       \
+  display_string,                                                             \
+  options,                                                                    \
+  option_ptr,                                                                 \
+  num_options,                                                                \
+  help_string,                                                                \
+  line_number,                                                                \
+  type                                                                        \
+}                                                                             \
+
+#define action_selection_option(action_function, passive_function,            \
+ display_string, options, option_ptr, num_options, help_string, line_number,  \
+ type)                                                                        \
+{                                                                             \
+  action_function,                                                            \
+  passive_function,                                                           \
+  NULL,                                                                       \
+  display_string,                                                             \
+  options,                                                                    \
+  option_ptr,                                                                 \
+  num_options,                                                                \
+  help_string,                                                                \
+  line_number,                                                                \
+  type | ACTION_OPTION                                                        \
+}                                                                             \
+
+
+#define string_selection_option(passive_function, display_string, options,    \
+ option_ptr, num_options, help_string, line_number)                           \
+  selection_option(passive_function, display_string ": %s", options,          \
+   option_ptr, num_options, help_string, line_number, STRING_SELECTION_OPTION)\
+
+#define numeric_selection_option(passive_function, display_string,            \
+ option_ptr, num_options, help_string, line_number)                           \
+  selection_option(passive_function, display_string ": %d", NULL, option_ptr, \
+   num_options, help_string, line_number, NUMBER_SELECTION_OPTION)            \
+
+#define string_selection_action_option(action_function, passive_function,     \
+ display_string, options, option_ptr, num_options, help_string, line_number)  \
+  action_selection_option(action_function, passive_function,                  \
+   display_string ": %s",  options, option_ptr, num_options, help_string,     \
+   line_number, STRING_SELECTION_OPTION)                                      \
+
+#define numeric_selection_action_option(action_function, passive_function,    \
+ display_string, option_ptr, num_options, help_string, line_number)           \
+  action_selection_option(action_function, passive_function,                  \
+   display_string ": %d",  NULL, option_ptr, num_options, help_string,        \
+   line_number, NUMBER_SELECTION_OPTION)                                      \
+
+#define numeric_selection_action_hide_option(action_function,                 \
+ passive_function, display_string, option_ptr, num_options, help_string,      \
+ line_number)                                                                 \
+  action_selection_option(action_function, passive_function,                  \
+   display_string, NULL, option_ptr, num_options, help_string,                \
+   line_number, NUMBER_SELECTION_OPTION)                                      \
+
+
+#define GAMEPAD_MENU_WIDTH 15
+
+#ifdef PSP_BUILD
+
+u32 gamepad_config_line_to_button[] =
+ { 8, 6, 7, 9, 1, 2, 3, 0, 4, 5, 11, 10 };
+
+#endif
+
+#ifdef GP2X_BUILD
+
+u32 gamepad_config_line_to_button[] =
+ { 0, 2, 1, 3, 8, 9, 10, 11, 6, 7, 4, 5, 14, 15 };
+
+#endif
+
+#ifdef PND_BUILD
+
+u32 gamepad_config_line_to_button[] =
+ { 0, 2, 1, 3, 8, 9, 10, 11, 6, 7, 4, 5, 12, 13, 14, 15 };
+
+#endif
+
+#ifdef RPI_BUILD
+
+u32 gamepad_config_line_to_button[] =
+ { 0, 2, 1, 3, 8, 9, 10, 11, 6, 7, 4, 5, 12, 13, 14, 15 };
+
+#endif
+
+static const char *scale_options[] =
+{
+#ifdef PSP_BUILD
+  "unscaled 3:2", "scaled 3:2", "fullscreen 16:9"
+#elif defined(WIZ_BUILD)
+  "unscaled 3:2", "scaled 3:2 (slower)",
+  "unscaled 3:2 (anti-tear)", "scaled 3:2 (anti-tear)"
+#elif defined(POLLUX_BUILD)
+  "unscaled 3:2", "scaled 3:2 (slower)"
+#elif defined(PND_BUILD)
+  "unscaled", "2x", "3x", "fullscreen"
+#elif defined(GP2X_BUILD)
+  "unscaled 3:2", "scaled 3:2", "fullscreen", "scaled 3:2 (software)"
+#elif defined(RPI_BUILD)
+  "fullscreen"
+#else
+  "unscaled 3:2"
+#endif
+};
+
+const char *filter2_options[] =
+{
+  "none", "scale2x", "scale3x", "eagle2x"
+};
+
+#ifndef PSP_BUILD
+static const char *audio_buffer_options[] =
+{
+  "16 bytes", "32 bytes", "64 bytes",
+  "128 bytes", "256 bytes", "512 bytes", "1024 bytes", "2048 bytes",
+  "4096 bytes", "8192 bytes", "16284 bytes"
+};
+#else
+const char *audio_buffer_options[] =
+{
+  "3072 bytes", "4096 bytes", "5120 bytes", "6144 bytes", "7168 bytes",
+  "8192 bytes", "9216 bytes", "10240 bytes", "11264 bytes", "12288 bytes"
+};
+#endif
+
+
+s32 load_game_config_file()
+{
+  char game_config_filename[512];
+  u32 file_loaded = 0;
+  u32 i;
+  make_rpath(game_config_filename, sizeof(game_config_filename), ".cfg");
+
+  file_open(game_config_file, game_config_filename, read);
+
+  if(file_check_valid(game_config_file))
+  {
+    u32 file_size = file_length(game_config_filename, game_config_file);
+
+    // Sanity check: File size must be the right size
+    if(file_size == 56)
+    {
+      u32 file_options[file_size / 4];
+
+      file_read_array(game_config_file, file_options);
+      current_frameskip_type = file_options[0] % 3;
+      frameskip_value = file_options[1];
+      random_skip = file_options[2] % 2;
+      clock_speed = file_options[3];
+
+#ifdef POLLUX_BUILD
+      if(clock_speed > 900)
+        clock_speed = 533;
+#elif defined(GP2X_BUILD)
+      if(clock_speed >= 300)
+        clock_speed = 200;
+#else
+      if(clock_speed > 333)
+        clock_speed = 333;
+#endif
+
+      if(clock_speed < 33)
+        clock_speed = 33;
+
+      if(frameskip_value < 0)
+        frameskip_value = 0;
+
+      if(frameskip_value > 99)
+        frameskip_value = 99;
+
+      for(i = 0; i < 10; i++)
+      {
+        cheats[i].cheat_active = file_options[4 + i] % 2;
+        cheats[i].cheat_name[0] = 0;
+      }
+
+      file_close(game_config_file);
+      file_loaded = 1;
+    }
+  }
+
+  if(file_loaded)
+    return 0;
+
+#ifdef RPI_BUILD
+  current_frameskip_type = manual_frameskip;
+  frameskip_value = 1;
+#else
+  current_frameskip_type = auto_frameskip;
+  frameskip_value = 4;
+#ifdef POLLUX_BUILD
+  frameskip_value = 1;
+#endif
+#endif
+  random_skip = 0;
+  clock_speed = default_clock_speed;
+
+  for(i = 0; i < 10; i++)
+  {
+    cheats[i].cheat_active = 0;
+    cheats[i].cheat_name[0] = 0;
+  }
+
+  return -1;
+}
+
+enum file_options {
+  fo_screen_scale = 0,
+  fo_screen_filter,
+  fo_global_enable_audio,
+  fo_audio_buffer_size,
+  fo_update_backup_flag,
+  fo_global_enable_analog,
+  fo_analog_sensitivity_level,
+  fo_screen_filter2,
+  fo_main_option_count,
+};
+
+#ifdef PC_BUILD
+#define PLAT_BUTTON_COUNT 0
+#endif
+#define FILE_OPTION_COUNT (fo_main_option_count + PLAT_BUTTON_COUNT)
+
+s32 load_config_file()
+{
+  char config_path[512];
+
+  sprintf(config_path, "%s" PATH_SEPARATOR "%s", main_path, GPSP_CONFIG_FILENAME);
+
+  file_open(config_file, config_path, read);
+
+  if(file_check_valid(config_file))
+  {
+    u32 file_size = file_length(config_path, config_file);
+
+    // Sanity check: File size must be the right size
+    if(file_size == FILE_OPTION_COUNT * 4)
+    {
+      u32 file_options[file_size / 4];
+      file_read_array(config_file, file_options);
+
+      screen_scale = file_options[fo_screen_scale] %
+        (sizeof(scale_options) / sizeof(scale_options[0]));
+      screen_filter = file_options[fo_screen_filter] % 2;
+      global_enable_audio = file_options[fo_global_enable_audio] % 2;
+      screen_filter2 = file_options[fo_screen_filter2] %
+        (sizeof(filter2_options) / sizeof(filter2_options[0]));
+
+      audio_buffer_size_number = file_options[fo_audio_buffer_size] %
+        (sizeof(audio_buffer_options) / sizeof(audio_buffer_options[0]));
+
+      update_backup_flag = file_options[fo_update_backup_flag] % 2;
+      global_enable_analog = file_options[fo_global_enable_analog] % 2;
+      analog_sensitivity_level = file_options[fo_analog_sensitivity_level] % 8;
+
+#ifdef PSP_BUILD
+    scePowerSetClockFrequency(clock_speed, clock_speed, clock_speed / 2);
+#endif
+
+      // Sanity check: Make sure there's a MENU or FRAMESKIP
+      // key, if not assign to triangle
+
+#ifndef PC_BUILD
+      u32 i;
+      s32 menu_button = -1;
+      for(i = 0; i < PLAT_BUTTON_COUNT; i++)
+      {
+        gamepad_config_map[i] = file_options[fo_main_option_count + i] %
+         (BUTTON_ID_NONE + 1);
+
+        if(gamepad_config_map[i] == BUTTON_ID_MENU)
+        {
+          menu_button = i;
+        }
+      }
+
+      if(menu_button == -1 && PLAT_MENU_BUTTON >= 0)
+      {
+        gamepad_config_map[PLAT_MENU_BUTTON] = BUTTON_ID_MENU;
+      }
+#endif
+
+      file_close(config_file);
+    }
+
+    return 0;
+  }
+
+  return -1;
+}
+
+s32 save_game_config_file()
+{
+  char game_config_filename[512];
+  u32 i;
+
+  make_rpath(game_config_filename, sizeof(game_config_filename), ".cfg");
+
+  file_open(game_config_file, game_config_filename, write);
+
+  if(file_check_valid(game_config_file))
+  {
+    u32 file_options[14];
+
+    file_options[0] = current_frameskip_type;
+    file_options[1] = frameskip_value;
+    file_options[2] = random_skip;
+    file_options[3] = clock_speed;
+
+    for(i = 0; i < 10; i++)
+    {
+      file_options[4 + i] = cheats[i].cheat_active;
+    }
+
+    file_write_array(game_config_file, file_options);
+
+    file_close(game_config_file);
+
+    return 0;
+  }
+
+  return -1;
+}
+
+s32 save_config_file()
+{
+  char config_path[512];
+
+  sprintf(config_path, "%s" PATH_SEPARATOR "%s", main_path, GPSP_CONFIG_FILENAME);
+
+  file_open(config_file, config_path, write);
+
+  save_game_config_file();
+
+  if(file_check_valid(config_file))
+  {
+    u32 file_options[FILE_OPTION_COUNT];
+
+    file_options[fo_screen_scale] = screen_scale;
+    file_options[fo_screen_filter] = screen_filter;
+    file_options[fo_global_enable_audio] = global_enable_audio;
+    file_options[fo_audio_buffer_size] = audio_buffer_size_number;
+    file_options[fo_update_backup_flag] = update_backup_flag;
+    file_options[fo_global_enable_analog] = global_enable_analog;
+    file_options[fo_analog_sensitivity_level] = analog_sensitivity_level;
+    file_options[fo_screen_filter2] = screen_filter2;
+
+#ifndef PC_BUILD
+    u32 i;
+    for(i = 0; i < PLAT_BUTTON_COUNT; i++)
+    {
+      file_options[fo_main_option_count + i] = gamepad_config_map[i];
+    }
+#endif
+
+    file_write_array(config_file, file_options);
+
+    file_close(config_file);
+
+    return 0;
+  }
+
+  return -1;
+}
+
+typedef enum
+{
+  MAIN_MENU,
+  GAMEPAD_MENU,
+  SAVESTATE_MENU,
+  FRAMESKIP_MENU,
+  CHEAT_MENU
+} menu_enum;
+
+u32 savestate_slot = 0;
+
+void get_savestate_snapshot(char *savestate_filename)
+{
+  u16 snapshot_buffer[240 * 160];
+  char savestate_timestamp_string[80];
+
+  file_open(savestate_file, savestate_filename, read);
+
+  if(file_check_valid(savestate_file))
+  {
+    const char weekday_strings[7][11] =
+    {
+      "Sunday", "Monday", "Tuesday", "Wednesday",
+      "Thursday", "Friday", "Saturday"
+    };
+    time_t savestate_time_flat;
+    struct tm *current_time;
+    file_read_array(savestate_file, snapshot_buffer);
+    file_read_variable(savestate_file, savestate_time_flat);
+
+    file_close(savestate_file);
+
+    current_time = localtime(&savestate_time_flat);
+    sprintf(savestate_timestamp_string,
+     "%s  %02d/%02d/%04d  %02d:%02d:%02d                ",
+     weekday_strings[current_time->tm_wday], current_time->tm_mon + 1,
+     current_time->tm_mday, current_time->tm_year + 1900,
+     current_time->tm_hour, current_time->tm_min, current_time->tm_sec);
+
+    savestate_timestamp_string[40] = 0;
+    print_string(savestate_timestamp_string, COLOR_HELP_TEXT, COLOR_BG,
+     10, 40);
+  }
+  else
+  {
+    memset(snapshot_buffer, 0, 240 * 160 * 2);
+    print_string_ext("No savestate in this slot.",
+     0xFFFF, 0x0000, 15, 75, snapshot_buffer, 240, 0, 0, FONT_HEIGHT);
+    print_string("---------- --/--/---- --:--:--          ", COLOR_HELP_TEXT,
+     COLOR_BG, 10, 40);
+  }
+
+#ifndef GP2X_BUILD
+  blit_to_screen(snapshot_buffer, 240, 160, 230, 40);
+#endif
+}
+
+void get_savestate_filename_noshot(u32 slot, char *name_buffer)
+{
+  char savestate_ext[16];
+
+  sprintf(savestate_ext, "%d.svs", slot);
+  make_rpath(name_buffer, 512, savestate_ext);
+}
+
+void get_savestate_filename(u32 slot, char *name_buffer)
+{
+  get_savestate_filename_noshot(slot, name_buffer);
+  get_savestate_snapshot(name_buffer);
+}
+
+#ifdef PSP_BUILD
+  void _flush_cache()
+  {
+    invalidate_all_cache();
+  }
+#endif
+
+u32 menu(u16 *original_screen)
+{
+  char print_buffer[81];
+  u32 clock_speed_number;
+  gui_action_type gui_action;
+  u32 i;
+  u32 repeat = 1;
+  u32 return_value = 0;
+  u32 first_load = 0;
+  char current_savestate_filename[512];
+  char line_buffer[80];
+  char cheat_format_str[10][41];
+
+  menu_type *current_menu;
+  menu_option_type *current_option;
+  menu_option_type *display_option;
+  u32 current_option_num;
+
+  auto void choose_menu();
+  auto void clear_help();
+
+#ifndef PC_BUILD
+  static const char * const gamepad_help[] =
+  {
+    "Up button on GBA d-pad.",
+    "Down button on GBA d-pad.",
+    "Left button on GBA d-pad.",
+    "Right button on GBA d-pad.",
+    "A button on GBA.",
+    "B button on GBA.",
+    "Left shoulder button on GBA.",
+    "Right shoulder button on GBA.",
+    "Start button on GBA.",
+    "Select button on GBA.",
+    "Brings up the options menu.",
+    "Toggles fastforward on/off.",
+    "Loads the game state from the current slot.",
+    "Saves the game state to the current slot.",
+    "Rapidly press/release the A button on GBA.",
+    "Rapidly press/release the B button on GBA.",
+    "Rapidly press/release the L shoulder on GBA.",
+    "Rapidly press/release the R shoulder on GBA.",
+    "Increases the volume.",
+    "Decreases the volume.",
+    "Displays virtual/drawn frames per second.",
+    "Does nothing."
+  };
+
+  static const char *gamepad_config_buttons[] =
+  {
+    "UP",
+    "DOWN",
+    "LEFT",
+    "RIGHT",
+    "A",
+    "B",
+    "L",
+    "R",
+    "START",
+    "SELECT",
+    "MENU",
+    "FASTFORWARD",
+    "LOAD STATE",
+    "SAVE STATE",
+    "RAPIDFIRE A",
+    "RAPIDFIRE B",
+    "RAPIDFIRE L",
+    "RAPIDFIRE R",
+    "VOLUME UP",
+    "VOLUME DOWN",
+    "DISPLAY FPS",
+    "NOTHING"
+  };
+#endif
+
+  void menu_update_clock()
+  {
+    get_clock_speed_number();
+    if (clock_speed_number < 0 || clock_speed_number >=
+     sizeof(clock_speed_options) / sizeof(clock_speed_options[0]))
+    {
+      clock_speed = default_clock_speed;
+      get_clock_speed_number();
+    }
+  }
+
+  void menu_exit()
+  {
+    if(!first_load)
+     repeat = 0;
+  }
+
+  void menu_quit()
+  {
+    menu_get_clock_speed();
+    save_config_file();
+    quit();
+  }
+
+  void menu_load()
+  {
+    const char *file_ext[] = { ".gba", ".bin", ".zip", NULL };
+    char load_filename[512];
+    save_game_config_file();
+    if(load_file(file_ext, load_filename) != -1)
+    {
+       if(load_gamepak(load_filename) == -1)
+       {
+         quit();
+       }
+       reset_gba();
+       return_value = 1;
+       repeat = 0;
+       reg[CHANGED_PC_STATUS] = 1;
+       menu_update_clock();
+    }
+  }
+
+  void menu_restart()
+  {
+    if(!first_load)
+    {
+      reset_gba();
+      reg[CHANGED_PC_STATUS] = 1;
+      return_value = 1;
+      repeat = 0;
+    }
+  }
+
+  void menu_change_state()
+  {
+    get_savestate_filename(savestate_slot, current_savestate_filename);
+  }
+
+  void menu_save_state()
+  {
+    if(!first_load)
+    {
+      get_savestate_filename_noshot(savestate_slot,
+       current_savestate_filename);
+      save_state(current_savestate_filename, original_screen);
+    }
+    menu_change_state();
+  }
+
+  void menu_load_state()
+  {
+    if(!first_load)
+    {
+      load_state(current_savestate_filename);
+      return_value = 1;
+      repeat = 0;
+    }
+  }
+
+  void menu_load_state_file()
+  {
+    const char *file_ext[] = { ".svs", NULL };
+    char load_filename[512];
+    if(load_file(file_ext, load_filename) != -1)
+    {
+      load_state(load_filename);
+      return_value = 1;
+      repeat = 0;
+    }
+    else
+    {
+      choose_menu(current_menu);
+    }
+  }
+
+  void menu_fix_gamepad_help()
+  {
+#ifndef PC_BUILD
+    clear_help();
+    current_option->help_string =
+     gamepad_help[gamepad_config_map[
+     gamepad_config_line_to_button[current_option_num]]];
+#endif
+  }
+
+  void submenu_graphics_sound()
+  {
+
+  }
+
+  void submenu_cheats_misc()
+  {
+
+  }
+
+  void submenu_gamepad()
+  {
+
+  }
+
+  void submenu_analog()
+  {
+
+  }
+
+  void submenu_savestate()
+  {
+    print_string("Savestate options:", COLOR_ACTIVE_ITEM, COLOR_BG, 10, 70);
+    menu_change_state();
+  }
+
+  void submenu_main()
+  {
+    strncpy(print_buffer, gamepak_filename, 80);
+    print_string(print_buffer, COLOR_ROM_INFO, COLOR_BG, 10, 10);
+    sprintf(print_buffer, "%s  %s  %s", gamepak_title,
+     gamepak_code, gamepak_maker);
+    print_string(print_buffer, COLOR_ROM_INFO, COLOR_BG, 10, 20);
+
+    get_savestate_filename_noshot(savestate_slot,
+     current_savestate_filename);
+  }
+
+  const char *yes_no_options[] = { "no", "yes" };
+  const char *enable_disable_options[] = { "disabled", "enabled" };
+
+  const char *frameskip_options[] = { "automatic", "manual", "off" };
+  const char *frameskip_variation_options[] = { "uniform", "random" };
+
+  static const char *update_backup_options[] = { "Exit only", "Automatic" };
+
+  // Marker for help information, don't go past this mark (except \n)------*
+  menu_option_type graphics_sound_options[] = 
+ {
+#ifndef RPI_BUILD
+    string_selection_option(NULL, "Display scaling", scale_options,
+     (u32 *)(&screen_scale),
+     sizeof(scale_options) / sizeof(scale_options[0]),
+#ifndef GP2X_BUILD
+     "Determines how the GBA screen is resized in relation to the\n"
+     "entire screen."
+#ifdef PSP_BUILD
+     " Select unscaled 3:2 for GBA resolution, scaled 3:2 for GBA\n"
+     "aspect ratio scaled to fill the height of the PSP screen, and\n"
+     "fullscreen to fill the entire PSP screen."
+#endif
+#endif
+     "", 2),
+#endif
+
+#ifndef GP2X_BUILD
+    string_selection_option(NULL, "Screen filtering", yes_no_options,
+     (u32 *)(&screen_filter), 2,
+     "Determines whether or not filtering should be used when\n"
+     "scaling the screen. Selecting this will produce a more even and\n"
+     "smooth image, at the cost of being blurry and having less vibrant\n"
+     "colors.", 3),
+#endif
+#if defined (PND_BUILD)
+    string_selection_option(NULL, "Scaling filter", filter2_options,
+     (u32 *)(&screen_filter2),
+     sizeof(filter2_options) / sizeof(filter2_options[0]),
+     "Optional pixel art scaling filter", 4),
+#endif
+    string_selection_option(NULL, "Frameskip type", frameskip_options,
+     (u32 *)(&current_frameskip_type), 3,
+#ifndef GP2X_BUILD
+     "Determines what kind of frameskipping to use.\n"
+     "Frameskipping may improve emulation speed of many games.\n"
+#endif
+     "Off: Do not skip any frames.\n"
+     "Auto: Skip up to N frames (see next opt) as needed.\n"
+     "Manual: Always render only 1 out of N + 1 frames."
+     , 5),
+    numeric_selection_option(NULL, "Frameskip value", &frameskip_value, 100,
+#ifndef GP2X_BUILD
+     "For auto frameskip, determines the maximum number of frames that\n"
+     "are allowed to be skipped consecutively.\n"
+     "For manual frameskip, determines the number of frames that will\n"
+     "always be skipped."
+#endif
+     "", 6),
+    string_selection_option(NULL, "Framskip variation",
+     frameskip_variation_options, &random_skip, 2,
+#ifndef GP2X_BUILD
+     "If objects in the game flicker at a regular rate certain manual\n"
+     "frameskip values may cause them to normally disappear. Change this\n"
+     "value to 'random' to avoid this. Do not use otherwise, as it tends\n"
+     "to make the image quality worse, especially in high motion games."
+#endif
+     "", 7),
+    string_selection_option(NULL, "Audio output", yes_no_options,
+     &global_enable_audio, 2,
+     "Select 'no' to turn off all audio output. This will\n"
+     "not result in a significant change in performance.", 9),
+#ifndef PSP_BUILD
+    string_selection_option(NULL, "Audio buffer", audio_buffer_options,
+             &audio_buffer_size_number, 11,
+#else
+    string_selection_option(NULL, "Audio buffer", audio_buffer_options,
+             &audio_buffer_size_number, 10,
+#endif
+
+#ifdef PSP_BUILD
+     "Set the size (in bytes) of the audio buffer. Larger values may result\n"
+     "in slightly better performance at the cost of latency; the lowest\n"
+     "value will give the most responsive audio.\n"
+     "This option requires gpSP to be restarted before it will take effect.",
+#else
+     "Set the size (in bytes) of the audio buffer.\n"
+     "This option requires gpSP restart to take effect.\n"
+     "Settable values may be limited by SDL implementation.",
+#endif
+     10),
+    submenu_option(NULL, "Back", "Return to the main menu.", 12)
+  };
+
+  make_menu(graphics_sound, submenu_graphics_sound, NULL);
+
+  menu_option_type cheats_misc_options[] =
+  {
+    cheat_option(0),
+    cheat_option(1),
+    cheat_option(2),
+    cheat_option(3),
+    cheat_option(4),
+    cheat_option(5),
+    cheat_option(6),
+    cheat_option(7),
+    cheat_option(8),
+    cheat_option(9),
+#if defined(PSP_BUILD) || defined(GP2X_BUILD)
+    string_selection_option(NULL, "Clock speed",
+     clock_speed_options, &clock_speed_number,
+     sizeof(clock_speed_options) / sizeof(clock_speed_options[0]),
+     "Change the clock speed of the device. Higher clock\n"
+     "speed will yield better performance, but will drain\n"
+     "battery life further.", 11),
+#endif
+    string_selection_option(NULL, "Update backup",
+     update_backup_options, &update_backup_flag, 2,
+#ifdef GP2X_BUILD
+     "Determines when in-game save files should be\n"
+     "written back to SD card."
+#else
+     "Determines when in-game save files should be written back to\n"
+     "card. If set to 'automatic' writebacks will occur shortly after\n"
+     "the game's backup is altered. On 'exit only' it will only be\n"
+     "written back when you exit from this menu.\n"
+#ifdef PSP
+     "(NOT from using the home button), use the latter with extreme care."
+#endif
+#endif
+     "", 12),
+    submenu_option(NULL, "Back", "Return to the main menu.", 14)
+  };
+
+  make_menu(cheats_misc, submenu_cheats_misc, NULL);
+
+  menu_option_type savestate_options[] =
+  {
+    numeric_selection_action_hide_option(menu_load_state, menu_change_state,
+     "Load savestate from current slot", &savestate_slot, 10,
+     "Select to load the game state from the current slot\n"
+     "for this game.\n"
+     "Press left + right to change the current slot.", 6),
+    numeric_selection_action_hide_option(menu_save_state, menu_change_state,
+     "Save savestate to current slot", &savestate_slot, 10,
+     "Select to save the game state to the current slot\n"
+     "for this game.\n"
+     "Press left + right to change the current slot.", 7),
+    numeric_selection_action_hide_option(menu_load_state_file,
+      menu_change_state,
+     "Load savestate from file", &savestate_slot, 10,
+     "Restore gameplay from a savestate file.\n"
+     "Note: The same file used to save the state must be\n"
+     "present.\n", 9),
+    numeric_selection_option(menu_change_state,
+     "Current savestate slot", &savestate_slot, 10,
+     "Change the current savestate slot.\n", 11),
+    submenu_option(NULL, "Back", "Return to the main menu.", 13)
+  };
+
+  make_menu(savestate, submenu_savestate, NULL);
+
+#ifdef PSP_BUILD
+
+  menu_option_type gamepad_config_options[] =
+  {
+    gamepad_config_option("D-pad up     ", 0),
+    gamepad_config_option("D-pad down   ", 1),
+    gamepad_config_option("D-pad left   ", 2),
+    gamepad_config_option("D-pad right  ", 3),
+    gamepad_config_option("Circle       ", 4),
+    gamepad_config_option("Cross        ", 5),
+    gamepad_config_option("Square       ", 6),
+    gamepad_config_option("Triangle     ", 7),
+    gamepad_config_option("Left Trigger ", 8),
+    gamepad_config_option("Right Trigger", 9),
+    gamepad_config_option("Start        ", 10),
+    gamepad_config_option("Select       ", 11),
+    submenu_option(NULL, "Back", "Return to the main menu.", 13)
+  };
+
+
+  menu_option_type analog_config_options[] =
+  {
+    analog_config_option("Analog up   ", 0),
+    analog_config_option("Analog down ", 1),
+    analog_config_option("Analog left ", 2),
+    analog_config_option("Analog right", 3),
+    string_selection_option(NULL, "Enable analog", yes_no_options,
+     &global_enable_analog, 2,
+     "Select 'no' to block analog input entirely.", 7),
+    numeric_selection_option(NULL, "Analog sensitivity",
+     &analog_sensitivity_level, 10,
+     "Determine sensitivity/responsiveness of the analog input.\n"
+     "Lower numbers are less sensitive.", 8),
+    submenu_option(NULL, "Back", "Return to the main menu.", 11)
+  };
+
+#endif
+
+#if defined(GP2X_BUILD) || defined(PND_BUILD)
+
+  menu_option_type gamepad_config_options[] =
+  {
+    gamepad_config_option("D-pad up     ", 0),
+    gamepad_config_option("D-pad down   ", 1),
+    gamepad_config_option("D-pad left   ", 2),
+    gamepad_config_option("D-pad right  ", 3),
+    gamepad_config_option("A            ", 4),
+    gamepad_config_option("B            ", 5),
+    gamepad_config_option("X            ", 6),
+    gamepad_config_option("Y            ", 7),
+    gamepad_config_option("Left Trigger ", 8),
+    gamepad_config_option("Right Trigger", 9),
+#ifdef WIZ_BUILD
+    gamepad_config_option("Menu         ", 10),
+    gamepad_config_option("Select       ", 11),
+#elif defined(POLLUX_BUILD)
+    gamepad_config_option("I            ", 10),
+    gamepad_config_option("II           ", 11),
+    gamepad_config_option("Push         ", 12),
+    gamepad_config_option("Home         ", 13),
+#elif defined(PND_BUILD)
+    gamepad_config_option("Start        ", 10),
+    gamepad_config_option("Select       ", 11),
+    gamepad_config_option("1            ", 12),
+    gamepad_config_option("2            ", 13),
+    gamepad_config_option("3            ", 14),
+    gamepad_config_option("4            ", 15),
+#else // GP2X
+    gamepad_config_option("Start        ", 10),
+    gamepad_config_option("Select       ", 11),
+    gamepad_config_option("Stick Push   ", 12),
+#endif
+#ifdef PND_BUILD
+    submenu_option(NULL, "Back", "Return to the main menu.", 16)
+#else
+    submenu_option(NULL, "Back", "Return to the main menu.", 14)
+#endif
+  };
+
+
+  menu_option_type analog_config_options[] =
+  {
+#if defined(POLLUX_BUILD)
+    numeric_selection_option(NULL, "Analog sensitivity",
+     &analog_sensitivity_level, 10,
+     "Determine sensitivity/responsiveness of the analog input.\n"
+     "Lower numbers are less sensitive.", 8),
+#endif
+    submenu_option(NULL, "Back", "Return to the main menu.", 11)
+  };
+
+#endif
+
+#if defined(PC_BUILD) || defined(RPI_BUILD)
+
+  menu_option_type gamepad_config_options[] =
+  {
+    submenu_option(NULL, "Back", "Return to the main menu.", 13)
+  };
+
+  menu_option_type analog_config_options[] =
+  {
+    submenu_option(NULL, "Back", "Return to the main menu.", 11)
+  };
+
+#endif
+
+  make_menu(gamepad_config, submenu_gamepad, NULL);
+  make_menu(analog_config, submenu_analog, NULL);
+
+  menu_option_type main_options[] =
+  {
+    submenu_option(&graphics_sound_menu, "Graphics and Sound options",
+     "Select to set display parameters and frameskip\n"
+     "behavior, audio on/off, buffer size, and filtering.", 0),
+    numeric_selection_action_option(menu_load_state, NULL,
+     "Load state from slot", &savestate_slot, 10,
+     "Select to load the game state from the current slot\n"
+     "for this game, if it exists.\n"
+     "Press left + right to change the current slot.", 2),
+    numeric_selection_action_option(menu_save_state, NULL,
+     "Save state to slot", &savestate_slot, 10,
+     "Select to save the game state to the current slot\n"
+     "for this game. See the extended menu for more info.\n"
+     "Press left + right to change the current slot.", 3),
+    submenu_option(&savestate_menu, "Savestate options",
+     "Select to enter a menu for loading, saving, and\n"
+     "viewing the currently active savestate for this game\n"
+     "(or to load a savestate file from another game)", 4),
+    submenu_option(&gamepad_config_menu, "Configure gamepad input",
+     "Select to change the in-game behavior of buttons\n"
+     "and d-pad.", 6),
+#ifndef WIZ_BUILD
+    submenu_option(&analog_config_menu, "Configure analog input",
+     "Select to change the in-game behavior of the analog nub.", 7),
+#endif
+    submenu_option(&cheats_misc_menu, "Cheats and Miscellaneous options",
+     "Select to manage cheats, set backup behavior,\n"
+     "and set device clock speed.", 9),
+    action_option(menu_load, NULL, "Load new game",
+     "Select to load a new game\n"
+     "(will exit a game if currently playing).", 11),
+    action_option(menu_restart, NULL, "Restart game",
+     "Select to reset the GBA with the current game\n"
+     "loaded.", 12),
+    action_option(menu_exit, NULL, "Return to game",
+     "Select to exit this menu and resume gameplay.", 13),
+    action_option(menu_quit, NULL, "Exit gpSP",
+     "Select to exit gpSP and return to the menu.", 15)
+  };
+
+  make_menu(main, submenu_main, NULL);
+
+  void choose_menu(menu_type *new_menu)
+  {
+    if(new_menu == NULL)
+      new_menu = &main_menu;
+
+    clear_screen(COLOR_BG);
+
+#ifndef GP2X_BUILD
+    blit_to_screen(original_screen, 240, 160, 230, 40);
+#endif
+
+    current_menu = new_menu;
+    current_option = new_menu->options;
+    current_option_num = 0;
+    if(current_menu->init_function)
+     current_menu->init_function();
+  }
+
+  void clear_help()
+  {
+    for(i = 0; i < 6; i++)
+    {
+      print_string_pad(" ", COLOR_BG, COLOR_BG, 8, 210 + (i * 10), 70);
+    }
+  }
+
+  menu_update_clock();
+  video_resolution_large();
+
+#ifndef GP2X_BUILD
+  SDL_LockMutex(sound_mutex);
+#endif
+  SDL_PauseAudio(1);
+
+#ifndef GP2X_BUILD
+  SDL_UnlockMutex(sound_mutex);
+#endif
+
+  if(gamepak_filename[0] == 0)
+  {
+    first_load = 1;
+    memset(original_screen, 0x00, 240 * 160 * 2);
+    print_string_ext("No game loaded yet.", 0xFFFF, 0x0000,
+     60, 75,original_screen, 240, 0, 0, FONT_HEIGHT);
+  }
+
+  choose_menu(&main_menu);
+
+  for(i = 0; i < 10; i++)
+  {
+    if(i >= num_cheats)
+    {
+      sprintf(cheat_format_str[i], "cheat %d (none loaded)", i);
+    }
+    else
+    {
+      sprintf(cheat_format_str[i], "cheat %d (%s): %%s", i,
+       cheats[i].cheat_name);
+    }
+  }
+
+  current_menu->init_function();
+
+  while(repeat)
+  {
+    display_option = current_menu->options;
+
+    for(i = 0; i < current_menu->num_options; i++, display_option++)
+    {
+      if(display_option->option_type & NUMBER_SELECTION_OPTION)
+      {
+        sprintf(line_buffer, display_option->display_string,
+         *(display_option->current_option));
+      }
+      else
+
+      if(display_option->option_type & STRING_SELECTION_OPTION)
+      {
+        sprintf(line_buffer, display_option->display_string,
+         ((u32 *)display_option->options)[*(display_option->current_option)]);
+      }
+      else
+      {
+        strcpy(line_buffer, display_option->display_string);
+      }
+
+      if(display_option == current_option)
+      {
+        print_string_pad(line_buffer, COLOR_ACTIVE_ITEM, COLOR_BG, 6,
+         (display_option->line_number * 10) + 40, 36);
+      }
+      else
+      {
+        print_string_pad(line_buffer, COLOR_INACTIVE_ITEM, COLOR_BG, 6,
+         (display_option->line_number * 10) + 40, 36);
+      }
+    }
+
+    print_string(current_option->help_string, COLOR_HELP_TEXT,
+     COLOR_BG, 8, 210);
+
+    flip_screen();
+
+    gui_action = get_gui_input();
+
+    switch(gui_action)
+    {
+      case CURSOR_DOWN:
+        current_option_num = (current_option_num + 1) %
+          current_menu->num_options;
+
+        current_option = current_menu->options + current_option_num;
+        clear_help();
+        break;
+
+      case CURSOR_UP:
+        if(current_option_num)
+          current_option_num--;
+        else
+          current_option_num = current_menu->num_options - 1;
+
+        current_option = current_menu->options + current_option_num;
+        clear_help();
+        break;
+
+      case CURSOR_RIGHT:
+        if(current_option->option_type & (NUMBER_SELECTION_OPTION |
+         STRING_SELECTION_OPTION))
+        {
+          *(current_option->current_option) =
+           (*current_option->current_option + 1) %
+           current_option->num_options;
+
+          if(current_option->passive_function)
+            current_option->passive_function();
+        }
+        break;
+
+      case CURSOR_LEFT:
+        if(current_option->option_type & (NUMBER_SELECTION_OPTION |
+         STRING_SELECTION_OPTION))
+        {
+          u32 current_option_val = *(current_option->current_option);
+
+          if(current_option_val)
+            current_option_val--;
+          else
+            current_option_val = current_option->num_options - 1;
+
+          *(current_option->current_option) = current_option_val;
+
+          if(current_option->passive_function)
+            current_option->passive_function();
+        }
+        break;
+
+      case CURSOR_EXIT:
+        if(current_menu == &main_menu)
+          menu_exit();
+
+        choose_menu(&main_menu);
+        break;
+
+      case CURSOR_SELECT:
+        if(current_option->option_type & ACTION_OPTION)
+          current_option->action_function();
+
+        if(current_option->option_type & SUBMENU_OPTION)
+          choose_menu(current_option->sub_menu);
+
+        if(current_menu == &main_menu)
+           choose_menu(&main_menu);
+
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  set_gba_resolution(screen_scale);
+  video_resolution_small();
+  menu_get_clock_speed();
+  set_clock_speed();
+
+  SDL_PauseAudio(0);
+  num_skipped_frames = 100;
+
+  return return_value;
+}

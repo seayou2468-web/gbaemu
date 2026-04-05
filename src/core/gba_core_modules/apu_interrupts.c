@@ -1,914 +1,803 @@
-#if defined(__cplusplus)
-// Imported from reference implementation: gbaSound.cpp
-/* BEGIN gbaSound.cpp */
+// Fully migrated from reference implementation/sound.c
 
-#include <array>
-#include <cassert>
 
-#include "../embedded_include/apu/Blip_Buffer.h"
-#include "../embedded_include/apu/Multi_Buffer.h"
-#include "../embedded_include/apu/Gb_Apu.h"
-#include "../embedded_include/gba/gba.h"
-#include "../embedded_include/gba/gbaSound.h"
-#include "../embedded_include/gba/gbaRtc.h"
 
-#define NR10 0x60
-#define NR11 0x62
-#define NR12 0x63
-#define NR13 0x64
-#define NR14 0x65
-#define NR21 0x68
-#define NR22 0x69
-#define NR23 0x6c
-#define NR24 0x6d
-#define NR30 0x70
-#define NR31 0x72
-#define NR32 0x73
-#define NR33 0x74
-#define NR34 0x75
-#define NR41 0x78
-#define NR42 0x79
-#define NR43 0x7c
-#define NR44 0x7d
-#define NR50 0x80
-#define NR51 0x81
-#define NR52 0x84
+#include "../../../reference implementation/common.h"
+#include "../../../reference implementation/SDL.h"
+u32 global_enable_audio = 1;
 
-std::unique_ptr<SoundDriver> soundDriver;
+direct_sound_struct direct_sound_channel[2];
+gbc_sound_struct gbc_sound_channel[4];
 
-extern bool stopState; // TODO: silence sound when true
-
-int const SOUND_CLOCK_TICKS_ = 280896; // ~1074 samples per frame
-
-static uint16_t soundFinalWave[2048];
-long soundSampleRate = 44100;
-bool g_gbaSoundInterpolation = true;
-bool soundPaused = true;
-float soundFiltering = 0.5f;
-int SOUND_CLOCK_TICKS = SOUND_CLOCK_TICKS_;
-int soundTicks = SOUND_CLOCK_TICKS_;
-
-static float soundVolume = 1.0f;
-static int soundEnableFlag = 0x3ff; // emulator channels enabled
-static float soundFiltering_ = -1.0f;
-static float soundVolume_ = -1.0f;
-
-void interp_rate() { /* empty for now */}
-
-class Gba_Pcm {
-public:
-    void init();
-    void apply_control(int idx);
-    void update(int dac);
-    void end_frame(blip_time_t);
-
-private:
-    Blip_Buffer* output;
-    blip_time_t last_time;
-    int last_amp;
-    int shift;
-};
-
-class Gba_Pcm_Fifo {
-public:
-    int which;
-    Gba_Pcm pcm;
-
-    void write_control(int data);
-    void write_fifo(int data);
-    void timer_overflowed(int which_timer);
-
-    // public only so save state routines can access it
-    int readIndex;
-    int count;
-    int writeIndex;
-    uint8_t fifo[32];
-    int dac;
-
-private:
-    int timer;
-    bool enabled;
-};
-
-static Gba_Pcm_Fifo pcm[2];
-static Gb_Apu* gb_apu;
-static Stereo_Buffer* stereo_buffer;
-
-static Blip_Synth<blip_best_quality, 1> pcm_synth[3]; // 32 kHz, 16 kHz, 8 kHz
-
-void Gba_Pcm::init()
-{
-    output = 0;
-    last_time = 0;
-    last_amp = 0;
-    shift = 0;
-}
-
-void Gba_Pcm::apply_control(int idx)
-{
-    shift = ~g_ioMem[SGCNT0_H] >> (2 + idx) & 1;
-
-    int ch = 0;
-    if ((soundEnableFlag >> idx & 0x100) && (g_ioMem[NR52] & 0x80))
-        ch = g_ioMem[SGCNT0_H + 1] >> (idx * 4) & 3;
-
-    Blip_Buffer* out = 0;
-    switch (ch) {
-    case 1:
-        out = stereo_buffer->right();
-        break;
-    case 2:
-        out = stereo_buffer->left();
-        break;
-    case 3:
-        out = stereo_buffer->center();
-        break;
-    }
-
-    if (output != out) {
-        if (output) {
-            output->set_modified();
-            pcm_synth[0].offset(soundTicks, -last_amp, output);
-        }
-        last_amp = 0;
-        output = out;
-    }
-}
-
-void Gba_Pcm::end_frame(blip_time_t time)
-{
-    last_time -= time;
-    if (last_time < -2048)
-        last_time = -2048;
-
-    if (output)
-        output->set_modified();
-}
-
-void Gba_Pcm::update(int dac)
-{
-    if (output) {
-        blip_time_t time = soundTicks;
-
-        dac = (int8_t)dac >> shift;
-        int delta = dac - last_amp;
-        if (delta) {
-            last_amp = dac;
-
-            int filter = 0;
-            if (g_gbaSoundInterpolation) {
-                // base filtering on how long since last sample was output
-                int period = time - last_time;
-
-                int idx = (unsigned)period / 512;
-                if (idx > 3)
-                    idx = 3;
-
-                static int const filters[4] = { 0, 0, 1, 2 };
-                filter = filters[idx];
-            }
-
-            pcm_synth[filter].offset(time, delta, output);
-        }
-        last_time = time;
-    }
-}
-
-void Gba_Pcm_Fifo::timer_overflowed(int which_timer)
-{
-    if (which_timer == timer && enabled) {
-        // 2025-11-24 - negativeExponent
-        // Timer overflow: consume 1 FIFO sample and update PCM
-        // This ensures that DMA refill is triggered after the FIFO drops to ≤16,
-        // matching original DMA behavior. Zero-fill occurs only if FIFO remains
-        // low after DMA. Preserves Mother 3 and Summon Night 2 timing-sensitive fixes.
-
-        // Read next sample from FIFO
-        count--;
-        dac = fifo[readIndex];
-        readIndex = (readIndex + 1) & 31;
-        pcm.update(dac);
-
-        if (count <= 16) {
-            // Need to fill FIFO
-            CPUCheckDMA(3, which ? 4 : 2);
-            if (count <= 16) {
-                const int io_reg = which ? FIFOB_L : FIFOA_L;
-                for (int n = 4; n--;) {
-                    soundEvent16(io_reg,     0);
-                    soundEvent16(io_reg + 2, 0);
-                }
-            }
-        }
-    }
-}
-
-void Gba_Pcm_Fifo::write_control(int data)
-{
-    enabled = (data & 0x0300) ? true : false;
-    timer = (data & 0x0400) ? 1 : 0;
-
-    if (data & 0x0800) {
-        // Reset
-        writeIndex = 0;
-        readIndex = 0;
-        count = 0;
-        dac = 0;
-        memset(fifo, 0, sizeof fifo);
-    }
-
-    pcm.apply_control(which);
-    pcm.update(dac);
-}
-
-void Gba_Pcm_Fifo::write_fifo(int data)
-{
-    fifo[writeIndex] = data & 0xFF;
-    fifo[writeIndex + 1] = static_cast<uint8_t>(data >> 8);
-    count += 2;
-    writeIndex = (writeIndex + 2) & 31;
-}
-
-static void apply_control()
-{
-    pcm[0].pcm.apply_control(0);
-    pcm[1].pcm.apply_control(1);
-}
-
-static int gba_to_gb_sound(int addr)
-{
-    static const int table[0x40] = {
-        0xFF10,      0, 0xFF11, 0xFF12, 0xFF13, 0xFF14,      0,      0, // 0x60
-        0xFF16, 0xFF17,      0,      0, 0xFF18, 0xFF19,      0,      0, // 0x68
-        0xFF1A,      0, 0xFF1B, 0xFF1C, 0xFF1D, 0xFF1E,      0,      0, // 0x70
-        0xFF20, 0xFF21,      0,      0, 0xFF22, 0xFF23,      0,      0, // 0x78
-        0xFF24, 0xFF25,      0,      0, 0xFF26,      0,      0,      0, // 0x80
-             0,      0,      0,      0,      0,      0,      0,      0, // 0x88
-        0xFF30, 0xFF31, 0xFF32, 0xFF33, 0xFF34, 0xFF35, 0xFF36, 0xFF37, // 0x90
-        0xFF38, 0xFF39, 0xFF3A, 0xFF3B, 0xFF3C, 0xFF3D, 0xFF3E, 0xFF3F, // 0x98
-    };
-    if (addr >= 0x60 && addr < 0xA0)
-        return table[addr - 0x60];
-    return 0;
-}
-
-void soundEvent8(uint32_t address, uint8_t data)
-{
-    if (!gb_apu || !stereo_buffer) {
-        g_ioMem[address] = data;
-        return;
-    }
-
-    int gb_addr = gba_to_gb_sound(address);
-    if (gb_addr) {
-        g_ioMem[address] = data;
-        gb_apu->write_register(soundTicks, gb_addr, data);
-
-        if (address == NR52)
-            apply_control();
-    }
-
-    // TODO: what about byte writes to SGCNT0_H etc.?
-}
-
-static void apply_volume(bool apu_only = false)
-{
-    if (!apu_only)
-        soundVolume_ = soundVolume;
-
-    if (gb_apu) {
-        static float const apu_vols[4] = { 0.25f, 0.5f, 1.0f, 0.25f };
-        gb_apu->volume(soundVolume_ * apu_vols[g_ioMem[SGCNT0_H] & 3]);
-    }
-
-    if (!apu_only) {
-        double synth_vol = 0.66 / 256.0 * soundVolume_;
-        pcm_synth[0].volume(synth_vol);
-        pcm_synth[1].volume(synth_vol);
-        pcm_synth[2].volume(synth_vol);
-    }
-}
-
-static void write_SGCNT0_H(int data)
-{
-    WRITE16LE(&g_ioMem[SGCNT0_H], data & 0x770F);
-    pcm[0].write_control(data);
-    pcm[1].write_control(data >> 4);
-    apply_volume(true);
-}
-
-void soundEvent16(uint32_t address, uint16_t data)
-{
-    if (!gb_apu || !stereo_buffer) {
-        WRITE16LE(&g_ioMem[address], data);
-        return;
-    }
-
-    switch (address) {
-    case SGCNT0_H:
-        write_SGCNT0_H(data);
-        break;
-
-    case FIFOA_L:
-    case FIFOA_H:
-        pcm[0].write_fifo(data);
-        WRITE16LE(&g_ioMem[address], data);
-        break;
-
-    case FIFOB_L:
-    case FIFOB_H:
-        pcm[1].write_fifo(data);
-        WRITE16LE(&g_ioMem[address], data);
-        break;
-
-    case SOUNDBIAS:
-        data &= 0xC3FF;
-        WRITE16LE(&g_ioMem[address], data);
-        break;
-
-    default:
-        soundEvent8(address & ~1, (uint8_t)(data)); // even
-        soundEvent8(address | 1, (uint8_t)(data >> 8)); // odd
-        break;
-    }
-}
-
-void soundTimerOverflow(int timer)
-{
-    if (!gb_apu || !stereo_buffer)
-        return;
-
-    pcm[0].timer_overflowed(timer);
-    pcm[1].timer_overflowed(timer);
-}
-
-static void end_frame(blip_time_t time)
-{
-    if (!gb_apu || !stereo_buffer)
-        return;
-
-    pcm[0].pcm.end_frame(time);
-    pcm[1].pcm.end_frame(time);
-
-    gb_apu->end_frame(time);
-    stereo_buffer->end_frame(time);
-}
-
-#ifdef __LIBRETRO__
-void flush_samples(Multi_Buffer* buffer)
-{
-    long numSamples = buffer->samples_avail();
-    if ((static_cast<size_t>(numSamples) * 2) > sizeof(soundFinalWave)) {
-        // when there is more than 1-frame worth of samples, we
-        // split it so as not to overflow our buffer.
-        // Flush samples 2048 samples at a time
-        while (numSamples > 2048) {
-            buffer->read_samples((blip_sample_t*)soundFinalWave, 2048);
-            soundDriver->write(soundFinalWave, 2048);
-            numSamples -= 2048;
-        }
-        if (numSamples) {
-            // flush remaining samples
-            buffer->read_samples((blip_sample_t*)soundFinalWave, numSamples);
-            soundDriver->write(soundFinalWave, static_cast<int>(numSamples));
-        }
-    } else {
-        buffer->read_samples((blip_sample_t*)soundFinalWave, numSamples);
-        soundDriver->write(soundFinalWave, static_cast<int>(numSamples));
-        systemOnWriteDataToSoundBuffer(soundFinalWave, static_cast<int>(numSamples));
-    }
-}
+#ifdef RPI_BUILD
+u32 sound_frequency = 22050;
 #else
-void flush_samples(Multi_Buffer* buffer)
-{
-    // We want to write the data frame by frame to support legacy audio drivers
-    // that don't use the length parameter of the write method.
-    // TODO: Update the Win32 audio drivers (DS, OAL, XA2), and flush all the
-    // samples at once to help reducing the audio delay on all platforms.
-    int soundBufferLen = (soundSampleRate / 60) * 4;
-
-    // soundBufferLen should have a whole number of sample pairs
-    assert(soundBufferLen % (2 * sizeof *soundFinalWave) == 0);
-
-    // number of samples in output buffer
-    int const out_buf_size = soundBufferLen / sizeof *soundFinalWave;
-
-    // Keep filling and writing soundFinalWave until it can't be fully filled
-    while (buffer->samples_avail() >= out_buf_size) {
-        buffer->read_samples((blip_sample_t*)soundFinalWave, out_buf_size);
-        if (soundPaused)
-            soundResume();
-
-        soundDriver->write(soundFinalWave, soundBufferLen);
-        systemOnWriteDataToSoundBuffer(soundFinalWave, soundBufferLen);
-    }
-}
-#endif // ! __LIBRETRO__
-
-static void apply_filtering()
-{
-    soundFiltering_ = soundFiltering;
-
-    int const base_freq = (int)(32768 - soundFiltering_ * 16384);
-    int const nyquist = stereo_buffer->sample_rate() / 2;
-
-    for (int i = 0; i < 3; i++) {
-        int cutoff = base_freq >> i;
-        if (cutoff > nyquist)
-            cutoff = nyquist;
-        pcm_synth[i].treble_eq(blip_eq_t(0, 0, stereo_buffer->sample_rate(), cutoff));
-    }
-}
-
-void psoundTickfn()
-{
-    if (gb_apu && stereo_buffer) {
-        // Run sound hardware to present
-        end_frame(soundTicks);
-
-        flush_samples(stereo_buffer);
-
-        if (soundFiltering_ != soundFiltering)
-            apply_filtering();
-
-        if (soundVolume_ != soundVolume)
-            apply_volume();
-    }
-
-    soundTicks = 0;
-}
-
-static void apply_muting()
-{
-    if (!stereo_buffer || !g_ioMem)
-        return;
-
-    // PCM
-    apply_control();
-
-    if (gb_apu) {
-        // APU
-        for (int i = 0; i < 4; i++) {
-            if (soundEnableFlag >> i & 1)
-                gb_apu->set_output(stereo_buffer->center(),
-                    stereo_buffer->left(), stereo_buffer->right(), i);
-            else
-                gb_apu->set_output(0, 0, 0, i);
-        }
-    }
-}
-
-static void reset_apu()
-{
-    gb_apu->reset(gb_apu->mode_agb, true);
-
-    if (stereo_buffer)
-        stereo_buffer->clear();
-
-    soundTicks = 0;
-}
-
-void soundShutdown()
-{
-    soundDriver.reset();
-
-    systemOnSoundShutdown();
-
-    delete stereo_buffer;
-    stereo_buffer = 0;
-
-    delete gb_apu;
-    gb_apu = 0;
-}
-
-void soundPause()
-{
-    soundPaused = true;
-    if (soundDriver)
-        soundDriver->pause();
-}
-
-void soundResume()
-{
-    soundPaused = false;
-    if (soundDriver)
-        soundDriver->resume();
-}
-
-void soundSetVolume(float volume)
-{
-    soundVolume = volume;
-}
-
-float soundGetVolume()
-{
-    return soundVolume;
-}
-
-void soundSetEnable(int channels)
-{
-    soundEnableFlag = channels;
-    apply_muting();
-}
-
-int soundGetEnable()
-{
-    return (soundEnableFlag & 0x30f);
-}
-
-void soundReset()
-{
-    if (!soundDriver)
-        return;
-
-    soundDriver->pause();
-    soundDriver->reset();
-
-    if (gb_apu) {
-        gb_apu->end_frame(soundTicks);
-        reset_apu();
-    }
-
-    remake_stereo_buffer();
-
-    soundTicks = 0;
-    soundPaused = 1;
-
-    soundEvent8(NR52, (uint8_t)0x80);
-}
-
-bool soundInit()
-{
-    soundDriver = systemSoundInit();
-    if (!soundDriver)
-        return false;
-
-    if (!soundDriver->init(soundSampleRate))
-        return false;
-
-    if (!stereo_buffer) {
-        remake_stereo_buffer();
-    }
-
-    soundPaused = true;
-    return true;
-}
-
-void soundSetThrottle(unsigned short _throttle)
-{
-    if (!soundDriver)
-        return;
-    soundDriver->setThrottle(_throttle);
-}
-
-long soundGetSampleRate()
-{
-    return soundSampleRate;
-}
-
-void soundSetSampleRate(long sampleRate)
-{
-    if (soundSampleRate != sampleRate) {
-        if (systemCanChangeSoundQuality()) {
-            soundShutdown();
-            soundSampleRate = sampleRate;
-            soundInit();
-        } else {
-            soundSampleRate = sampleRate;
-        }
-
-        remake_stereo_buffer();
-    }
-}
-
-static int dummy_state[16];
-
-#define SKIP(type, name)          \
-    {                             \
-        dummy_state, sizeof(type) \
-    }
-
-#define LOAD(type, name)    \
-    {                       \
-        &name, sizeof(type) \
-    }
-
-static struct {
-    gb_apu_state_t apu;
-
-    // old state
-    uint8_t soundDSAValue;
-    int soundDSBValue;
-} state;
-
-#ifndef __LIBRETRO__
-// Old GBA sound state format
-static variable_desc old_gba_state[] = {
-    SKIP(int, soundPaused),
-    SKIP(int, soundPlay),
-    SKIP(int, soundTicks),
-    SKIP(int, SOUND_CLOCK_TICKS),
-    SKIP(int, soundLevel1),
-    SKIP(int, soundLevel2),
-    SKIP(int, soundBalance),
-    SKIP(int, soundMasterOn),
-    SKIP(int, soundIndex),
-    SKIP(int, sound1On),
-    SKIP(int, sound1ATL),
-    SKIP(int, sound1Skip),
-    SKIP(int, sound1Index),
-    SKIP(int, sound1Continue),
-    SKIP(int, sound1EnvelopeVolume),
-    SKIP(int, sound1EnvelopeATL),
-    SKIP(int, sound1EnvelopeATLReload),
-    SKIP(int, sound1EnvelopeUpDown),
-    SKIP(int, sound1SweepATL),
-    SKIP(int, sound1SweepATLReload),
-    SKIP(int, sound1SweepSteps),
-    SKIP(int, sound1SweepUpDown),
-    SKIP(int, sound1SweepStep),
-    SKIP(int, sound2On),
-    SKIP(int, sound2ATL),
-    SKIP(int, sound2Skip),
-    SKIP(int, sound2Index),
-    SKIP(int, sound2Continue),
-    SKIP(int, sound2EnvelopeVolume),
-    SKIP(int, sound2EnvelopeATL),
-    SKIP(int, sound2EnvelopeATLReload),
-    SKIP(int, sound2EnvelopeUpDown),
-    SKIP(int, sound3On),
-    SKIP(int, sound3ATL),
-    SKIP(int, sound3Skip),
-    SKIP(int, sound3Index),
-    SKIP(int, sound3Continue),
-    SKIP(int, sound3OutputLevel),
-    SKIP(int, sound4On),
-    SKIP(int, sound4ATL),
-    SKIP(int, sound4Skip),
-    SKIP(int, sound4Index),
-    SKIP(int, sound4Clock),
-    SKIP(int, sound4ShiftRight),
-    SKIP(int, sound4ShiftSkip),
-    SKIP(int, sound4ShiftIndex),
-    SKIP(int, sound4NSteps),
-    SKIP(int, sound4CountDown),
-    SKIP(int, sound4Continue),
-    SKIP(int, sound4EnvelopeVolume),
-    SKIP(int, sound4EnvelopeATL),
-    SKIP(int, sound4EnvelopeATLReload),
-    SKIP(int, sound4EnvelopeUpDown),
-    LOAD(int, soundEnableFlag),
-    SKIP(int, soundControl),
-    LOAD(int, pcm[0].readIndex),
-    LOAD(int, pcm[0].count),
-    LOAD(int, pcm[0].writeIndex),
-    SKIP(uint8_t, soundDSAEnabled), // was bool, which was one byte on MS compiler
-    SKIP(int, soundDSATimer),
-    LOAD(uint8_t[32], pcm[0].fifo),
-    LOAD(uint8_t, state.soundDSAValue),
-    LOAD(int, pcm[1].readIndex),
-    LOAD(int, pcm[1].count),
-    LOAD(int, pcm[1].writeIndex),
-    SKIP(int, soundDSBEnabled),
-    SKIP(int, soundDSBTimer),
-    LOAD(uint8_t[32], pcm[1].fifo),
-    LOAD(int, state.soundDSBValue),
-
-    // skipped manually
-    //LOAD( int, soundBuffer[0][0], 6*735 },
-    //LOAD( int, soundFinalWave[0], 2*735 },
-    { NULL, 0 }
-};
-
-variable_desc old_gba_state2[] = {
-    LOAD(uint8_t[0x20], state.apu.regs[0x20]),
-    SKIP(int, sound3Bank),
-    SKIP(int, sound3DataSize),
-    SKIP(int, sound3ForcedOutput),
-    { NULL, 0 }
-};
+u32 sound_frequency = 44100;
 #endif
 
-// New state format
-static variable_desc gba_state[] = {
-    // PCM
-    LOAD(int, pcm[0].readIndex),
-    LOAD(int, pcm[0].count),
-    LOAD(int, pcm[0].writeIndex),
-    LOAD(uint8_t[32], pcm[0].fifo),
-    LOAD(int, pcm[0].dac),
+SDL_mutex *sound_mutex;
+static SDL_cond *sound_cv;
 
-    SKIP(int[4], room_for_expansion),
+#ifdef PSP_BUILD
+u32 audio_buffer_size_number = 1;
+#elif defined(POLLUX_BUILD)
+u32 audio_buffer_size_number = 7;
+#else
+u32 audio_buffer_size_number = 8;
+#endif
 
-    LOAD(int, pcm[1].readIndex),
-    LOAD(int, pcm[1].count),
-    LOAD(int, pcm[1].writeIndex),
-    LOAD(uint8_t[32], pcm[1].fifo),
-    LOAD(int, pcm[1].dac),
+u32 sound_on;
+static u32 audio_buffer_size;
+static s16 sound_buffer[BUFFER_SIZE];
+static u32 sound_buffer_base;
 
-    SKIP(int[4], room_for_expansion),
+static u32 sound_last_cpu_ticks;
+static fixed16_16 gbc_sound_tick_step;
 
-    // APU
-    LOAD(uint8_t[0x40], state.apu.regs), // last values written to registers and wave RAM (both banks)
-    LOAD(int, state.apu.frame_time), // clocks until next frame sequencer action
-    LOAD(int, state.apu.frame_phase), // next step frame sequencer will run
+static u32 sound_exit_flag;
 
-    LOAD(int, state.apu.sweep_freq), // sweep's internal frequency register
-    LOAD(int, state.apu.sweep_delay), // clocks until next sweep action
-    LOAD(int, state.apu.sweep_enabled),
-    LOAD(int, state.apu.sweep_neg), // obscure internal flag
-    LOAD(int, state.apu.noise_divider),
-    LOAD(int, state.apu.wave_buf), // last read byte of wave RAM
+// Queue 1, 2, or 4 samples to the top of the DS FIFO, wrap around circularly
 
-    LOAD(int[4], state.apu.delay), // clocks until next channel action
-    LOAD(int[4], state.apu.length_ctr),
-    LOAD(int[4], state.apu.phase), // square/wave phase, noise LFSR
-    LOAD(int[4], state.apu.enabled), // internal enabled flag
+#define sound_timer_queue(size, value)                                        \
+  *((s##size *)(ds->fifo + ds->fifo_top)) = value;                            \
+  ds->fifo_top = (ds->fifo_top + 1) % 32;                                     \
 
-    LOAD(int[3], state.apu.env_delay), // clocks until next envelope action
-    LOAD(int[3], state.apu.env_volume),
-    LOAD(int[3], state.apu.env_enabled),
+void sound_timer_queue8(u32 channel, u8 value)
+{
+  direct_sound_struct *ds = direct_sound_channel + channel;
+  sound_timer_queue(8, value);
+}
 
-    SKIP(int[13], room_for_expansion),
+void sound_timer_queue16(u32 channel, u16 value)
+{
+  direct_sound_struct *ds = direct_sound_channel + channel;
+  sound_timer_queue(8, value & 0xFF);
+  sound_timer_queue(8, value >> 8);
+}
 
-    // Emulator
-    LOAD(int, soundEnableFlag),
-    LOAD(int, soundTicks),
-    SKIP(int[14], room_for_expansion),
+void sound_timer_queue32(u32 channel, u32 value)
+{
+  direct_sound_struct *ds = direct_sound_channel + channel;
 
-    { NULL, 0 }
+  sound_timer_queue(8, value & 0xFF);
+  sound_timer_queue(8, (value >> 8) & 0xFF);
+  sound_timer_queue(8, (value >> 16) & 0xFF);
+  sound_timer_queue(8, value >> 24);
+}
+
+// Unqueue 1 sample from the base of the DS FIFO and place it on the audio
+// buffer for as many samples as necessary. If the DS FIFO is 16 bytes or
+// smaller and if DMA is enabled for the sound channel initiate a DMA transfer
+// to the DS FIFO.
+
+#define render_sample_null()                                                  \
+
+#define render_sample_left()                                                  \
+  sound_buffer[buffer_index] += current_sample +                              \
+   fp16_16_to_u32((next_sample - current_sample) * (fifo_fractional >> 8))    \
+
+#define render_sample_right()                                                 \
+  sound_buffer[buffer_index + 1] += current_sample +                          \
+   fp16_16_to_u32((next_sample - current_sample) * (fifo_fractional >> 8))    \
+
+#define render_sample_both()                                                  \
+  dest_sample = current_sample +                                              \
+   fp16_16_to_u32((next_sample - current_sample) * (fifo_fractional >> 8));   \
+  sound_buffer[buffer_index] += dest_sample;                                  \
+  sound_buffer[buffer_index + 1] += dest_sample                               \
+
+#define render_samples(type)                                                  \
+  while(fifo_fractional <= 0xFFFFFF)                                          \
+  {                                                                           \
+    render_sample_##type();                                                   \
+    fifo_fractional += frequency_step;                                        \
+    buffer_index = (buffer_index + 2) % BUFFER_SIZE;                          \
+  }                                                                           \
+
+void sound_timer(fixed8_24 frequency_step, u32 channel)
+{
+  direct_sound_struct *ds = direct_sound_channel + channel;
+
+  fixed8_24 fifo_fractional = ds->fifo_fractional;
+  u32 buffer_index = ds->buffer_index;
+  s16 current_sample, next_sample, dest_sample;
+
+  current_sample = ds->fifo[ds->fifo_base] << 4;
+  ds->fifo_base = (ds->fifo_base + 1) % 32;
+  next_sample = ds->fifo[ds->fifo_base] << 4;
+
+  if(sound_on == 1)
+  {
+    if(ds->volume == DIRECT_SOUND_VOLUME_50)
+    {
+      current_sample >>= 1;
+      next_sample >>= 1;
+    }
+
+    switch(ds->status)
+    {
+      case DIRECT_SOUND_INACTIVE:
+        render_samples(null);
+        break;
+
+      case DIRECT_SOUND_RIGHT:
+        render_samples(right);
+        break;
+
+      case DIRECT_SOUND_LEFT:
+        render_samples(left);
+        break;
+
+      case DIRECT_SOUND_LEFTRIGHT:
+        render_samples(both);
+        break;
+    }
+  }
+  else
+  {
+    render_samples(null);
+  }
+
+  ds->buffer_index = buffer_index;
+  ds->fifo_fractional = fp8_24_fractional_part(fifo_fractional);
+
+  if(((ds->fifo_top - ds->fifo_base) % 32) <= 16)
+  {
+    if(dma[1].direct_sound_channel == channel)
+      dma_transfer(dma + 1);
+
+    if(dma[2].direct_sound_channel == channel)
+      dma_transfer(dma + 2);
+  }
+}
+
+void sound_reset_fifo(u32 channel)
+{
+  direct_sound_struct *ds = direct_sound_channel;
+
+  memset(ds->fifo, 0, 32);
+}
+
+// Initial pattern data = 4bits (signed)
+// Channel volume = 12bits
+// Envelope volume = 14bits
+// Master volume = 2bits
+
+// Recalculate left and right volume as volume changes.
+// To calculate the current sample, use (sample * volume) >> 16
+
+// Square waves range from -8 (low) to 7 (high)
+
+s8 square_pattern_duty[4][8] =
+{
+  { 0xF8, 0xF8, 0xF8, 0xF8, 0x07, 0xF8, 0xF8, 0xF8 },
+  { 0xF8, 0xF8, 0xF8, 0xF8, 0x07, 0x07, 0xF8, 0xF8 },
+  { 0xF8, 0xF8, 0x07, 0x07, 0x07, 0x07, 0xF8, 0xF8 },
+  { 0x07, 0x07, 0x07, 0x07, 0xF8, 0xF8, 0x07, 0x07 },
 };
 
-void remake_stereo_buffer()
+s8 wave_samples[64];
+
+u32 noise_table15[1024];
+u32 noise_table7[4];
+
+u32 gbc_sound_master_volume_table[4] = { 1, 2, 4, 0 };
+
+u32 gbc_sound_channel_volume_table[8] =
 {
-    if (!g_ioMem)
-        return;
+  fixed_div(0, 7, 12),
+  fixed_div(1, 7, 12),
+  fixed_div(2, 7, 12),
+  fixed_div(3, 7, 12),
+  fixed_div(4, 7, 12),
+  fixed_div(5, 7, 12),
+  fixed_div(6, 7, 12),
+  fixed_div(7, 7, 12)
+};
 
-    // Clears pointers kept to old stereo_buffer
-    pcm[0].pcm.init();
-    pcm[1].pcm.init();
+u32 gbc_sound_envelope_volume_table[16] =
+{
+  fixed_div(0, 15, 14),
+  fixed_div(1, 15, 14),
+  fixed_div(2, 15, 14),
+  fixed_div(3, 15, 14),
+  fixed_div(4, 15, 14),
+  fixed_div(5, 15, 14),
+  fixed_div(6, 15, 14),
+  fixed_div(7, 15, 14),
+  fixed_div(8, 15, 14),
+  fixed_div(9, 15, 14),
+  fixed_div(10, 15, 14),
+  fixed_div(11, 15, 14),
+  fixed_div(12, 15, 14),
+  fixed_div(13, 15, 14),
+  fixed_div(14, 15, 14),
+  fixed_div(15, 15, 14)
+};
 
-    // APU
-    if (!gb_apu) {
-        gb_apu = new Gb_Apu; // TODO: handle out of memory
-        reset_apu();
+u32 gbc_sound_buffer_index = 0;
+u32 gbc_sound_last_cpu_ticks = 0;
+u32 gbc_sound_partial_ticks = 0;
+
+u32 gbc_sound_master_volume_left;
+u32 gbc_sound_master_volume_right;
+u32 gbc_sound_master_volume;
+
+#define update_volume_channel_envelope(channel)                               \
+  volume_##channel = gbc_sound_envelope_volume_table[envelope_volume] *       \
+   gbc_sound_channel_volume_table[gbc_sound_master_volume_##channel] *        \
+   gbc_sound_master_volume_table[gbc_sound_master_volume]                     \
+
+#define update_volume_channel_noenvelope(channel)                             \
+  volume_##channel = gs->wave_volume *                                        \
+   gbc_sound_channel_volume_table[gbc_sound_master_volume_##channel] *        \
+   gbc_sound_master_volume_table[gbc_sound_master_volume]                     \
+
+#define update_volume(type)                                                   \
+  update_volume_channel_##type(left);                                         \
+  update_volume_channel_##type(right)                                         \
+
+#define update_tone_sweep()                                                   \
+  if(gs->sweep_status)                                                        \
+  {                                                                           \
+    u32 sweep_ticks = gs->sweep_ticks - 1;                                    \
+                                                                              \
+    if(sweep_ticks == 0)                                                      \
+    {                                                                         \
+      u32 rate = gs->rate;                                                    \
+                                                                              \
+      if(gs->sweep_direction)                                                 \
+        rate = rate - (rate >> gs->sweep_shift);                              \
+      else                                                                    \
+        rate = rate + (rate >> gs->sweep_shift);                              \
+                                                                              \
+      if(rate > 2048)                                                         \
+        rate = 2048;                                                          \
+                                                                              \
+      frequency_step = float_to_fp16_16(((131072.0f / (2048 - rate)) * 8.0f)  \
+       / sound_frequency);                                                    \
+                                                                              \
+      gs->frequency_step = frequency_step;                                    \
+      gs->rate = rate;                                                        \
+                                                                              \
+      sweep_ticks = gs->sweep_initial_ticks;                                  \
+    }                                                                         \
+    gs->sweep_ticks = sweep_ticks;                                            \
+  }                                                                           \
+
+#define update_tone_nosweep()                                                 \
+
+#define update_tone_envelope()                                                \
+  if(gs->envelope_status)                                                     \
+  {                                                                           \
+    u32 envelope_ticks = gs->envelope_ticks - 1;                              \
+    envelope_volume = gs->envelope_volume;                                    \
+                                                                              \
+    if(envelope_ticks == 0)                                                   \
+    {                                                                         \
+      if(gs->envelope_direction)                                              \
+      {                                                                       \
+        if(envelope_volume != 15)                                             \
+          envelope_volume = gs->envelope_volume + 1;                          \
+      }                                                                       \
+      else                                                                    \
+      {                                                                       \
+        if(envelope_volume != 0)                                              \
+          envelope_volume = gs->envelope_volume - 1;                          \
+      }                                                                       \
+                                                                              \
+      update_volume(envelope);                                                \
+                                                                              \
+      gs->envelope_volume = envelope_volume;                                  \
+      gs->envelope_ticks = gs->envelope_initial_ticks;                        \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      gs->envelope_ticks = envelope_ticks;                                    \
+    }                                                                         \
+  }                                                                           \
+
+#define update_tone_noenvelope()                                              \
+
+#define update_tone_counters(envelope_op, sweep_op)                           \
+  tick_counter += gbc_sound_tick_step;                                        \
+  if(tick_counter > 0xFFFF)                                                   \
+  {                                                                           \
+    if(gs->length_status)                                                     \
+    {                                                                         \
+      u32 length_ticks = gs->length_ticks - 1;                                \
+      gs->length_ticks = length_ticks;                                        \
+                                                                              \
+      if(length_ticks == 0)                                                   \
+      {                                                                       \
+        gs->active_flag = 0;                                                  \
+        break;                                                                \
+      }                                                                       \
+    }                                                                         \
+                                                                              \
+    update_tone_##envelope_op();                                              \
+    update_tone_##sweep_op();                                                 \
+                                                                              \
+    tick_counter &= 0xFFFF;                                                   \
+  }                                                                           \
+
+#define gbc_sound_render_sample_right()                                       \
+  sound_buffer[buffer_index + 1] += (current_sample * volume_right) >> 22     \
+
+#define gbc_sound_render_sample_left()                                        \
+  sound_buffer[buffer_index] += (current_sample * volume_left) >> 22          \
+
+#define gbc_sound_render_sample_both()                                        \
+  gbc_sound_render_sample_right();                                            \
+  gbc_sound_render_sample_left()                                              \
+
+#define gbc_sound_render_samples(type, sample_length, envelope_op, sweep_op)  \
+  for(i = 0; i < buffer_ticks; i++)                                           \
+  {                                                                           \
+    current_sample =                                                          \
+     sample_data[fp16_16_to_u32(sample_index) % sample_length];               \
+    gbc_sound_render_sample_##type();                                         \
+                                                                              \
+    sample_index += frequency_step;                                           \
+    buffer_index = (buffer_index + 2) % BUFFER_SIZE;                          \
+                                                                              \
+    update_tone_counters(envelope_op, sweep_op);                              \
+  }                                                                           \
+
+#define gbc_noise_wrap_full 32767
+
+#define gbc_noise_wrap_half 126
+
+#define get_noise_sample_full()                                               \
+  current_sample =                                                            \
+   ((s32)(noise_table15[fp16_16_to_u32(sample_index) >> 5] <<                 \
+   (fp16_16_to_u32(sample_index) & 0x1F)) >> 31) & 0x0F                       \
+
+#define get_noise_sample_half()                                               \
+  current_sample =                                                            \
+   ((s32)(noise_table7[fp16_16_to_u32(sample_index) >> 5] <<                  \
+   (fp16_16_to_u32(sample_index) & 0x1F)) >> 31) & 0x0F                       \
+
+#define gbc_sound_render_noise(type, noise_type, envelope_op, sweep_op)       \
+  for(i = 0; i < buffer_ticks; i++)                                           \
+  {                                                                           \
+    get_noise_sample_##noise_type();                                          \
+    gbc_sound_render_sample_##type();                                         \
+                                                                              \
+    sample_index += frequency_step;                                           \
+                                                                              \
+    if(sample_index >= u32_to_fp16_16(gbc_noise_wrap_##noise_type))           \
+      sample_index -= u32_to_fp16_16(gbc_noise_wrap_##noise_type);            \
+                                                                              \
+    buffer_index = (buffer_index + 2) % BUFFER_SIZE;                          \
+    update_tone_counters(envelope_op, sweep_op);                              \
+  }                                                                           \
+
+#define gbc_sound_render_channel(type, sample_length, envelope_op, sweep_op)  \
+  buffer_index = gbc_sound_buffer_index;                                      \
+  sample_index = gs->sample_index;                                            \
+  frequency_step = gs->frequency_step;                                        \
+  tick_counter = gs->tick_counter;                                            \
+                                                                              \
+  update_volume(envelope_op);                                                 \
+                                                                              \
+  switch(gs->status)                                                          \
+  {                                                                           \
+    case GBC_SOUND_INACTIVE:                                                  \
+      break;                                                                  \
+                                                                              \
+    case GBC_SOUND_LEFT:                                                      \
+      gbc_sound_render_##type(left, sample_length, envelope_op, sweep_op);    \
+      break;                                                                  \
+                                                                              \
+    case GBC_SOUND_RIGHT:                                                     \
+      gbc_sound_render_##type(right, sample_length, envelope_op, sweep_op);   \
+      break;                                                                  \
+                                                                              \
+    case GBC_SOUND_LEFTRIGHT:                                                 \
+      gbc_sound_render_##type(both, sample_length, envelope_op, sweep_op);    \
+      break;                                                                  \
+  }                                                                           \
+                                                                              \
+  gs->sample_index = sample_index;                                            \
+  gs->tick_counter = tick_counter;                                            \
+
+#define gbc_sound_load_wave_ram(bank)                                         \
+  wave_bank = wave_samples + (bank * 32);                                     \
+  for(i = 0, i2 = 0; i < 16; i++, i2 += 2)                                    \
+  {                                                                           \
+    current_sample = wave_ram[i];                                             \
+    wave_bank[i2] = (((current_sample >> 4) & 0x0F) - 8);                     \
+    wave_bank[i2 + 1] = ((current_sample & 0x0F) - 8);                        \
+  }                                                                           \
+
+void update_gbc_sound(u32 cpu_ticks)
+{
+  fixed16_16 buffer_ticks = float_to_fp16_16((float)(cpu_ticks -
+   gbc_sound_last_cpu_ticks) * sound_frequency / GBC_BASE_RATE);
+  u32 i, i2;
+  gbc_sound_struct *gs = gbc_sound_channel;
+  fixed16_16 sample_index, frequency_step;
+  fixed16_16 tick_counter;
+  u32 buffer_index;
+  s32 volume_left, volume_right;
+  u32 envelope_volume;
+  s32 current_sample;
+  u32 sound_status = address16(io_registers, 0x84) & 0xFFF0;
+  s8 *sample_data;
+  s8 *wave_bank;
+  u8 *wave_ram = ((u8 *)io_registers) + 0x90;
+
+  gbc_sound_partial_ticks += fp16_16_fractional_part(buffer_ticks);
+  buffer_ticks = fp16_16_to_u32(buffer_ticks);
+
+  if(gbc_sound_partial_ticks > 0xFFFF)
+  {
+    buffer_ticks += 1;
+    gbc_sound_partial_ticks &= 0xFFFF;
+  }
+
+  SDL_LockMutex(sound_mutex);
+  if(synchronize_flag)
+  {
+    if(((gbc_sound_buffer_index - sound_buffer_base) % BUFFER_SIZE) >=
+     (audio_buffer_size * 2))
+    {
+      while(((gbc_sound_buffer_index - sound_buffer_base) % BUFFER_SIZE) >
+       (audio_buffer_size * 3 / 2))
+      {
+        SDL_CondWait(sound_cv, sound_mutex);
+      }
+
+#ifdef PSP_BUILD
+      if(current_frameskip_type == auto_frameskip)
+      {
+        sceDisplayWaitVblankStart();
+        real_frame_count = 0;
+        virtual_frame_count = 0;
+      }
+#else
+      if(current_frameskip_type == auto_frameskip)
+      {
+/*
+        u64 current_ticks;
+        u64 next_ticks;
+        get_ticks_us(&current_ticks);
+
+        next_ticks = ((current_ticks + 16666) / 16667) * 16667;
+        delay_us(next_ticks - current_ticks);
+
+        get_ticks_us(&frame_count_initial_timestamp);
+*/
+        /* prevent frameskip, or it will cause more audio,
+	 * then more waiting here, then frame skip again, ... */
+        num_skipped_frames = 100;
+      }
+#endif
+
+    }
+  }
+  if(sound_on == 1)
+  {
+    gs = gbc_sound_channel + 0;
+    if(gs->active_flag)
+    {
+      sound_status |= 0x01;
+      sample_data = gs->sample_data;
+      envelope_volume = gs->envelope_volume;
+      gbc_sound_render_channel(samples, 8, envelope, sweep);
     }
 
-    gb_apu->save_state(&state.apu);
-
-    // Stereo_Buffer
-    delete stereo_buffer;
-    stereo_buffer = 0;
-
-    stereo_buffer = new Stereo_Buffer; // TODO: handle out of memory
-    stereo_buffer->set_sample_rate(soundSampleRate); // TODO: handle out of memory
-    stereo_buffer->clock_rate(gb_apu->clock_rate);
-
-    // Reapply APU register values from g_ioMem
-    for (int addr = NR10; addr <= NR52; ++addr) {
-        const int gb_reg = gba_to_gb_sound(addr);
-
-        if (addr == NR52)
-            g_ioMem[addr] |= 0x80;
-
-        if (gb_reg >= 0xFF10) {
-            state.apu.regs[gb_reg - 0xFF10] = g_ioMem[addr];
-        }
+    gs = gbc_sound_channel + 1;
+    if(gs->active_flag)
+    {
+      sound_status |= 0x02;
+      sample_data = gs->sample_data;
+      envelope_volume = gs->envelope_volume;
+      gbc_sound_render_channel(samples, 8, envelope, nosweep);
     }
 
-    // Reapply wave RAM
-    memcpy(&state.apu.regs[0x20], &g_ioMem[0x90], 0x10);
-    memcpy(&state.apu.regs[0x30], &g_ioMem[0x90], 0x10);
+    gs = gbc_sound_channel + 2;
+    if(gbc_sound_wave_update)
+    {
+      if(gs->wave_bank == 1)
+      {
+        gbc_sound_load_wave_ram(1);
+      }
+      else
+      {
+        gbc_sound_load_wave_ram(0);
+      }
 
-    // PCM
-    pcm[0].which = 0;
-    pcm[1].which = 1;
-    apply_filtering();
-
-    // Volume Level
-    gb_apu->load_state(state.apu);
-    write_SGCNT0_H(READ16LE(&g_ioMem[SGCNT0_H]) & 0x770F);
-
-    apply_muting();
-    apply_volume();
-}
-
-#ifndef __LIBRETRO__
-void soundSaveGame(gzFile out)
-{
-    gb_apu->save_state(&state.apu);
-
-    // Be sure areas for expansion get written as zero
-    memset(dummy_state, 0, sizeof dummy_state);
-
-    utilWriteData(out, gba_state);
-}
-
-// Reads and discards count bytes from in
-static void skip_read(gzFile in, int count)
-{
-    char buf[512];
-
-    while (count) {
-        int n = sizeof buf;
-        if (n > count)
-            n = count;
-
-        count -= n;
-        utilGzRead(in, buf, n);
-    }
-}
-
-static void soundReadGameOld(gzFile in, int version)
-{
-    // Read main data
-    utilReadData(in, old_gba_state);
-    skip_read(in, 6 * 735 + 2 * 735);
-
-    // Copy APU regs
-    static constexpr std::array<int, 21> regs_to_copy {
-        NR10, NR11, NR12, NR13, NR14,
-        NR21, NR22, NR23, NR24,
-        NR30, NR31, NR32, NR33, NR34,
-        NR41, NR42, NR43, NR44,
-        NR50, NR51, NR52,
-    };
-
-    g_ioMem[NR52] |= 0x80; // old sound played even when this wasn't set (power on)
-
-    for (const int gba_reg: regs_to_copy) {
-        const int gb_reg = gba_to_gb_sound(gba_reg);
-        if (gb_reg >= 0xFF10) {
-            state.apu.regs[gb_reg - 0xFF10] = g_ioMem[gba_reg];
-        }
+      gbc_sound_wave_update = 0;
     }
 
-    // Copy wave RAM to both banks
-    memcpy(&state.apu.regs[0x20], &g_ioMem[0x90], 0x10);
-    memcpy(&state.apu.regs[0x30], &g_ioMem[0x90], 0x10);
+    if((gs->active_flag) && (gs->master_enable))
+    {
+      sound_status |= 0x04;
+      sample_data = wave_samples;
+      if(gs->wave_type == 0)
+      {
+        if(gs->wave_bank == 1)
+          sample_data += 32;
 
-    // Read both banks of wave RAM if available
-    if (version >= SAVE_GAME_VERSION_3)
-        utilReadData(in, old_gba_state2);
+        gbc_sound_render_channel(samples, 32, noenvelope, nosweep);
+      }
+      else
+      {
+        gbc_sound_render_channel(samples, 64, noenvelope, nosweep);
+      }
+    }
 
-    // Restore PCM
-    pcm[0].dac = state.soundDSAValue;
-    pcm[1].dac = state.soundDSBValue;
+    gs = gbc_sound_channel + 3;
+    if(gs->active_flag)
+    {
+      sound_status |= 0x08;
+      envelope_volume = gs->envelope_volume;
 
-    (void)utilReadInt(in); // ignore quality
+      if(gs->noise_type == 1)
+      {
+        gbc_sound_render_channel(noise, half, envelope, nosweep);
+      }
+      else
+      {
+        gbc_sound_render_channel(noise, full, envelope, nosweep);
+      }
+    }
+  }
+
+  address16(io_registers, 0x84) = sound_status;
+
+  gbc_sound_last_cpu_ticks = cpu_ticks;
+  gbc_sound_buffer_index =
+   (gbc_sound_buffer_index + (buffer_ticks * 2)) % BUFFER_SIZE;
+
+  SDL_UnlockMutex(sound_mutex);
+
+  SDL_CondSignal(sound_cv);
 }
 
-#include <stdio.h>
+#define sound_copy_normal()                                                   \
+  current_sample = source[i]                                                  \
 
-void soundReadGame(gzFile in, int version)
+#define sound_copy(source_offset, length, render_type)                        \
+  _length = (length) / 2;                                                     \
+  source = (s16 *)(sound_buffer + source_offset);                             \
+  for(i = 0; i < _length; i++)                                                \
+  {                                                                           \
+    sound_copy_##render_type();                                               \
+    if(current_sample > 2047)                                                 \
+      current_sample = 2047;                                                  \
+    if(current_sample < -2048)                                                \
+      current_sample = -2048;                                                 \
+                                                                              \
+    stream_base[i] = current_sample << 4;                                     \
+    source[i] = 0;                                                            \
+  }                                                                           \
+
+#define sound_copy_null(source_offset, length)                                \
+  _length = (length) / 2;                                                     \
+  source = (s16 *)(sound_buffer + source_offset);                             \
+  for(i = 0; i < _length; i++)                                                \
+  {                                                                           \
+    stream_base[i] = 0;                                                       \
+    source[i] = 0;                                                            \
+  }                                                                           \
+
+
+void sound_callback(void *userdata, Uint8 *stream, int length)
 {
-    // Prepare APU and default state
-    reset_apu();
-    pcm[0].pcm.init();
-    pcm[1].pcm.init();
-    gb_apu->save_state(&state.apu);
+  u32 sample_length = length / 2;
+  u32 _length;
+  u32 i;
+  s16 *stream_base = (s16 *)stream;
+  s16 *source;
+  s32 current_sample;
 
-    if (version > SAVE_GAME_VERSION_9)
-        utilReadData(in, gba_state);
+  SDL_LockMutex(sound_mutex);
+
+  while(((gbc_sound_buffer_index - sound_buffer_base) % BUFFER_SIZE) <
+   length && !sound_exit_flag)
+  {
+    SDL_CondWait(sound_cv, sound_mutex);
+  }
+
+  if(global_enable_audio)
+  {
+    if((sound_buffer_base + sample_length) >= BUFFER_SIZE)
+    {
+      u32 partial_length = (BUFFER_SIZE - sound_buffer_base) * 2;
+      sound_copy(sound_buffer_base, partial_length, normal);
+      source = (s16 *)sound_buffer;
+      sound_copy(0, length - partial_length, normal);
+      sound_buffer_base = (length - partial_length) / 2;
+    }
     else
-        soundReadGameOld(in, version);
+    {
+      sound_copy(sound_buffer_base, length, normal);
+      sound_buffer_base += sample_length;
+    }
+  }
+  else
+  {
+    if((sound_buffer_base + sample_length) >= BUFFER_SIZE)
+    {
+      u32 partial_length = (BUFFER_SIZE - sound_buffer_base) * 2;
+      sound_copy_null(sound_buffer_base, partial_length);
+      source = (s16 *)sound_buffer;
+      sound_copy(0, length - partial_length, normal);
+      sound_buffer_base = (length - partial_length) / 2;
+    }
+    else
+    {
+      sound_copy_null(sound_buffer_base, length);
+      sound_buffer_base += sample_length;
+    }
+  }
 
-    gb_apu->load_state(state.apu);
-    write_SGCNT0_H(READ16LE(&g_ioMem[SGCNT0_H]) & 0x770F);
+  SDL_CondSignal(sound_cv);
 
-    apply_muting();
+  SDL_UnlockMutex(sound_mutex);
 }
-#endif // !__LIBRETRO__
 
-#ifdef __LIBRETRO__
-void soundSaveGame(uint8_t*& out)
+// Special thanks to blarrg for the LSFR frequency used in Meridian, as posted
+// on the forum at http://meridian.overclocked.org:
+// http://meridian.overclocked.org/cgi-bin/wwwthreads/showpost.pl?Board=merid
+// angeneraldiscussion&Number=2069&page=0&view=expanded&mode=threaded&sb=4
+// Hope you don't mind me borrowing it ^_-
+
+void init_noise_table(u32 *table, u32 period, u32 bit_length)
 {
-    gb_apu->save_state(&state.apu);
+  u32 shift_register = 0xFF;
+  u32 mask = ~(1 << bit_length);
+  s32 table_pos, bit_pos;
+  u32 current_entry;
+  u32 table_period = (period + 31) / 32;
 
-    // Be sure areas for expansion get written as zero
-    memset(dummy_state, 0, sizeof dummy_state);
+  // Bits are stored in reverse order so they can be more easily moved to
+  // bit 31, for sign extended shift down.
 
-    utilWriteDataMem(out, gba_state);
+  for(table_pos = 0; table_pos < table_period; table_pos++)
+  {
+    current_entry = 0;
+    for(bit_pos = 31; bit_pos >= 0; bit_pos--)
+    {
+      current_entry |= (shift_register & 0x01) << bit_pos;
+
+      shift_register =
+       ((1 & (shift_register ^ (shift_register >> 1))) << bit_length) |
+       ((shift_register >> 1) & mask);
+    }
+
+    table[table_pos] = current_entry;
+  }
 }
 
-void soundReadGame(const uint8_t*& in)
+void reset_sound()
 {
-    // Prepare APU and default state
-    reset_apu();
-    pcm[0].pcm.init();
-    pcm[1].pcm.init();
-    gb_apu->save_state(&state.apu);
+  direct_sound_struct *ds = direct_sound_channel;
+  gbc_sound_struct *gs = gbc_sound_channel;
+  u32 i;
 
-    utilReadDataMem(in, gba_state);
+  SDL_LockMutex(sound_mutex);
 
-    gb_apu->load_state(state.apu);
-    write_SGCNT0_H(READ16LE(&g_ioMem[SGCNT0_H]) & 0x770F);
+  sound_on = 0;
+  sound_buffer_base = 0;
+  sound_last_cpu_ticks = 0;
+  memset(sound_buffer, 0, sizeof(sound_buffer));
 
-    apply_muting();
+  for(i = 0; i < 2; i++, ds++)
+  {
+    ds->buffer_index = 0;
+    ds->status = DIRECT_SOUND_INACTIVE;
+    ds->fifo_top = 0;
+    ds->fifo_base = 0;
+    ds->fifo_fractional = 0;
+    ds->last_cpu_ticks = 0;
+    memset(ds->fifo, 0, 32);
+  }
+
+  gbc_sound_buffer_index = 0;
+  gbc_sound_last_cpu_ticks = 0;
+  gbc_sound_partial_ticks = 0;
+
+  gbc_sound_master_volume_left = 0;
+  gbc_sound_master_volume_right = 0;
+  gbc_sound_master_volume = 0;
+  memset(wave_samples, 0, 64);
+
+  for(i = 0; i < 4; i++, gs++)
+  {
+    gs->status = GBC_SOUND_INACTIVE;
+    gs->sample_data = square_pattern_duty[2];
+    gs->active_flag = 0;
+  }
+
+  SDL_UnlockMutex(sound_mutex);
 }
-#endif // __LIBRETRO__
-/* END gbaSound.cpp */
 
+void sound_exit()
+{
+  gbc_sound_buffer_index =
+   (sound_buffer_base + audio_buffer_size) % BUFFER_SIZE;
+  SDL_PauseAudio(1);
+  sound_exit_flag = 1;
+  SDL_CondSignal(sound_cv);
+  SDL_CloseAudio();
+  SDL_Delay(200);
+  SDL_DestroyMutex(sound_mutex);
+  sound_mutex = NULL;
+  SDL_DestroyCond(sound_cv);
+  sound_cv = NULL;
+}
+
+void init_sound(int need_reset)
+{
+  SDL_AudioSpec sound_settings;
+
+  sound_exit_flag = 0;
+#ifdef PSP_BUILD
+  audio_buffer_size = (audio_buffer_size_number * 1024) + 3072;
 #else
-/* C translation unit stub: compiled in C++ aggregate mode only. */
+  audio_buffer_size = 16 << audio_buffer_size_number;
+//  audio_buffer_size = 16384;
 #endif
+
+  SDL_AudioSpec desired_spec =
+  {
+    sound_frequency,
+    AUDIO_S16,
+    2,
+    0,
+    audio_buffer_size / 4,
+    0,
+    0,
+    sound_callback,
+    NULL
+  };
+
+  sound_mutex = SDL_CreateMutex();
+  sound_cv = SDL_CreateCond();
+
+  SDL_OpenAudio(&desired_spec, &sound_settings);
+  sound_frequency = sound_settings.freq;
+  audio_buffer_size = sound_settings.size;
+  u32 i = audio_buffer_size / 16;
+  for (audio_buffer_size_number = 0; i && (i & 1) == 0; i >>= 1)
+    audio_buffer_size_number++;
+#ifndef PSP_BUILD
+  printf("audio: freq %d, size %d\n", sound_frequency, audio_buffer_size);
+#endif
+
+  gbc_sound_tick_step =
+   float_to_fp16_16(256.0f / sound_frequency);
+
+  init_noise_table(noise_table15, 32767, 14);
+  init_noise_table(noise_table7, 127, 6);
+
+  if (need_reset)
+    reset_sound();
+
+  SDL_PauseAudio(0);
+}
+
+#define sound_savestate_builder(type)                                       \
+void sound_##type##_savestate(file_tag_type savestate_file)                 \
+{                                                                           \
+  file_##type##_variable(savestate_file, sound_on);                         \
+  file_##type##_variable(savestate_file, sound_buffer_base);                \
+  file_##type##_variable(savestate_file, sound_last_cpu_ticks);             \
+  file_##type##_variable(savestate_file, gbc_sound_buffer_index);           \
+  file_##type##_variable(savestate_file, gbc_sound_last_cpu_ticks);         \
+  file_##type##_variable(savestate_file, gbc_sound_partial_ticks);          \
+  file_##type##_variable(savestate_file, gbc_sound_master_volume_left);     \
+  file_##type##_variable(savestate_file, gbc_sound_master_volume_right);    \
+  file_##type##_variable(savestate_file, gbc_sound_master_volume);          \
+  file_##type##_array(savestate_file, wave_samples);                        \
+  file_##type##_array(savestate_file, direct_sound_channel);                \
+  file_##type##_array(savestate_file, gbc_sound_channel);                   \
+}                                                                           \
+
+sound_savestate_builder(read);
+sound_savestate_builder(write_mem);
+
