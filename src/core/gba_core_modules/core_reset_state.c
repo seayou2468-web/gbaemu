@@ -210,6 +210,7 @@ void init_main()
   flush_translation_cache_bios();
 }
 
+#if !defined(IOS_BUILD)
 int main(int argc, char *argv[])
 {
   char bios_filename[512];
@@ -384,6 +385,7 @@ int main(int argc, char *argv[])
 #endif
   return 0;
 }
+#endif
 
 void print_memory_stats(u32 *counter, u32 *region_stats, char *stats_str)
 {

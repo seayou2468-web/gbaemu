@@ -2,7 +2,9 @@
 
 
 #include "../common.h"
+#ifdef HAVE_ZLIB
 #include <zlib.h>
+#endif
 
 #define ZIP_BUFFER_SIZE (128 * 1024)
 
@@ -88,6 +90,7 @@ u32 load_file_zip(char *filename)
           goto outcode;
 
         case 8:
+#ifdef HAVE_ZLIB
         {
           z_stream stream;
           s32 err;
@@ -128,6 +131,10 @@ u32 load_file_zip(char *filename)
           free(cbuffer);
           goto outcode;
         }
+#else
+          // Deflate-compressed zip entries require zlib support.
+          goto skip;
+#endif
       }
     }
 

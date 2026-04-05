@@ -4,6 +4,9 @@
 #define IN_MEMORY_C
 #include "../common.h"
 
+u8 *memory_map_read[8 * 1024];
+u8 *memory_map_write[8 * 1024];
+
 // This table is configured for sequential access on system defaults
 
 u32 waitstate_cycles_sequential[16][3] =
