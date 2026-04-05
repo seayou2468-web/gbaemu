@@ -247,3 +247,35 @@ void PlatformAllowGfxMemory(void *ptr, int size) {
   (void)ptr;
   (void)size;
 }
+
+int GBA_Init(uint32_t flags) { return PlatformInit(flags); }
+void GBA_Quit(void) { PlatformQuit(); }
+int GBA_PollEvent(PlatformEvent *event) { return PlatformPollEvent(event); }
+int GBA_NumJoysticks(void) { return PlatformNumJoysticks(); }
+PlatformJoystick *GBA_JoystickOpen(int index) { return PlatformJoystickOpen(index); }
+int GBA_JoystickEventState(int state) { return PlatformJoystickEventState(state); }
+PlatformSurface *GBA_SetVideoMode(int w, int h, int bpp, uint32_t flags) { return PlatformSetVideoMode(w, h, bpp, flags); }
+PlatformSurface *GBA_CreateRGBSurface(uint32_t flags, int w, int h, int depth,
+                                      uint32_t rmask, uint32_t gmask, uint32_t bmask, uint32_t amask) {
+  return PlatformCreateRGBSurface(flags, w, h, depth, rmask, gmask, bmask, amask);
+}
+int GBA_BlitSurface(PlatformSurface *src, const PlatformRect *srcrect, PlatformSurface *dst, PlatformRect *dstrect) {
+  return PlatformBlitSurface(src, srcrect, dst, dstrect);
+}
+int GBA_Flip(PlatformSurface *screen) { return PlatformFlip(screen); }
+void GBA_FreeSurface(PlatformSurface *surface) { PlatformFreeSurface(surface); }
+int GBA_ShowCursor(int toggle) { return PlatformShowCursor(toggle); }
+void GBA_SetCaption(const char *title, const char *icon) { PlatformSetCaption(title, icon); }
+PlatformMutex *GBA_CreateMutex(void) { return PlatformCreateMutex(); }
+void GBA_DestroyMutex(PlatformMutex *mutex) { PlatformDestroyMutex(mutex); }
+int GBA_LockMutex(PlatformMutex *mutex) { return PlatformLockMutex(mutex); }
+int GBA_UnlockMutex(PlatformMutex *mutex) { return PlatformUnlockMutex(mutex); }
+PlatformCond *GBA_CreateCond(void) { return PlatformCreateCond(); }
+void GBA_DestroyCond(PlatformCond *cond) { PlatformDestroyCond(cond); }
+int GBA_CondWait(PlatformCond *cond, PlatformMutex *mutex) { return PlatformCondWait(cond, mutex); }
+int GBA_CondSignal(PlatformCond *cond) { return PlatformCondSignal(cond); }
+int GBA_OpenAudio(PlatformAudioSpec *desired, PlatformAudioSpec *obtained) { return PlatformOpenAudio(desired, obtained); }
+void GBA_CloseAudio(void) { PlatformCloseAudio(); }
+void GBA_PauseAudio(int pause_on) { PlatformPauseAudio(pause_on); }
+uint32_t GBA_GetTicks(void) { return PlatformGetTicks(); }
+void GBA_Delay(uint32_t ms) { PlatformDelay(ms); }

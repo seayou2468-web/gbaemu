@@ -101,6 +101,35 @@ void PlatformDelay(uint32_t ms);
 void gpsp_plat_init(void);
 void gpsp_plat_quit(void);
 
+// App-side compatibility exports (legacy names).
+int GBA_Init(uint32_t flags);
+void GBA_Quit(void);
+int GBA_PollEvent(PlatformEvent *event);
+int GBA_NumJoysticks(void);
+PlatformJoystick *GBA_JoystickOpen(int index);
+int GBA_JoystickEventState(int state);
+PlatformSurface *GBA_SetVideoMode(int w, int h, int bpp, uint32_t flags);
+PlatformSurface *GBA_CreateRGBSurface(uint32_t flags, int w, int h, int depth,
+                                      uint32_t rmask, uint32_t gmask, uint32_t bmask, uint32_t amask);
+int GBA_BlitSurface(PlatformSurface *src, const PlatformRect *srcrect, PlatformSurface *dst, PlatformRect *dstrect);
+int GBA_Flip(PlatformSurface *screen);
+void GBA_FreeSurface(PlatformSurface *surface);
+int GBA_ShowCursor(int toggle);
+void GBA_SetCaption(const char *title, const char *icon);
+PlatformMutex *GBA_CreateMutex(void);
+void GBA_DestroyMutex(PlatformMutex *mutex);
+int GBA_LockMutex(PlatformMutex *mutex);
+int GBA_UnlockMutex(PlatformMutex *mutex);
+PlatformCond *GBA_CreateCond(void);
+void GBA_DestroyCond(PlatformCond *cond);
+int GBA_CondWait(PlatformCond *cond, PlatformMutex *mutex);
+int GBA_CondSignal(PlatformCond *cond);
+int GBA_OpenAudio(PlatformAudioSpec *desired, PlatformAudioSpec *obtained);
+void GBA_CloseAudio(void);
+void GBA_PauseAudio(int pause_on);
+uint32_t GBA_GetTicks(void);
+void GBA_Delay(uint32_t ms);
+
 #ifdef __cplusplus
 }
 
