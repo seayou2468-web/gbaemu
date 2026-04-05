@@ -871,15 +871,12 @@ enum file_options {
   fo_main_option_count,
 };
 
-#ifdef PC_BUILD
-#define PLAT_BUTTON_COUNT 0
-#define PLAT_MENU_BUTTON -1
-#endif
-#ifdef IOS_BUILD
-#define PLAT_BUTTON_COUNT 0
-#define PLAT_MENU_BUTTON -1
-#endif
-#define FILE_OPTION_COUNT (fo_main_option_count + PLAT_BUTTON_COUNT)
+enum
+{
+  PLATFORM_BUTTON_COUNT = 0,
+  PLATFORM_MENU_BUTTON = -1,
+  FILE_OPTION_COUNT = fo_main_option_count + PLATFORM_BUTTON_COUNT
+};
 
 s32 load_config_file()
 {
@@ -923,7 +920,7 @@ s32 load_config_file()
 #ifndef PC_BUILD
       u32 i;
       s32 menu_button = -1;
-      for(i = 0; i < PLAT_BUTTON_COUNT; i++)
+      for(i = 0; i < PLATFORM_BUTTON_COUNT; i++)
       {
         gamepad_config_map[i] = file_options[fo_main_option_count + i] %
          (BUTTON_ID_NONE + 1);
@@ -934,9 +931,9 @@ s32 load_config_file()
         }
       }
 
-      if(menu_button == -1 && PLAT_MENU_BUTTON >= 0)
+      if(menu_button == -1 && PLATFORM_MENU_BUTTON >= 0)
       {
-        gamepad_config_map[PLAT_MENU_BUTTON] = BUTTON_ID_MENU;
+        gamepad_config_map[PLATFORM_MENU_BUTTON] = BUTTON_ID_MENU;
       }
 #endif
 
@@ -1007,7 +1004,7 @@ s32 save_config_file()
 
 #ifndef PC_BUILD
     u32 i;
-    for(i = 0; i < PLAT_BUTTON_COUNT; i++)
+    for(i = 0; i < PLATFORM_BUTTON_COUNT; i++)
     {
       file_options[fo_main_option_count + i] = gamepad_config_map[i];
     }
@@ -1101,10 +1098,243 @@ void get_savestate_filename(u32 slot, char *name_buffer)
   }
 #endif
 
-u32 menu(u16 *original_screen)
+typedef struct
+{
+  u16 *original_screen;
+  u32 *repeat;
+  u32 *return_value;
+  u32 *first_load;
+  char *current_savestate_filename;
+  menu_type **current_menu;
+  menu_option_type **current_option;
+  u32 *current_option_num;
+} menu_runtime_context;
+
+static menu_runtime_context *menu_context = NULL;
+
+#ifndef PC_BUILD
+static const char * const gamepad_help[] =
+{
+  "Up button on GBA d-pad.",
+  "Down button on GBA d-pad.",
+  "Left button on GBA d-pad.",
+  "Right button on GBA d-pad.",
+  "A button on GBA.",
+  "B button on GBA.",
+  "Left shoulder button on GBA.",
+  "Right shoulder button on GBA.",
+  "Start button on GBA.",
+  "Select button on GBA.",
+  "Brings up the options menu.",
+  "Toggles fastforward on/off.",
+  "Loads the game state from the current slot.",
+  "Saves the game state to the current slot.",
+  "Rapidly press/release the A button on GBA.",
+  "Rapidly press/release the B button on GBA.",
+  "Rapidly press/release the L shoulder on GBA.",
+  "Rapidly press/release the R shoulder on GBA.",
+  "Increases the volume.",
+  "Decreases the volume.",
+  "Displays virtual/drawn frames per second.",
+  "Does nothing."
+};
+
+static const char * const gamepad_config_buttons[] =
+{
+  "UP",
+  "DOWN",
+  "LEFT",
+  "RIGHT",
+  "A",
+  "B",
+  "L",
+  "R",
+  "START",
+  "SELECT",
+  "MENU",
+  "FASTFORWARD",
+  "LOAD STATE",
+  "SAVE STATE",
+  "RAPIDFIRE A",
+  "RAPIDFIRE B",
+  "RAPIDFIRE L",
+  "RAPIDFIRE R",
+  "VOLUME UP",
+  "VOLUME DOWN",
+  "DISPLAY FPS",
+  "NOTHING"
+};
+#endif
+
+static void menu_clear_help(void)
+{
+  u32 i;
+  for(i = 0; i < 6; i++)
+  {
+    print_string_pad(" ", COLOR_BG, COLOR_BG, 8, 210 + (i * 10), 70);
+  }
+}
+
+static void menu_choose_menu(menu_type *new_menu)
+{
+  if(new_menu == NULL)
+    new_menu = menu_context->current_menu[0];
+
+  clear_screen(COLOR_BG);
+
+#ifndef GP2X_BUILD
+  blit_to_screen(menu_context->original_screen, 240, 160, 230, 40);
+#endif
+
+  *(menu_context->current_menu) = new_menu;
+  *(menu_context->current_option) = new_menu->options;
+  *(menu_context->current_option_num) = 0;
+  if(new_menu->init_function)
+    new_menu->init_function();
+}
+
+static void menu_update_clock(void)
+{
+  s32 clock_speed_number = 0;
+  get_clock_speed_number();
+  if(clock_speed_number < 0 || clock_speed_number >=
+   sizeof(clock_speed_options) / sizeof(clock_speed_options[0]))
+  {
+    clock_speed = default_clock_speed;
+    get_clock_speed_number();
+  }
+}
+
+static void menu_exit(void)
+{
+  if(!*(menu_context->first_load))
+    *(menu_context->repeat) = 0;
+}
+
+static void menu_quit(void)
+{
+  menu_get_clock_speed();
+  save_config_file();
+  quit();
+}
+
+static void menu_load(void)
+{
+  const char *file_ext[] = { ".gba", ".bin", ".zip", NULL };
+  char load_filename[512];
+  save_game_config_file();
+  if(load_file(file_ext, load_filename) != -1)
+  {
+     if(load_gamepak(load_filename) == -1)
+     {
+       quit();
+     }
+     reset_gba();
+     *(menu_context->return_value) = 1;
+     *(menu_context->repeat) = 0;
+     reg[CHANGED_PC_STATUS] = 1;
+     menu_update_clock();
+  }
+}
+
+static void menu_restart(void)
+{
+  if(!*(menu_context->first_load))
+  {
+    reset_gba();
+    reg[CHANGED_PC_STATUS] = 1;
+    *(menu_context->return_value) = 1;
+    *(menu_context->repeat) = 0;
+  }
+}
+
+static void menu_change_state(void)
+{
+  get_savestate_filename(savestate_slot, menu_context->current_savestate_filename);
+}
+
+static void menu_save_state(void)
+{
+  if(!*(menu_context->first_load))
+  {
+    get_savestate_filename_noshot(savestate_slot, menu_context->current_savestate_filename);
+    save_state(menu_context->current_savestate_filename, menu_context->original_screen);
+  }
+  menu_change_state();
+}
+
+static void menu_load_state(void)
+{
+  if(!*(menu_context->first_load))
+  {
+    load_state(menu_context->current_savestate_filename);
+    *(menu_context->return_value) = 1;
+    *(menu_context->repeat) = 0;
+  }
+}
+
+static void menu_load_state_file(void)
+{
+  const char *file_ext[] = { ".svs", NULL };
+  char load_filename[512];
+  if(load_file(file_ext, load_filename) != -1)
+  {
+    load_state(load_filename);
+    *(menu_context->return_value) = 1;
+    *(menu_context->repeat) = 0;
+  }
+  else
+  {
+    menu_choose_menu(*(menu_context->current_menu));
+  }
+}
+
+static void menu_fix_gamepad_help(void)
+{
+#ifndef PC_BUILD
+  menu_clear_help();
+  menu_context->current_option[0]->help_string =
+   gamepad_help[gamepad_config_map[
+   gamepad_config_line_to_button[*(menu_context->current_option_num)]]];
+#endif
+}
+
+static void submenu_graphics_sound(void)
+{
+}
+
+static void submenu_cheats_misc(void)
+{
+}
+
+static void submenu_gamepad(void)
+{
+}
+
+static void submenu_analog(void)
+{
+}
+
+static void submenu_savestate(void)
+{
+  print_string("Savestate options:", COLOR_ACTIVE_ITEM, COLOR_BG, 10, 70);
+  menu_change_state();
+}
+
+static void submenu_main(void)
 {
   char print_buffer[81];
-  u32 clock_speed_number;
+  strncpy(print_buffer, gamepak_filename, 80);
+  print_string(print_buffer, COLOR_ROM_INFO, COLOR_BG, 10, 10);
+  sprintf(print_buffer, "%s  %s  %s", gamepak_title,
+   gamepak_code, gamepak_maker);
+  print_string(print_buffer, COLOR_ROM_INFO, COLOR_BG, 10, 20);
+
+  get_savestate_filename_noshot(savestate_slot, menu_context->current_savestate_filename);
+}
+
+u32 menu(u16 *original_screen)
+{
   gui_action_type gui_action;
   u32 i;
   u32 repeat = 1;
@@ -1118,207 +1348,6 @@ u32 menu(u16 *original_screen)
   menu_option_type *current_option;
   menu_option_type *display_option;
   u32 current_option_num;
-
-  auto void choose_menu();
-  auto void clear_help();
-
-#ifndef PC_BUILD
-  static const char * const gamepad_help[] =
-  {
-    "Up button on GBA d-pad.",
-    "Down button on GBA d-pad.",
-    "Left button on GBA d-pad.",
-    "Right button on GBA d-pad.",
-    "A button on GBA.",
-    "B button on GBA.",
-    "Left shoulder button on GBA.",
-    "Right shoulder button on GBA.",
-    "Start button on GBA.",
-    "Select button on GBA.",
-    "Brings up the options menu.",
-    "Toggles fastforward on/off.",
-    "Loads the game state from the current slot.",
-    "Saves the game state to the current slot.",
-    "Rapidly press/release the A button on GBA.",
-    "Rapidly press/release the B button on GBA.",
-    "Rapidly press/release the L shoulder on GBA.",
-    "Rapidly press/release the R shoulder on GBA.",
-    "Increases the volume.",
-    "Decreases the volume.",
-    "Displays virtual/drawn frames per second.",
-    "Does nothing."
-  };
-
-  static const char *gamepad_config_buttons[] =
-  {
-    "UP",
-    "DOWN",
-    "LEFT",
-    "RIGHT",
-    "A",
-    "B",
-    "L",
-    "R",
-    "START",
-    "SELECT",
-    "MENU",
-    "FASTFORWARD",
-    "LOAD STATE",
-    "SAVE STATE",
-    "RAPIDFIRE A",
-    "RAPIDFIRE B",
-    "RAPIDFIRE L",
-    "RAPIDFIRE R",
-    "VOLUME UP",
-    "VOLUME DOWN",
-    "DISPLAY FPS",
-    "NOTHING"
-  };
-#endif
-
-  void menu_update_clock()
-  {
-    get_clock_speed_number();
-    if (clock_speed_number < 0 || clock_speed_number >=
-     sizeof(clock_speed_options) / sizeof(clock_speed_options[0]))
-    {
-      clock_speed = default_clock_speed;
-      get_clock_speed_number();
-    }
-  }
-
-  void menu_exit()
-  {
-    if(!first_load)
-     repeat = 0;
-  }
-
-  void menu_quit()
-  {
-    menu_get_clock_speed();
-    save_config_file();
-    quit();
-  }
-
-  void menu_load()
-  {
-    const char *file_ext[] = { ".gba", ".bin", ".zip", NULL };
-    char load_filename[512];
-    save_game_config_file();
-    if(load_file(file_ext, load_filename) != -1)
-    {
-       if(load_gamepak(load_filename) == -1)
-       {
-         quit();
-       }
-       reset_gba();
-       return_value = 1;
-       repeat = 0;
-       reg[CHANGED_PC_STATUS] = 1;
-       menu_update_clock();
-    }
-  }
-
-  void menu_restart()
-  {
-    if(!first_load)
-    {
-      reset_gba();
-      reg[CHANGED_PC_STATUS] = 1;
-      return_value = 1;
-      repeat = 0;
-    }
-  }
-
-  void menu_change_state()
-  {
-    get_savestate_filename(savestate_slot, current_savestate_filename);
-  }
-
-  void menu_save_state()
-  {
-    if(!first_load)
-    {
-      get_savestate_filename_noshot(savestate_slot,
-       current_savestate_filename);
-      save_state(current_savestate_filename, original_screen);
-    }
-    menu_change_state();
-  }
-
-  void menu_load_state()
-  {
-    if(!first_load)
-    {
-      load_state(current_savestate_filename);
-      return_value = 1;
-      repeat = 0;
-    }
-  }
-
-  void menu_load_state_file()
-  {
-    const char *file_ext[] = { ".svs", NULL };
-    char load_filename[512];
-    if(load_file(file_ext, load_filename) != -1)
-    {
-      load_state(load_filename);
-      return_value = 1;
-      repeat = 0;
-    }
-    else
-    {
-      choose_menu(current_menu);
-    }
-  }
-
-  void menu_fix_gamepad_help()
-  {
-#ifndef PC_BUILD
-    clear_help();
-    current_option->help_string =
-     gamepad_help[gamepad_config_map[
-     gamepad_config_line_to_button[current_option_num]]];
-#endif
-  }
-
-  void submenu_graphics_sound()
-  {
-
-  }
-
-  void submenu_cheats_misc()
-  {
-
-  }
-
-  void submenu_gamepad()
-  {
-
-  }
-
-  void submenu_analog()
-  {
-
-  }
-
-  void submenu_savestate()
-  {
-    print_string("Savestate options:", COLOR_ACTIVE_ITEM, COLOR_BG, 10, 70);
-    menu_change_state();
-  }
-
-  void submenu_main()
-  {
-    strncpy(print_buffer, gamepak_filename, 80);
-    print_string(print_buffer, COLOR_ROM_INFO, COLOR_BG, 10, 10);
-    sprintf(print_buffer, "%s  %s  %s", gamepak_title,
-     gamepak_code, gamepak_maker);
-    print_string(print_buffer, COLOR_ROM_INFO, COLOR_BG, 10, 20);
-
-    get_savestate_filename_noshot(savestate_slot,
-     current_savestate_filename);
-  }
 
   const char *yes_no_options[] = { "no", "yes" };
   const char *enable_disable_options[] = { "disabled", "enabled" };
@@ -1634,32 +1663,17 @@ u32 menu(u16 *original_screen)
   };
 
   make_menu(main, submenu_main, NULL);
-
-  void choose_menu(menu_type *new_menu)
-  {
-    if(new_menu == NULL)
-      new_menu = &main_menu;
-
-    clear_screen(COLOR_BG);
-
-#ifndef GP2X_BUILD
-    blit_to_screen(original_screen, 240, 160, 230, 40);
-#endif
-
-    current_menu = new_menu;
-    current_option = new_menu->options;
-    current_option_num = 0;
-    if(current_menu->init_function)
-     current_menu->init_function();
-  }
-
-  void clear_help()
-  {
-    for(i = 0; i < 6; i++)
-    {
-      print_string_pad(" ", COLOR_BG, COLOR_BG, 8, 210 + (i * 10), 70);
-    }
-  }
+  menu_runtime_context context = {
+    .original_screen = original_screen,
+    .repeat = &repeat,
+    .return_value = &return_value,
+    .first_load = &first_load,
+    .current_savestate_filename = current_savestate_filename,
+    .current_menu = &current_menu,
+    .current_option = &current_option,
+    .current_option_num = &current_option_num
+  };
+  menu_context = &context;
 
   menu_update_clock();
   video_resolution_large();
@@ -1681,7 +1695,7 @@ u32 menu(u16 *original_screen)
      60, 75,original_screen, 240, 0, 0, FONT_HEIGHT);
   }
 
-  choose_menu(&main_menu);
+  menu_choose_menu(&main_menu);
 
   for(i = 0; i < 10; i++)
   {
@@ -1747,7 +1761,7 @@ u32 menu(u16 *original_screen)
           current_menu->num_options;
 
         current_option = current_menu->options + current_option_num;
-        clear_help();
+        menu_clear_help();
         break;
 
       case CURSOR_UP:
@@ -1757,7 +1771,7 @@ u32 menu(u16 *original_screen)
           current_option_num = current_menu->num_options - 1;
 
         current_option = current_menu->options + current_option_num;
-        clear_help();
+        menu_clear_help();
         break;
 
       case CURSOR_RIGHT:
@@ -1795,7 +1809,7 @@ u32 menu(u16 *original_screen)
         if(current_menu == &main_menu)
           menu_exit();
 
-        choose_menu(&main_menu);
+        menu_choose_menu(&main_menu);
         break;
 
       case CURSOR_SELECT:
@@ -1803,10 +1817,10 @@ u32 menu(u16 *original_screen)
           current_option->action_function();
 
         if(current_option->option_type & SUBMENU_OPTION)
-          choose_menu(current_option->sub_menu);
+          menu_choose_menu(current_option->sub_menu);
 
         if(current_menu == &main_menu)
-           choose_menu(&main_menu);
+           menu_choose_menu(&main_menu);
 
         break;
 
@@ -1822,6 +1836,7 @@ u32 menu(u16 *original_screen)
 
   GBA_PauseAudio(0);
   num_skipped_frames = 100;
+  menu_context = NULL;
 
   return return_value;
 }
