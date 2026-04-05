@@ -103,6 +103,9 @@ void GBA_PauseAudio(int pause_on);
 Uint32 GBA_GetTicks(void);
 void GBA_Delay(Uint32 ms);
 
+void gpsp_plat_init(void);
+void gpsp_plat_quit(void);
+
 #ifdef __cplusplus
 }
 

@@ -57,8 +57,16 @@ int GBA_Init(Uint32 flags) {
   return 0;
 }
 
+void gpsp_plat_init(void) {
+  (void)GBA_Init(0);
+}
+
 void GBA_Quit(void) {
   GBA_CloseAudio();
+}
+
+void gpsp_plat_quit(void) {
+  GBA_Quit();
 }
 
 int GBA_PollEvent(GBA_Event *event) {

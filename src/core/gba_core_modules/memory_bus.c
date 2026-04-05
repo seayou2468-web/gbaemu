@@ -1864,7 +1864,7 @@ u32 load_backup(char *name)
       // Could be either flash or SRAM, go with flash
       case 0x10000:
         backup_type = BACKUP_FLASH;
-        sram_size = FLASH_SIZE_64KB;
+        flash_size = FLASH_SIZE_64KB;
         break;
 
       case 0x20000:
@@ -3266,4 +3266,3 @@ void memory_##type##_savestate(file_tag_type savestate_file)                  \
 
 memory_savestate_builder(read);
 memory_savestate_builder(write_mem);
-

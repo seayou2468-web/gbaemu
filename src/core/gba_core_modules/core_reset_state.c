@@ -3,6 +3,7 @@
 
 #include "../common.h"
 #include <ctype.h>
+#include <sys/time.h>
 
 #ifdef PSP_BUILD
 
@@ -100,7 +101,7 @@ void trigger_ext_event();
       if(timer[timer_number].irq == TIMER_TRIGGER_IRQ)                        \
         irq_raised |= IRQ_TIMER##timer_number;                                \
                                                                               \
-      if((timer_number != 3) &&                                               \
+      if((timer_number < 3) &&                                                \
        (timer[timer_number + 1].status == TIMER_CASCADE))                     \
       {                                                                       \
         timer[timer_number + 1].count--;                                      \
@@ -1025,4 +1026,3 @@ void set_clock_speed()
     clock_speed_old = clock_speed;
   }
 }
-

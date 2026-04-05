@@ -738,6 +738,11 @@ u32 gamepad_config_line_to_button[] =
 
 #endif
 
+#if !defined(PSP_BUILD) && !defined(GP2X_BUILD) && !defined(PND_BUILD) && !defined(RPI_BUILD)
+u32 gamepad_config_line_to_button[] =
+ { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+#endif
+
 static const char *scale_options[] =
 {
 #ifdef PSP_BUILD
@@ -1604,7 +1609,8 @@ u32 menu(u16 *original_screen)
 
 #endif
 
-#if defined(PC_BUILD) || defined(RPI_BUILD) || defined(IOS_BUILD)
+#if defined(PC_BUILD) || defined(RPI_BUILD) || defined(IOS_BUILD) || \
+ !defined(PSP_BUILD) && !defined(GP2X_BUILD) && !defined(PND_BUILD)
 
   menu_option_type gamepad_config_options[] =
   {

@@ -112,13 +112,6 @@ void init_translater();
 void cpu_write_mem_savestate(file_tag_type savestate_file);
 void cpu_read_savestate(file_tag_type savestate_file);
 
-u8 *block_lookup_address_arm(u32 pc);
-u8 *block_lookup_address_thumb(u32 pc);
-s32 translate_block_arm(u32 pc, translation_region_type translation_region,
- u32 smc_enable);
-s32 translate_block_thumb(u32 pc, translation_region_type translation_region,
- u32 smc_enable);
-
 #ifdef PSP_BUILD
 
 #define ROM_TRANSLATION_CACHE_SIZE (1024 * 512 * 4)
