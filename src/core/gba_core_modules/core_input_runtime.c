@@ -539,6 +539,30 @@ void init_input()
 #endif
 
 
+#if !defined(PSP_BUILD) && !defined(GP2X_BUILD) && !defined(PND_BUILD) && \
+ !defined(RPI_BUILD) && !defined(PC_BUILD) && !defined(IOS_BUILD)
+u32 gamepad_config_map[16] =
+{
+  BUTTON_ID_UP,
+  BUTTON_ID_DOWN,
+  BUTTON_ID_LEFT,
+  BUTTON_ID_RIGHT,
+  BUTTON_ID_A,
+  BUTTON_ID_B,
+  BUTTON_ID_L,
+  BUTTON_ID_R,
+  BUTTON_ID_START,
+  BUTTON_ID_SELECT,
+  BUTTON_ID_MENU,
+  BUTTON_ID_START,
+  BUTTON_ID_UP,
+  BUTTON_ID_DOWN,
+  BUTTON_ID_LEFT,
+  BUTTON_ID_RIGHT
+};
+#endif
+
+
 #if defined(RPI_BUILD)
 
 u32 key_map(PlatformKey key_sym)
@@ -581,7 +605,9 @@ u32 key_map(PlatformKey key_sym)
 }
 #endif
 
-#if defined(PC_BUILD)
+#if defined(PC_BUILD) || defined(IOS_BUILD) || \
+ (!defined(PSP_BUILD) && !defined(GP2X_BUILD) && !defined(PND_BUILD) && \
+  !defined(RPI_BUILD) && !defined(PC_BUILD) && !defined(IOS_BUILD))
 
 u32 key_map(PlatformKey key_sym)
 {
@@ -622,7 +648,9 @@ u32 key_map(PlatformKey key_sym)
   }
 }
 #endif
-#if defined(PC_BUILD) || defined(RPI_BUILD)
+#if defined(PC_BUILD) || defined(RPI_BUILD) || defined(IOS_BUILD) || \
+ (!defined(PSP_BUILD) && !defined(GP2X_BUILD) && !defined(PND_BUILD) && \
+  !defined(RPI_BUILD) && !defined(PC_BUILD) && !defined(IOS_BUILD))
 
 u32 joy_map(u32 button)
 {
@@ -759,7 +787,7 @@ u32 update_input()
         {
           quit();
         }
-#ifdef PC_BUILD
+#if defined(PC_BUILD) || defined(IOS_BUILD)
         if(event.key.keysym.sym == 8)
 #else
         if(event.key.keysym.sym == 291)
@@ -772,7 +800,7 @@ u32 update_input()
           return ret_val;
         }
         else
-#ifdef PC_BUILD
+#if defined(PC_BUILD) || defined(IOS_BUILD)
         if(event.key.keysym.sym == 282)
         {
           debug_on();

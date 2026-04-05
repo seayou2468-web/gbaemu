@@ -210,7 +210,7 @@ void init_main()
   flush_translation_cache_bios();
 }
 
-#if !defined(IOS_BUILD)
+#ifdef GPSP_STANDALONE_MAIN
 int main(int argc, char *argv[])
 {
   char bios_filename[512];
