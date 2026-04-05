@@ -719,7 +719,7 @@ u32 high_frequency_branch_targets = 0;
 #define arm_spsr_restore()                                                    \
   if(rd == 15)                                                                \
   {                                                                           \
-    u32 cpu_mode = normalize_cpu_mode_state();                                \
+    u32 cpu_mode = get_cpu_mode_index();                                      \
     if(cpu_mode != MODE_USER)                                                 \
     {                                                                         \
       reg[REG_CPSR] = spsr[cpu_mode];                                         \
@@ -894,7 +894,7 @@ const u32 psr_masks[16] =
   }                                                                           \
 
 #define arm_psr_store_spsr(source)                                            \
-  u32 cpu_mode = normalize_cpu_mode_state();                                  \
+  u32 cpu_mode = get_cpu_mode_index();                                        \
   u32 _psr = spsr[cpu_mode];                                                  \
   spsr[cpu_mode] = (source & store_mask) | (_psr & (~store_mask))             \
 
@@ -1551,28 +1551,39 @@ static u32 get_valid_cpu_mode(u32 mode)
   return MODE_INVALID;
 }
 
-static u32 normalize_cpu_mode_state(void)
+static u32 get_cpu_mode_index(void)
 {
-  u32 cpu_mode = get_valid_cpu_mode(reg[CPU_MODE]);
   u32 cpsr_mode = cpu_modes[reg[REG_CPSR] & 0x1F];
+  u32 cpu_mode = get_valid_cpu_mode(reg[CPU_MODE]);
+
+  if(cpsr_mode != MODE_INVALID)
+    return cpsr_mode;
+
+  if(cpu_mode != MODE_INVALID)
+    return cpu_mode;
+
+  return MODE_USER;
+}
+
+static void repair_cpu_mode_state(void)
+{
+  u32 cpsr_mode = cpu_modes[reg[REG_CPSR] & 0x1F];
+  u32 cpu_mode = get_valid_cpu_mode(reg[CPU_MODE]);
 
   if(cpsr_mode != MODE_INVALID)
   {
-    if(cpu_mode != cpsr_mode)
-      reg[CPU_MODE] = cpsr_mode;
-
-    return cpsr_mode;
+    reg[CPU_MODE] = cpsr_mode;
+    return;
   }
 
   if(cpu_mode != MODE_INVALID)
   {
     reg[REG_CPSR] = (reg[REG_CPSR] & ~0x1F) | cpu_modes_cpsr[cpu_mode];
-    return cpu_mode;
+    return;
   }
 
   reg[CPU_MODE] = MODE_USER;
   reg[REG_CPSR] = (reg[REG_CPSR] & ~0x1F) | cpu_modes_cpsr[MODE_USER];
-  return MODE_USER;
 }
 
 // ARM/Thumb mode is stored in the flags directly, this is simpler than
@@ -2229,7 +2240,7 @@ char *cpu_mode_names[] =
       else                                                                    \
       {                                                                       \
         /* MRS rd, spsr */                                                    \
-        arm_psr(reg, read, spsr[normalize_cpu_mode_state()]);                 \
+        arm_psr(reg, read, spsr[get_cpu_mode_index()]);                       \
       }                                                                       \
       break;                                                                  \
                                                                               \
@@ -4039,7 +4050,7 @@ void print_arm_instruction()
 void print_flags()
 {
   u32 cpsr = reg[REG_CPSR];
-  u32 cpu_mode = normalize_cpu_mode_state();
+  u32 cpu_mode = get_cpu_mode_index();
   debug_screen_newline(1);
   debug_screen_printf(
    " N: %d  Z: %d  C: %d  V: %d  CPSR: %08x  SPSR: %08x  mode: %s",
@@ -4315,7 +4326,8 @@ void step_debug(u32 pc, u32 cycles)
 void set_cpu_mode(cpu_mode_type new_mode)
 {
   u32 i;
-  cpu_mode_type cpu_mode = normalize_cpu_mode_state();
+  cpu_mode_type cpu_mode = get_cpu_mode_index();
+  reg[CPU_MODE] = cpu_mode;
   new_mode = get_valid_cpu_mode(new_mode);
   if(new_mode == MODE_INVALID)
     new_mode = cpu_mode;
@@ -4395,14 +4407,16 @@ void execute_arm(u32 cycles)
 
   u32 old_pc;
 
-  if(pc_address_block == NULL)
-    pc_address_block = load_gamepak_page(pc_region & 0x3FF);
-
   while(1)
   {
     cycles_remaining = cycles;
     pc = reg[REG_PC];
-    normalize_cpu_mode_state();
+    pc_region = (pc >> 15);
+    pc_address_block = memory_map_read[pc_region];
+    if(pc_address_block == NULL)
+      pc_address_block = load_gamepak_page(pc_region & 0x3FF);
+
+    repair_cpu_mode_state();
     extract_flags();
 
     if(reg[REG_CPSR] & 0x20)
@@ -4526,7 +4540,7 @@ void cpu_read_savestate(file_tag_type savestate_file)
   file_read_array(savestate_file, spsr);
   file_read_array(savestate_file, reg_mode);
 
-  normalize_cpu_mode_state();
+  repair_cpu_mode_state();
   extract_flags();
 }
 
