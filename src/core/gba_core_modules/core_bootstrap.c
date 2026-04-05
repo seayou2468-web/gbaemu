@@ -1420,7 +1420,7 @@ void CPUSoftwareInterrupt(int comment)
 #endif
         holdState = true;
         holdType = -1;
-        cpuNextEvent = cpuTotalTicks;
+        cpuNextEvent = 1;
         break;
     case 0x03:
 #ifdef GBA_LOGGING
@@ -1432,7 +1432,7 @@ void CPUSoftwareInterrupt(int comment)
         holdState = true;
         holdType = -1;
         stopState = true;
-        cpuNextEvent = cpuTotalTicks;
+        cpuNextEvent = 1;
         break;
     case 0x04:
 #ifdef GBA_LOGGING

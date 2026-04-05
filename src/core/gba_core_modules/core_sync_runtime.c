@@ -40,6 +40,8 @@ void CPULoop(int ticks)
 
     cpuBreakLoop = false;
     cpuNextEvent = CPUUpdateTicks();
+    if (cpuNextEvent <= 0)
+        cpuNextEvent = 1;
     if (cpuNextEvent > ticks)
         cpuNextEvent = ticks;
     
@@ -59,8 +61,11 @@ void CPULoop(int ticks)
                     return;
             }
             clockTicks = 0;
-        } else
+        } else {
             clockTicks = CPUUpdateTicks();
+            if (clockTicks <= 0)
+                clockTicks = 1;
+        }
 
         cpuTotalTicks += clockTicks;
 
@@ -551,6 +556,8 @@ void CPULoop(int ticks)
 #endif
 
             cpuNextEvent = CPUUpdateTicks();
+            if (cpuNextEvent <= 0)
+                cpuNextEvent = 1;
 
             if (cpuDmaTicksToUpdate > 0) {
                 if (cpuDmaTicksToUpdate > cpuNextEvent)
