@@ -491,10 +491,11 @@ u32 read_eeprom()
       dma[dma_number].source_address =                                        \
        address32(io_registers, (dma_number * 12) + 0xB0) & 0xFFFFFFF;         \
       dma[dma_number].dest_address = dest_address;                            \
-      dma[dma_number].source_direction = (value >>  7) & 0x03;                \
-      dma[dma_number].repeat_type = (value >> 9) & 0x01;                      \
-      dma[dma_number].start_type = start_type;                                \
-      dma[dma_number].irq = (value >> 14) & 0x01;                             \
+      dma[dma_number].source_direction =                                      \
+       (dma_increment_type)((value >>  7) & 0x03);                            \
+      dma[dma_number].repeat_type = (dma_repeat_type)((value >> 9) & 0x01);   \
+      dma[dma_number].start_type = (dma_start_type)start_type;                \
+      dma[dma_number].irq = (dma_irq_type)((value >> 14) & 0x01);             \
                                                                               \
       /* If it is sound FIFO DMA make sure the settings are a certain way */  \
       if((dma_number >= 1) && (dma_number <= 2) &&                            \
@@ -531,8 +532,10 @@ u32 read_eeprom()
         }                                                                     \
                                                                               \
         dma[dma_number].length = length;                                      \
-        dma[dma_number].length_type = (value >> 10) & 0x01;                   \
-        dma[dma_number].dest_direction = (value >> 5) & 0x03;                 \
+        dma[dma_number].length_type =                                         \
+         (dma_length_type)((value >> 10) & 0x01);                             \
+        dma[dma_number].dest_direction =                                      \
+         (dma_increment_type)((value >> 5) & 0x03);                           \
       }                                                                       \
                                                                               \
       address16(io_registers, (dma_number * 12) + 0xBA) = value;              \
@@ -2889,7 +2892,7 @@ cpu_alert_type dma_transfer(dma_transfer_type *dma)
 
   if(dma->irq)
   {
-    raise_interrupt(IRQ_DMA0 << dma->dma_channel);
+    raise_interrupt((irq_type)(IRQ_DMA0 << dma->dma_channel));
     return_value = CPU_ALERT_IRQ;
   }
 
@@ -3033,26 +3036,26 @@ void init_gamepak_buffer()
   gamepak_rom = NULL;
 
   gamepak_ram_buffer_size = 32 * 1024 * 1024;
-  gamepak_rom = malloc(gamepak_ram_buffer_size);
+  gamepak_rom = (u8*)malloc(gamepak_ram_buffer_size);
 
   if(gamepak_rom == NULL)
   {
     // Try 16MB, for PSP, then lower in 2MB increments
     gamepak_ram_buffer_size = 16 * 1024 * 1024;
-    gamepak_rom = malloc(gamepak_ram_buffer_size);
+    gamepak_rom = (u8*)malloc(gamepak_ram_buffer_size);
 
     while(gamepak_rom == NULL)
     {
       gamepak_ram_buffer_size -= (2 * 1024 * 1024);
-      gamepak_rom = malloc(gamepak_ram_buffer_size);
+      gamepak_rom = (u8*)malloc(gamepak_ram_buffer_size);
     }
   }
 
   // Here's assuming we'll have enough memory left over for this,
   // and that the above succeeded (if not we're in trouble all around)
   gamepak_ram_pages = gamepak_ram_buffer_size / (32 * 1024);
-  gamepak_memory_map = malloc(sizeof(gamepak_swap_entry_type) *
-   gamepak_ram_pages);
+  gamepak_memory_map = (gamepak_swap_entry_type*)malloc(
+   sizeof(gamepak_swap_entry_type) * gamepak_ram_pages);
 }
 
 void init_memory()

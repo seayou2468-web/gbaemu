@@ -3914,7 +3914,7 @@ void clear_screen(u16 color)
 
 u16 *copy_screen()
 {
-  u16 *copy = malloc(240 * 160 * 2);
+  u16 *copy = (u16*)malloc(240 * 160 * 2);
   memcpy(copy, get_screen_pixels(), 240 * 160 * 2);
   return copy;
 }
@@ -4135,4 +4135,3 @@ void video_##type##_savestate(file_tag_type savestate_file)                   \
 
 video_savestate_builder(read);
 video_savestate_builder(write_mem);
-

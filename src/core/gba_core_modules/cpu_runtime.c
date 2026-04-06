@@ -724,7 +724,7 @@ u32 high_frequency_branch_targets = 0;
     {                                                                         \
       reg[REG_CPSR] = spsr[cpu_mode];                                         \
       extract_flags();                                                        \
-      set_cpu_mode(cpu_modes[reg[REG_CPSR] & 0x1F]);                          \
+      set_cpu_mode((cpu_mode_type)cpu_modes[reg[REG_CPSR] & 0x1F]);           \
       check_for_interrupts();                                                 \
     }                                                                         \
     arm_update_pc();                                                          \
@@ -889,7 +889,7 @@ const u32 psr_masks[16] =
   extract_flags();                                                            \
   if(store_mask & 0xFF)                                                       \
   {                                                                           \
-    set_cpu_mode(cpu_modes[reg[REG_CPSR] & 0x1F]);                            \
+    set_cpu_mode((cpu_mode_type)cpu_modes[reg[REG_CPSR] & 0x1F]);             \
     check_for_interrupts();                                                   \
   }                                                                           \
 
@@ -1573,7 +1573,7 @@ static void repair_cpu_mode_state(void)
   if(cpsr_mode != MODE_INVALID)
   {
     if(cpu_mode != cpsr_mode)
-      set_cpu_mode(cpsr_mode);
+      set_cpu_mode((cpu_mode_type)cpsr_mode);
 
     return;
   }
@@ -4330,12 +4330,12 @@ void step_debug(u32 pc, u32 cycles)
 void set_cpu_mode(cpu_mode_type new_mode)
 {
   u32 i;
-  cpu_mode_type cpu_mode = get_valid_cpu_mode(reg[CPU_MODE]);
+  cpu_mode_type cpu_mode = (cpu_mode_type)get_valid_cpu_mode(reg[CPU_MODE]);
   if(cpu_mode == MODE_INVALID)
     cpu_mode = MODE_USER;
 
   reg[CPU_MODE] = cpu_mode;
-  new_mode = get_valid_cpu_mode(new_mode);
+  new_mode = (cpu_mode_type)get_valid_cpu_mode(new_mode);
   if(new_mode == MODE_INVALID)
     new_mode = cpu_mode;
 

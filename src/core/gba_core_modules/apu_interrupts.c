@@ -1,4 +1,4 @@
-#if defined(__cplusplus)
+#if defined(__cplusplus) && defined(GBAEMU_ENABLE_EXPERIMENTAL_APU_CPP)
 // Imported from reference implementation: gbaSound.cpp
 /* BEGIN gbaSound.cpp */
 

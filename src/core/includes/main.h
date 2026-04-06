@@ -134,7 +134,7 @@ static u32 prescale_table[] = { 0, 6, 8, 10 };
         timer[timer_number].status = TIMER_PRESCALE;                          \
                                                                               \
       timer[timer_number].prescale = prescale;                                \
-      timer[timer_number].irq = (value >> 6) & 0x01;                          \
+      timer[timer_number].irq = (timer_irq_type)((value >> 6) & 0x01);        \
                                                                               \
       address16(io_registers, 0x100 + (timer_number * 4)) =                   \
        -timer_reload;                                                         \
@@ -175,4 +175,3 @@ void make_rpath(char *buff, size_t size, const char *ext);
 void set_clock_speed();
 
 #endif
-

@@ -99,7 +99,7 @@ void trigger_ext_event();
     if(timer[timer_number].count <= 0)                                        \
     {                                                                         \
       if(timer[timer_number].irq == TIMER_TRIGGER_IRQ)                        \
-        irq_raised |= IRQ_TIMER##timer_number;                                \
+        irq_raised = (irq_type)(irq_raised | IRQ_TIMER##timer_number);        \
                                                                               \
       if((timer_number < 3) &&                                                \
        (timer[timer_number + 1].status == TIMER_CASCADE))                     \
@@ -482,7 +482,7 @@ void trigger_ext_event()
     case 5:
     {
       // Done
-      char *print_strings[] =
+      const char *print_strings[] =
       {
         "Full test   ",
         "No blending ",
@@ -576,7 +576,7 @@ u32 update_gba()
         }
 
         if(dispstat & 0x10)
-          irq_raised |= IRQ_HBLANK;
+          irq_raised = (irq_type)(irq_raised | IRQ_HBLANK);
       }
       else
       {
@@ -594,7 +594,7 @@ u32 update_gba()
           dispstat |= 0x01;
           if(dispstat & 0x8)
           {
-            irq_raised |= IRQ_VBLANK;
+            irq_raised = (irq_type)(irq_raised | IRQ_VBLANK);
           }
 
           affine_reference_x[0] =
@@ -671,7 +671,7 @@ u32 update_gba()
           dispstat |= 0x04;
           if(dispstat & 0x20)
           {
-            irq_raised |= IRQ_VCOUNT;
+            irq_raised = (irq_type)(irq_raised | IRQ_VCOUNT);
           }
         }
         else
@@ -1014,7 +1014,7 @@ main_savestate_builder(read);
 main_savestate_builder(write_mem);
 
 
-void printout(void *str, u32 val)
+void printout(const char *str, u32 val)
 {
   printf(str, val);
 }

@@ -250,8 +250,8 @@ static u32 gbc_sound_wave_volume[4] = { 0, 16384, 8192, 4096 };
 #define gbc_trigger_sound_channel(channel)                                    \
   gbc_sound_master_volume_right = value & 0x07;                               \
   gbc_sound_master_volume_left = (value >> 4) & 0x07;                         \
-  gbc_sound_channel[channel].status = ((value >> (channel + 8)) & 0x01) |     \
-   ((value >> (channel + 11)) & 0x03)                                         \
+  gbc_sound_channel[channel].status = (gbc_sound_status_type)(                \
+   (((value >> (channel + 8)) & 0x01) | ((value >> (channel + 11)) & 0x03))) \
 
 #define gbc_trigger_sound()                                                   \
 {                                                                             \
@@ -264,14 +264,14 @@ static u32 gbc_sound_wave_volume[4] = { 0, 16384, 8192, 4096 };
 
 #define trigger_sound()                                                       \
 {                                                                             \
-  timer[0].direct_sound_channels = (((value >> 10) & 0x01) == 0) |            \
-   ((((value >> 14) & 0x01) == 0) << 1);                                      \
-  timer[1].direct_sound_channels = (((value >> 10) & 0x01) == 1) |            \
-   ((((value >> 14) & 0x01) == 1) << 1);                                      \
-  direct_sound_channel[0].volume = (value >> 2) & 0x01;                       \
-  direct_sound_channel[0].status = (value >> 8) & 0x03;                       \
-  direct_sound_channel[1].volume = (value >> 3) & 0x01;                       \
-  direct_sound_channel[1].status = (value >> 12) & 0x03;                      \
+  timer[0].direct_sound_channels = (timer_ds_channel_type)(                   \
+   ((((value >> 10) & 0x01) == 0) | ((((value >> 14) & 0x01) == 0) << 1)));  \
+  timer[1].direct_sound_channels = (timer_ds_channel_type)(                   \
+   ((((value >> 10) & 0x01) == 1) | ((((value >> 14) & 0x01) == 1) << 1)));  \
+  direct_sound_channel[0].volume = (direct_sound_volume_type)((value >> 2) & 0x01); \
+  direct_sound_channel[0].status = (direct_sound_status_type)((value >> 8) & 0x03); \
+  direct_sound_channel[1].volume = (direct_sound_volume_type)((value >> 3) & 0x01); \
+  direct_sound_channel[1].status = (direct_sound_status_type)((value >> 12) & 0x03); \
   gbc_sound_master_volume = value & 0x03;                                     \
                                                                               \
   if((value >> 11) & 0x01)                                                    \

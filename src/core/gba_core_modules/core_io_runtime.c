@@ -183,7 +183,7 @@ s32 load_file(const char **wildcards, char *result)
         {
           if(S_ISDIR(file_info.st_mode))
           {
-            dir_list[num_dirs] = malloc(file_name_length + 1);
+            dir_list[num_dirs] = (char*)malloc(file_name_length + 1);
 
             sprintf(dir_list[num_dirs], "%s", file_name);
 
@@ -210,7 +210,7 @@ s32 load_file(const char **wildcards, char *result)
                  wildcards[i]))
                 {
                   file_list[num_files] =
-                   malloc(file_name_length + 1);
+                   (char*)malloc(file_name_length + 1);
 
                   sprintf(file_list[num_files], "%s", file_name);
 
@@ -674,7 +674,7 @@ typedef struct _menu_type menu_type;
   num_options,                                                                \
   help_string,                                                                \
   line_number,                                                                \
-  type | ACTION_OPTION                                                        \
+  (menu_option_type_enum)(type | ACTION_OPTION)                               \
 }                                                                             \
 
 
@@ -803,7 +803,7 @@ s32 load_game_config_file()
       u32 file_options[file_size / 4];
 
       file_read_array(game_config_file, file_options);
-      current_frameskip_type = file_options[0] % 3;
+      current_frameskip_type = (frameskip_type)(file_options[0] % 3);
       frameskip_value = file_options[1];
       random_skip = file_options[2] % 2;
       clock_speed = file_options[3];
@@ -905,12 +905,12 @@ s32 load_config_file()
       u32 file_options[file_size / 4];
       file_read_array(config_file, file_options);
 
-      screen_scale = file_options[fo_screen_scale] %
-        (sizeof(scale_options) / sizeof(scale_options[0]));
-      screen_filter = file_options[fo_screen_filter] % 2;
+      screen_scale = (video_scale_type)(file_options[fo_screen_scale] %
+        (sizeof(scale_options) / sizeof(scale_options[0])));
+      screen_filter = (video_filter_type)(file_options[fo_screen_filter] % 2);
       global_enable_audio = file_options[fo_global_enable_audio] % 2;
-      screen_filter2 = file_options[fo_screen_filter2] %
-        (sizeof(filter2_options) / sizeof(filter2_options[0]));
+      screen_filter2 = (video_filter_type2)(file_options[fo_screen_filter2] %
+        (sizeof(filter2_options) / sizeof(filter2_options[0])));
 
       audio_buffer_size_number = file_options[fo_audio_buffer_size] %
         (sizeof(audio_buffer_options) / sizeof(audio_buffer_options[0]));
