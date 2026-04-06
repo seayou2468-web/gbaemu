@@ -28,12 +28,25 @@ extern int current_frameskip_type;
 extern uint32_t frameskip_value;
 extern uint32_t skip_next_frame;
 extern uint32_t synchronize_flag;
+extern uint32_t *reg;
+extern uint32_t reg_mode[7][7];
 }
 
 namespace {
 constexpr size_t kScreenWidth = 240;
 constexpr size_t kScreenHeight = 160;
 constexpr size_t kPixelCount = kScreenWidth * kScreenHeight;
+constexpr uint32_t kRegSp = 13u;
+constexpr uint32_t kRegLr = 14u;
+constexpr uint32_t kRegPc = 15u;
+constexpr uint32_t kRegCpsr = 20u;
+constexpr uint32_t kRegCpuMode = 29u;
+constexpr uint32_t kRegCpuHaltState = 30u;
+constexpr uint32_t kRegChangedPcStatus = 31u;
+constexpr uint32_t kModeUser = 0u;
+constexpr uint32_t kModeIrq = 1u;
+constexpr uint32_t kModeSupervisor = 3u;
+constexpr uint32_t kCpuActive = 0u;
 
 static uint32_t Bgr555ToRgba8888(uint16_t px) {
     const uint8_t r5 = static_cast<uint8_t>(px & 0x1Fu);
@@ -77,6 +90,23 @@ static void RefreshFrameBuffer(GBACoreHandle *h) {
         h->framebuffer[i] = Bgr555ToRgba8888(raw[i]);
     }
     free(raw);
+}
+
+static void ConfigureBootFromBIOS(GBACoreHandle *h) {
+    if (!h || !h->has_bios || !reg) return;
+
+    reg[kRegPc] = 0x00000000u;
+    reg[kRegSp] = 0x03007FE0u;
+    reg[kRegLr] = 0x00000000u;
+    reg[kRegCpsr] = 0x00000013u;  // Supervisor mode, IRQ/FIQ enabled, ARM state.
+    reg[kRegCpuMode] = kModeSupervisor;
+    reg[kRegCpuHaltState] = kCpuActive;
+    reg[kRegChangedPcStatus] = 0;
+
+    // Match stack setup expected by startup flow.
+    reg_mode[kModeSupervisor][5] = 0x03007FE0u;
+    reg_mode[kModeIrq][5] = 0x03007FA0u;
+    reg_mode[kModeUser][5] = 0x03007F00u;
 }
 
 static bool EnsureInitialized(GBACoreHandle *h) {
@@ -143,6 +173,7 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle *handle, const char *path) {
     handle->has_bios = true;
     if (handle->has_rom) {
         reset_gba();
+        ConfigureBootFromBIOS(handle);
         RefreshFrameBuffer(handle);
         handle->last_presented_frame_tick = frame_ticks;
         handle->has_presented_frame_tick = true;
@@ -163,6 +194,7 @@ bool GBA_LoadROMFromPath(GBACoreHandle *handle, const char *path) {
     handle->has_rom = true;
     if (handle->has_bios) {
         reset_gba();
+        ConfigureBootFromBIOS(handle);
         RefreshFrameBuffer(handle);
         handle->last_presented_frame_tick = frame_ticks;
         handle->has_presented_frame_tick = true;
@@ -183,6 +215,7 @@ void GBA_Reset(GBACoreHandle *handle) {
     }
 
     reset_gba();
+    ConfigureBootFromBIOS(handle);
     RefreshFrameBuffer(handle);
     handle->last_presented_frame_tick = frame_ticks;
     handle->has_presented_frame_tick = true;
