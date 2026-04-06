@@ -95,28 +95,27 @@ extern u32 instruction_count;
 extern u32 last_instruction;
 
 void execute_arm(u32 cycles);
-void execute_arm_step(u32 cycles);
 void raise_interrupt(irq_type irq_raised);
 void set_cpu_mode(cpu_mode_type new_mode);
 
 void debug_on();
 void debug_off(debug_state new_debug_state);
 
-u32 execute_load_u8(u32 address);
-u32 execute_load_u16(u32 address);
-u32 execute_load_u32(u32 address);
-u32 execute_load_s8(u32 address);
-u32 execute_load_s16(u32 address);
-void execute_store_u8(u32 address, u32 source);
-void execute_store_u16(u32 address, u32 source);
-void execute_store_u32(u32 address, u32 source);
-u32 execute_arm_translate(u32 cycles);
+u32 function_cc execute_load_u8(u32 address);
+u32 function_cc execute_load_u16(u32 address);
+u32 function_cc execute_load_u32(u32 address);
+u32 function_cc execute_load_s8(u32 address);
+u32 function_cc execute_load_s16(u32 address);
+void function_cc execute_store_u8(u32 address, u32 source);
+void function_cc execute_store_u16(u32 address, u32 source);
+void function_cc execute_store_u32(u32 address, u32 source);
+u32 function_cc execute_arm_translate(u32 cycles);
 void init_translater();
 void cpu_write_mem_savestate(file_tag_type savestate_file);
 void cpu_read_savestate(file_tag_type savestate_file);
 
-u8 *block_lookup_address_arm(u32 pc);
-u8 *block_lookup_address_thumb(u32 pc);
+u8 function_cc *block_lookup_address_arm(u32 pc);
+u8 function_cc *block_lookup_address_thumb(u32 pc);
 s32 translate_block_arm(u32 pc, translation_region_type translation_region,
  u32 smc_enable);
 s32 translate_block_thumb(u32 pc, translation_region_type translation_region,
