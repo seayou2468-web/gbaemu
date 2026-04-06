@@ -30,23 +30,23 @@ typedef struct PlatformKeysym {
 } PlatformKeysym;
 
 typedef struct PlatformKeyboardEvent {
-  uint8_t type;
+  uint32_t type;
   PlatformKeysym keysym;
 } PlatformKeyboardEvent;
 
 typedef struct PlatformJoyButtonEvent {
-  uint8_t type;
+  uint32_t type;
   uint8_t button;
 } PlatformJoyButtonEvent;
 
 typedef struct PlatformJoyAxisEvent {
-  uint8_t type;
+  uint32_t type;
   uint8_t axis;
   int16_t value;
 } PlatformJoyAxisEvent;
 
 typedef union PlatformEvent {
-  uint8_t type;
+  uint32_t type;
   PlatformKeyboardEvent key;
   PlatformJoyButtonEvent jbutton;
   PlatformJoyAxisEvent jaxis;
