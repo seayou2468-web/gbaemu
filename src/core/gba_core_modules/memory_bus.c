@@ -2727,7 +2727,7 @@ dma_region_type dma_region_map[16] =
       dma_transfer_loop_region(gamepak, ext, src_op, dest_op,                 \
        transfer_size, wb);                                                    \
                                                                               \
-    case (DMA_REGION_EXT | (DMA_REGION_EXT << 3)):                            \
+    case (DMA_REGION_EXT | (DMA_REGION_EXT << 4)):                            \
       dma_transfer_loop_region(ext, ext, src_op, dest_op,                     \
        transfer_size, wb);                                                    \
   }                                                                           \
