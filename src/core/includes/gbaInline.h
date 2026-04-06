@@ -1,6 +1,10 @@
 #ifndef VBAM_CORE_GBA_GBAINLINE_H_
 #define VBAM_CORE_GBA_GBAINLINE_H_
 
+#include <cstdint>
+#include <type_traits>
+
+#include "port.h"
 
 extern const uint32_t objTilesAddress[3];
 

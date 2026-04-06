@@ -109,22 +109,6 @@
   typedef unsigned long long int u64;
   typedef signed long long int s64;
 
-  // Some translated units are compiled as C/C++ stubs and can reference
-  // READxxLE/WRITExxLE without including port.h directly.
-  // Provide a safe little-endian fallback for little-endian PC targets.
-  #ifndef READ16LE
-    #define READ16LE(x) *((u16 *)(x))
-  #endif
-  #ifndef READ32LE
-    #define READ32LE(x) *((u32 *)(x))
-  #endif
-  #ifndef WRITE16LE
-    #define WRITE16LE(x, v) (*((u16 *)(x)) = (u16)(v))
-  #endif
-  #ifndef WRITE32LE
-    #define WRITE32LE(x, v) (*((u32 *)(x)) = (u32)(v))
-  #endif
-
   #define convert_palette(value)                                              \
     value = ((value & 0x1F) << 11) | ((value & 0x03E0) << 1) | (value >> 10)  \
 
