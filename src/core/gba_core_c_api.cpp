@@ -192,13 +192,13 @@ bool GBA_LoadROMFromPath(GBACoreHandle *handle, const char *path) {
     }
 
     handle->has_rom = true;
+    reset_gba();
     if (handle->has_bios) {
-        reset_gba();
         ConfigureBootFromBIOS(handle);
-        RefreshFrameBuffer(handle);
-        handle->last_presented_frame_tick = frame_ticks;
-        handle->has_presented_frame_tick = true;
     }
+    RefreshFrameBuffer(handle);
+    handle->last_presented_frame_tick = frame_ticks;
+    handle->has_presented_frame_tick = true;
     SetError(handle, "");
     return true;
 }
@@ -209,13 +209,10 @@ void GBA_Reset(GBACoreHandle *handle) {
         SetError(handle, "rom not loaded");
         return;
     }
-    if (!handle->has_bios) {
-        SetError(handle, "bios not loaded");
-        return;
-    }
-
     reset_gba();
-    ConfigureBootFromBIOS(handle);
+    if (handle->has_bios) {
+        ConfigureBootFromBIOS(handle);
+    }
     RefreshFrameBuffer(handle);
     handle->last_presented_frame_tick = frame_ticks;
     handle->has_presented_frame_tick = true;
@@ -228,11 +225,6 @@ void GBA_StepFrame(GBACoreHandle *handle) {
         SetError(handle, "rom not loaded");
         return;
     }
-    if (!handle->has_bios) {
-        SetError(handle, "bios not loaded");
-        return;
-    }
-
     const uint32_t start_frame_tick = frame_ticks;
     constexpr int kMaxStepIterations = 1024;
     constexpr int kCpuStepsPerTimingUpdate = 8;
