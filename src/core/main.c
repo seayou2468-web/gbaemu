@@ -1,11 +1,26 @@
-#include <SDL2/SDL.h>
-
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "./gba_core_c_api.h"
+
+#if defined(__has_include)
+#  if __has_include(<SDL2/SDL.h>)
+#    include <SDL2/SDL.h>
+#    define GBAEMU_HAVE_SDL2 1
+#  elif __has_include(<SDL.h>)
+#    include <SDL.h>
+#    define GBAEMU_HAVE_SDL2 1
+#  else
+#    define GBAEMU_HAVE_SDL2 0
+#  endif
+#else
+#  define GBAEMU_HAVE_SDL2 1
+#  include <SDL2/SDL.h>
+#endif
+
+#if GBAEMU_HAVE_SDL2
 
 enum {
   GBA_KEY_A = 1 << 0,
@@ -163,3 +178,15 @@ int main(int argc, char** argv) {
   GBA_Destroy(core);
   return 0;
 }
+
+#else
+
+int main(int argc, char** argv) {
+  (void)argc;
+  (void)argv;
+  fprintf(stderr,
+          "SDL2 headers are not available. Install SDL2 development files to build/run this frontend.\n");
+  return 1;
+}
+
+#endif

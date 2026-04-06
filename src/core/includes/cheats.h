@@ -1,4 +1,7 @@
+#ifndef CHEATS_H
+#define CHEATS_H
 
+#include "../common.h"
 
 #define CHEAT_NAME_LENGTH 17
 
@@ -25,3 +28,5 @@ void add_cheats(char *cheats_filename);
 
 extern cheat_type cheats[MAX_CHEATS];
 extern u32 num_cheats;
+
+#endif
