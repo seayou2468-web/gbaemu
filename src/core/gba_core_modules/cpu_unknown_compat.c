@@ -116,7 +116,6 @@ u32 execute_arm_translate(u32 cycles)
     compat_cycle_accum -= 960;
     frame_ticks++;
   }
-  palette_ram_converted[0] = (u16)(instruction_count & 0x7FFF);
   return cycles;
 }
 
