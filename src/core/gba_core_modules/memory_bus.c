@@ -2000,6 +2000,7 @@ s32 load_game_config(char *gamepak_title, char *gamepak_code, char *gamepak_make
   char current_variable[256];
   char current_value[256];
   char config_path[512];
+  int path_len;
   FILE *config_file;
 
   idle_loop_target_pc = 0xFFFFFFFF;
@@ -2009,7 +2010,10 @@ s32 load_game_config(char *gamepak_title, char *gamepak_code, char *gamepak_make
   translation_gate_targets = 0;
   flash_device_id = FLASH_DEVICE_MACRONIX_64KB;
 
-  sprintf(config_path, "%s" PATH_SEPARATOR "%s", main_path, CONFIG_FILENAME);
+  path_len = snprintf(config_path, sizeof(config_path),
+   "%s" PATH_SEPARATOR "%s", main_path, CONFIG_FILENAME);
+  if(path_len < 0 || (size_t)path_len >= sizeof(config_path))
+    return -1;
 
   config_file = fopen(config_path, "rb");
 
