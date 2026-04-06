@@ -1,3 +1,10 @@
+// Legacy compatibility stub.
+//
+// The modern CPU runtime now lives in cpu_runtime.c/cpu_arm_execute.c/etc.
+// Keep this file buildable for ad-hoc experiments, but compile it only when
+// explicitly requested to avoid duplicate symbols with the real runtime.
+#if defined(ENABLE_CPU_UNKNOWN_COMPAT_STUB)
+
 #include "../common.h"
 #include "../includes/cpu.h"
 #include "../includes/memory.h"
@@ -129,3 +136,5 @@ void execute_arm_step(u32 cycles)
 {
   execute_arm_translate(cycles);
 }
+
+#endif  // defined(ENABLE_CPU_UNKNOWN_COMPAT_STUB)

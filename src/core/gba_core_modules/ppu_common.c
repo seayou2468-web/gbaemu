@@ -2,7 +2,6 @@
 
 
 #include "../common.h"
-#include <aurora/internal/gba_renderer.h>
 #define WANT_FONT_BITS
 #include "../includes/font.h"
 
@@ -3916,7 +3915,7 @@ void clear_screen(u16 color)
 u16 *copy_screen()
 {
   u16 *copy = (u16*)malloc(240 * 160 * 2);
-  AuroraRenderSoftwareFrameFromSource(get_screen_pixels(), copy, 240, 160, get_screen_pitch());
+  memcpy(copy, get_screen_pixels(), 240 * 160 * 2);
   return copy;
 }
 

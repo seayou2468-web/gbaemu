@@ -60,7 +60,6 @@
 
 #ifdef PSP_BUILD
   #define fastcall
-  #define function_cc
 
   #include <pspkernel.h>
   #include <pspdebug.h>
@@ -100,12 +99,6 @@
   #include <stdio.h>
 #else
   #include "gba_platform.h"
-
-#ifdef ARM_ARCH
-  #define function_cc
-#else
-  #define function_cc __attribute__((regparm(2)))
-#endif
 
   typedef unsigned char u8;
   typedef signed char s8;
