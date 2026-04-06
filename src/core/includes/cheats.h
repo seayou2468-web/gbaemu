@@ -1,7 +1,11 @@
 #ifndef CHEATS_H
 #define CHEATS_H
 
-#include "../common.h"
+#ifdef __cplusplus
+#include <cstdint>
+#else
+#include <stdint.h>
+#endif
 
 #define CHEAT_NAME_LENGTH 17
 
@@ -15,9 +19,9 @@ typedef enum
 typedef struct
 {
   char cheat_name[CHEAT_NAME_LENGTH];
-  u32 cheat_active;
-  u32 cheat_codes[256];
-  u32 num_cheat_lines;
+  uint32_t cheat_active;
+  uint32_t cheat_codes[256];
+  uint32_t num_cheat_lines;
   cheat_variant_enum cheat_variant;
 } cheat_type;
 
@@ -27,6 +31,6 @@ void add_cheats(char *cheats_filename);
 #define MAX_CHEATS 16
 
 extern cheat_type cheats[MAX_CHEATS];
-extern u32 num_cheats;
+extern uint32_t num_cheats;
 
 #endif
