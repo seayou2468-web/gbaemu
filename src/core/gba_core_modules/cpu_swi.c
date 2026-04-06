@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "../includes/gba.h"
+#include "../includes/gbaCpu.h"
 #include "../includes/gbaGlobals.h"
 #include "../includes/gbaInline.h"
 

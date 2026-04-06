@@ -9,6 +9,7 @@
 
 #include "../includes/file_util.h"
 #include "../includes/gba.h"
+#include "../includes/gbaCpu.h"
 #include "../includes/gbaInline.h"
 #include "../includes/gbaGlobals.h"
 
@@ -240,7 +241,7 @@ void BIOS_EReader_ScanCard(int swi_num)
             reg[0].I = 0x301;
             return;
         }
-        f = utilOpenFile(loadDotCodeFile, "rb");
+        f = fopen(loadDotCodeFile, "rb");
         //f=utilOpenFile(filebuffer,"rb");
         //f=utilOpenFile("dotcode4.raw","rb");
         if (f == NULL) {
@@ -264,7 +265,7 @@ void BIOS_EReader_ScanCard(int swi_num)
             reg[0].I = 0x303;
             return;
         }
-        FREAD_UNCHECKED(DotCodeData, 1, i, f);
+        fread(DotCodeData, 1, i, f);
         fclose(f);
 
         if (dotcodetype == 0) {
@@ -506,7 +507,7 @@ void BIOS_EReader_ScanCard(int swi_num)
                     }
                     if (swi_num == 0xE3) {
                         const char* loadDotCodeFile = GetLoadDotCodeFile();
-                        f = utilOpenFile(loadDotCodeFile, "rb+");
+                        f = fopen(loadDotCodeFile, "rb+");
                         if (f != NULL) {
                             fwrite(dotcodedata, 1, j, f);
                             fclose(f);
@@ -514,7 +515,7 @@ void BIOS_EReader_ScanCard(int swi_num)
                     } else {
                         const char* saveDotCodeFile = GetSaveDotCodeFile();
                         if (saveDotCodeFile) {
-                            f = utilOpenFile(saveDotCodeFile, "wb");
+                            f = fopen(saveDotCodeFile, "wb");
                             if (f != NULL) {
                                 fwrite(dotcodedata, 1, j, f);
                                 fwrite(Signature, 1, 0x28, f);
