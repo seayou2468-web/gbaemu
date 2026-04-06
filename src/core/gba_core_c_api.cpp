@@ -200,10 +200,15 @@ void GBA_StepFrame(GBACoreHandle *handle) {
         return;
     }
 
-    constexpr int kSlicesPerStep = 4;
-    for (int i = 0; i < kSlicesPerStep; ++i) {
-        const uint32_t executed = execute_cycles > 0 ? execute_cycles : 1;
-        execute_arm_translate(executed);
+    const uint32_t start_frame_tick = frame_ticks;
+    constexpr int kMaxStepIterations = 1024;
+    constexpr int kCpuStepsPerTimingUpdate = 8;
+    for (int i = 0; i < kMaxStepIterations; ++i) {
+        for (int j = 0; j < kCpuStepsPerTimingUpdate; ++j) {
+            execute_arm_translate(1);
+        }
+        update_gba();
+        if (frame_ticks != start_frame_tick) break;
     }
 
     if (!handle->has_presented_frame_tick || frame_ticks != handle->last_presented_frame_tick) {
