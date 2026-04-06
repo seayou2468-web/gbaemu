@@ -19,6 +19,7 @@ void init_memory(void);
 void reset_gba(void);
 int load_bios(char *name);
 unsigned load_gamepak(char *name);
+void execute_arm(uint32_t cycles);
 uint32_t execute_arm_translate(uint32_t cycles);
 uint32_t update_gba(void);
 uint16_t *copy_screen(void);
@@ -75,7 +76,6 @@ struct GBACoreHandle {
     uint32_t last_presented_frame_tick = 0;
     bool has_presented_frame_tick = false;
     std::vector<uint32_t> framebuffer;
-    uint32_t step_counter = 0;
 };
 
 static void SetError(GBACoreHandle *h, const char *msg) {
@@ -91,21 +91,6 @@ static void RefreshFrameBuffer(GBACoreHandle *h) {
         h->framebuffer[i] = Bgr555ToRgba8888(raw[i]);
     }
     free(raw);
-}
-
-
-static void StampDebugMotion(GBACoreHandle *h) {
-    if (!h || h->framebuffer.empty()) return;
-    h->step_counter++;
-    const uint32_t r = (h->step_counter * 3u) & 0xFFu;
-    const uint32_t g = (h->step_counter * 5u) & 0xFFu;
-    const uint32_t b = (h->step_counter * 7u) & 0xFFu;
-    const uint32_t color = 0xFF000000u | (b << 16u) | (g << 8u) | r;
-    for (uint32_t y = 0; y < 8; ++y) {
-        for (uint32_t x = 0; x < 8; ++x) {
-            h->framebuffer[y * kScreenWidth + x] = color;
-        }
-    }
 }
 
 static void ConfigureBootFromBIOS(GBACoreHandle *h) {
@@ -191,7 +176,6 @@ bool GBA_LoadBIOSFromPath(GBACoreHandle *handle, const char *path) {
         reset_gba();
         ConfigureBootFromBIOS(handle);
         RefreshFrameBuffer(handle);
-    StampDebugMotion(handle);
         handle->last_presented_frame_tick = frame_ticks;
         handle->has_presented_frame_tick = true;
     }
@@ -214,7 +198,6 @@ bool GBA_LoadROMFromPath(GBACoreHandle *handle, const char *path) {
         ConfigureBootFromBIOS(handle);
     }
     RefreshFrameBuffer(handle);
-    StampDebugMotion(handle);
     handle->last_presented_frame_tick = frame_ticks;
     handle->has_presented_frame_tick = true;
     SetError(handle, "");
@@ -232,7 +215,6 @@ void GBA_Reset(GBACoreHandle *handle) {
         ConfigureBootFromBIOS(handle);
     }
     RefreshFrameBuffer(handle);
-    StampDebugMotion(handle);
     handle->last_presented_frame_tick = frame_ticks;
     handle->has_presented_frame_tick = true;
     SetError(handle, "");
@@ -245,20 +227,18 @@ void GBA_StepFrame(GBACoreHandle *handle) {
         return;
     }
     const uint32_t start_frame_tick = frame_ticks;
-    constexpr int kMaxStepIterations = 1024;
-    constexpr int kCpuStepsPerTimingUpdate = 8;
+    constexpr int kMaxStepIterations = 256;
     for (int i = 0; i < kMaxStepIterations; ++i) {
-        for (int j = 0; j < kCpuStepsPerTimingUpdate; ++j) {
-            execute_arm_translate(1);
-        }
+        execute_arm(execute_cycles);
         update_gba();
         if (frame_ticks != start_frame_tick) break;
     }
 
-    RefreshFrameBuffer(handle);
-    StampDebugMotion(handle);
-    handle->last_presented_frame_tick = frame_ticks;
-    handle->has_presented_frame_tick = true;
+    if (!handle->has_presented_frame_tick || frame_ticks != handle->last_presented_frame_tick) {
+        RefreshFrameBuffer(handle);
+        handle->last_presented_frame_tick = frame_ticks;
+        handle->has_presented_frame_tick = true;
+    }
     SetError(handle, "");
 }
 
