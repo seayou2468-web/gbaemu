@@ -1,6 +1,23 @@
 #ifndef VBAM_CORE_GBA_GBAINLINE_H_
 #define VBAM_CORE_GBA_GBAINLINE_H_
 
+#include <cstdint>
+#include <type_traits>
+
+#include "port.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint32_t read_eeprom(void);
+void write_eeprom(uint32_t address, uint32_t value);
+uint8_t read_backup(uint32_t address);
+void write_backup(uint32_t address, uint32_t value);
+void write_rtc(uint32_t address, uint32_t value);
+void soundEvent8(uint32_t address, uint8_t data);
+#ifdef __cplusplus
+}
+#endif
 
 extern const uint32_t objTilesAddress[3];
 
@@ -115,22 +132,53 @@ static inline bool IsGPIO(uint32_t address) {
 
 // used for ROM boundary check
 static inline bool IsEEPROM(uint32_t address) {
-    return (cpuEEPROMEnabled && (address & eepromMask) == eepromMask);
+    constexpr uint32_t kEepromAddressMask = 0x01FFFF00;
+    return (cpuEEPROMEnabled &&
+            (address & kEepromAddressMask) == kEepromAddressMask);
 }
 
 static inline bool isSaveGame() {
-    return (coreOptions.saveType != 5) && (!eepromInUse || cpuSramEnabled || cpuFlashEnabled);
+    return (coreOptions.saveType != 5) &&
+           (!cpuEEPROMEnabled || cpuSramEnabled || cpuFlashEnabled);
+}
+
+static inline uint32_t eepromRead(uint32_t address) {
+    (void)address;
+    return read_eeprom();
+}
+
+static inline void eepromWrite(uint32_t address, uint8_t value) {
+    write_eeprom(address, value);
+}
+
+static inline uint16_t rtcRead(uint32_t address) {
+    (void)address;
+    return 0;
+}
+
+static inline bool rtcWrite(uint32_t address, uint16_t value) {
+    write_rtc(address, value);
+    return false;
+}
+
+static inline bool agbPrintWrite(uint32_t address, uint16_t value) {
+    (void)address;
+    (void)value;
+    return false;
 }
 
 // Reads sram or flash
 static inline uint8_t CPUReadBackup(uint32_t address) {
-    return flashRead(address);
+    return read_backup(address & 0xFFFF);
 }
 
 // writes sram or flash
 static inline void CPUWriteBackup(uint32_t address, uint8_t value) {
-    if (cpuSaveGameFunc)
+    if (cpuSaveGameFunc) {
         (*cpuSaveGameFunc)(address, value);
+        return;
+    }
+    write_backup(address & 0xFFFF, value);
 }
 
 static inline uint32_t CPUReadMemory(uint32_t address)

@@ -1,7 +1,11 @@
 #ifndef VBAM_CORE_BASE_PORT_H_
 #define VBAM_CORE_BASE_PORT_H_
 
+#ifdef __cplusplus
 #include <cstdint>
+#else
+#include <stdint.h>
+#endif
 
 #ifdef __PS3__
 /* PlayStation3 */

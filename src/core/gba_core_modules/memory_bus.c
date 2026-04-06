@@ -2000,6 +2000,7 @@ s32 load_game_config(char *gamepak_title, char *gamepak_code, char *gamepak_make
   char current_variable[256];
   char current_value[256];
   char config_path[512];
+  int path_len;
   FILE *config_file;
 
   idle_loop_target_pc = 0xFFFFFFFF;
@@ -2009,7 +2010,10 @@ s32 load_game_config(char *gamepak_title, char *gamepak_code, char *gamepak_make
   translation_gate_targets = 0;
   flash_device_id = FLASH_DEVICE_MACRONIX_64KB;
 
-  sprintf(config_path, "%s" PATH_SEPARATOR "%s", main_path, CONFIG_FILENAME);
+  path_len = snprintf(config_path, sizeof(config_path),
+   "%s" PATH_SEPARATOR "%s", main_path, CONFIG_FILENAME);
+  if(path_len < 0 || (size_t)path_len >= sizeof(config_path))
+    return -1;
 
   config_file = fopen(config_path, "rb");
 
@@ -2370,8 +2374,15 @@ dma_region_type dma_region_map[16] =
 
 #define dma_read_ewram(type, transfer_size)                                   \
   dma_ewram_check_region(type);                                               \
-  read_value = address##transfer_size(type##_address_block,                   \
-   type##_ptr & 0x7FFF)                                                       \
+  if(type##_address_block == NULL)                                            \
+  {                                                                           \
+    read_value = 0;                                                           \
+  }                                                                           \
+  else                                                                        \
+  {                                                                           \
+    read_value = address##transfer_size(type##_address_block,                 \
+     type##_ptr & 0x7FFF);                                                    \
+  }                                                                           \
 
 #define dma_read_gamepak(type, transfer_size)                                 \
   dma_gamepak_check_region(type);                                             \
@@ -2407,11 +2418,13 @@ dma_region_type dma_region_map[16] =
 
 #define dma_write_ewram(type, transfer_size)                                  \
   dma_ewram_check_region(type);                                               \
-                                                                              \
-  address##transfer_size(type##_address_block, type##_ptr & 0x7FFF) =         \
-    read_value;                                                               \
-  smc_trigger |= address##transfer_size(type##_address_block,                 \
-   (type##_ptr & 0x7FFF) - 0x8000)                                            \
+  if(type##_address_block != NULL)                                            \
+  {                                                                           \
+    address##transfer_size(type##_address_block, type##_ptr & 0x7FFF) =       \
+      read_value;                                                             \
+    smc_trigger |= address##transfer_size(type##_address_block,               \
+     (type##_ptr & 0x7FFF) - 0x8000);                                         \
+  }                                                                           \
 
 #define dma_epilogue_iwram()                                                  \
   if(smc_trigger)                                                             \
@@ -2718,7 +2731,7 @@ dma_region_type dma_region_map[16] =
       dma_transfer_loop_region(gamepak, ext, src_op, dest_op,                 \
        transfer_size, wb);                                                    \
                                                                               \
-    case (DMA_REGION_EXT | (DMA_REGION_EXT << 3)):                            \
+    case (DMA_REGION_EXT | (DMA_REGION_EXT << 4)):                            \
       dma_transfer_loop_region(ext, ext, src_op, dest_op,                     \
        transfer_size, wb);                                                    \
   }                                                                           \
@@ -2804,6 +2817,52 @@ cpu_alert_type dma_transfer(dma_transfer_type *dma)
     src_ptr += first_length;
   }
 
+#ifdef PC_BUILD
+  {
+    const u32 transfer_size = (dma->length_type == DMA_16BIT) ? 16 : 32;
+    const u32 unit = transfer_size / 8;
+    const u32 source_direction = dma->source_direction & 0x03;
+    const u32 dest_direction = dma->dest_direction & 0x03;
+    const s32 src_step = (source_direction == 0) ? (s32)unit :
+      ((source_direction == 1) ? -(s32)unit : 0);
+    const s32 dest_step = (dest_direction == 0 || dest_direction == 3) ? (s32)unit :
+      ((dest_direction == 1) ? -(s32)unit : 0);
+    const u32 initial_dest_ptr = dest_ptr;
+
+    if(transfer_size == 16)
+    {
+      src_ptr &= ~0x01;
+      dest_ptr &= ~0x01;
+      cycle_dma16_words += length;
+      for(i = 0; i < length; i++)
+      {
+        read_value = read_memory16(src_ptr);
+        write_memory16(dest_ptr, read_value);
+        src_ptr = (u32)((s32)src_ptr + src_step);
+        dest_ptr = (u32)((s32)dest_ptr + dest_step);
+      }
+    }
+    else
+    {
+      src_ptr &= ~0x03;
+      dest_ptr &= ~0x03;
+      cycle_dma32_words += length;
+      for(i = 0; i < length; i++)
+      {
+        read_value = read_memory32(src_ptr);
+        write_memory32(dest_ptr, read_value);
+        src_ptr = (u32)((s32)src_ptr + src_step);
+        dest_ptr = (u32)((s32)dest_ptr + dest_step);
+      }
+    }
+
+    dma->source_address = src_ptr;
+    if(dest_direction != 3)
+      dma->dest_address = dest_ptr;
+    else
+      dma->dest_address = initial_dest_ptr;
+  }
+#else
   if(dma->length_type == DMA_16BIT)
   {
     src_ptr &= ~0x01;
@@ -2818,6 +2877,7 @@ cpu_alert_type dma_transfer(dma_transfer_type *dma)
     cycle_dma32_words += length;
     dma_transfer_expand(32);
   }
+#endif
 
   if((dma->repeat_type == DMA_NO_REPEAT) ||
    (dma->start_type == DMA_START_IMMEDIATELY))

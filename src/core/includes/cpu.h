@@ -3,6 +3,8 @@
 #ifndef CPU_H
 #define CPU_H
 
+#include "../common.h"
+
 // System mode and user mode are represented as the same here
 
 typedef enum

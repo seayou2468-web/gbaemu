@@ -886,8 +886,12 @@ enum
 s32 load_config_file()
 {
   char config_path[512];
+  int path_len;
 
-  sprintf(config_path, "%s" PATH_SEPARATOR "%s", main_path, GPSP_CONFIG_FILENAME);
+  path_len = snprintf(config_path, sizeof(config_path),
+   "%s" PATH_SEPARATOR "%s", main_path, GPSP_CONFIG_FILENAME);
+  if(path_len < 0 || (size_t)path_len >= sizeof(config_path))
+    return -1;
 
   file_open(config_file, config_path, read);
 
@@ -987,8 +991,12 @@ s32 save_game_config_file()
 s32 save_config_file()
 {
   char config_path[512];
+  int path_len;
 
-  sprintf(config_path, "%s" PATH_SEPARATOR "%s", main_path, GPSP_CONFIG_FILENAME);
+  path_len = snprintf(config_path, sizeof(config_path),
+   "%s" PATH_SEPARATOR "%s", main_path, GPSP_CONFIG_FILENAME);
+  if(path_len < 0 || (size_t)path_len >= sizeof(config_path))
+    return -1;
 
   file_open(config_file, config_path, write);
 

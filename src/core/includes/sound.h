@@ -2,6 +2,8 @@
 #ifndef SOUND_H
 #define SOUND_H
 
+#include "../common.h"
+
 #define BUFFER_SIZE 65536
 
 #define GBA_XTAL      16777216.0f

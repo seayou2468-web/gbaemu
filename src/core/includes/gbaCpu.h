@@ -1,11 +1,16 @@
 #ifndef VBAM_CORE_GBA_GBACPU_H_
 #define VBAM_CORE_GBA_GBACPU_H_
 
+#ifdef __cplusplus
 #include <cstdint>
+#else
+#include <stdint.h>
+#endif
 
 #include "system.h"
 #include "cheats.h"
 #include "gbaGlobals.h"
+#include "port.h"
 
 extern int armExecute();
 extern int thumbExecute();

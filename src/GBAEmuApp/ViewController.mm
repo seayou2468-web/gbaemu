@@ -37,8 +37,8 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 
     [self setupUI];
     [self refreshPlayState];
-    self.statusLabel.text = @"BIOSを選択してください";
-    self.biosStatusLabel.text = @"BIOS: 未選択";
+    self.statusLabel.text = @"ROMを選択してください（BIOSは任意）";
+    self.biosStatusLabel.text = @"BIOS: 未選択（ROM直起動）";
 }
 
 - (void)dealloc {
@@ -64,7 +64,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 
     self.biosStatusLabel = [[UILabel alloc] init];
     self.biosStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.biosStatusLabel.text = @"BIOS: 未選択";
+    self.biosStatusLabel.text = @"BIOS: 未選択（ROM直起動）";
     self.biosStatusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     self.biosStatusLabel.numberOfLines = 0;
 
@@ -170,7 +170,7 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
             if (self.romLoaded && ![self resetAndRenderInitialFrame]) {
                 self.statusLabel.text = [NSString stringWithFormat:@"初期描画失敗: %@", self.engine.lastErrorMessage];
             } else {
-                self.statusLabel.text = @"BIOSを読み込みました";
+                self.statusLabel.text = @"BIOSを読み込みました（BIOS起動）";
             }
         } else {
             self.biosLoaded = NO;
@@ -182,14 +182,12 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
         if (loaded) {
             self.romLoaded = YES;
             self.romStatusLabel.text = [NSString stringWithFormat:@"ROM: %@", url.lastPathComponent ?: @"(不明)"];
-            if (self.biosLoaded) {
-                if (![self resetAndRenderInitialFrame]) {
-                    self.statusLabel.text = [NSString stringWithFormat:@"初期描画失敗: %@", self.engine.lastErrorMessage];
-                } else {
-                    self.statusLabel.text = @"ROMを読み込みました。再生を押してください";
-                }
+            if (![self resetAndRenderInitialFrame]) {
+                self.statusLabel.text = [NSString stringWithFormat:@"初期描画失敗: %@", self.engine.lastErrorMessage];
+            } else if (self.biosLoaded) {
+                self.statusLabel.text = @"ROMを読み込みました。再生を押してください（BIOS起動）";
             } else {
-                self.statusLabel.text = @"ROMを読み込みました。次にBIOSを選択してください";
+                self.statusLabel.text = @"ROMを読み込みました。再生を押してください（ROM直起動）";
             }
         } else {
             self.romLoaded = NO;
@@ -218,10 +216,6 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 }
 
 - (void)togglePlayback {
-    if (!self.biosLoaded) {
-        self.statusLabel.text = @"先にBIOSを選択してください";
-        return;
-    }
     if (!self.romLoaded) {
         self.statusLabel.text = @"先にROMを選択してください";
         return;
@@ -264,8 +258,8 @@ typedef NS_ENUM(NSInteger, GBADocumentSelectionType) {
 }
 
 - (void)refreshPlayState {
-    self.playPauseButton.enabled = (self.romLoaded && self.biosLoaded);
-    if (!self.romLoaded || !self.biosLoaded) {
+    self.playPauseButton.enabled = self.romLoaded;
+    if (!self.romLoaded) {
         [self stopPlayback];
     }
 }

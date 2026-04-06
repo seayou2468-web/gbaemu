@@ -162,8 +162,13 @@ static void switch_to_romdir(void)
 static void save_romdir(void)
 {
   char buff[512];
+  int path_len;
 
-  snprintf(buff, sizeof(buff), "%s" PATH_SEPARATOR "romdir.txt", main_path);
+  path_len = snprintf(buff, sizeof(buff), "%s" PATH_SEPARATOR "romdir.txt",
+   main_path);
+  if(path_len < 0 || (size_t)path_len >= sizeof(buff))
+    return;
+
   file_open(romdir_file, buff, write);
 
   if(file_check_valid(romdir_file))
