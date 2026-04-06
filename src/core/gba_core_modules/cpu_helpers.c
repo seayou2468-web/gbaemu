@@ -1,742 +1,597 @@
-#if defined(__cplusplus)
-// Imported from reference implementation: gbaCpuArmDis.cpp
-/* BEGIN gbaCpuArmDis.cpp */
-#include "../includes/gbaCpuArmDis.h"
 
-/************************************************************************/
-/* Arm/Thumb command set disassembler                                   */
-/************************************************************************/
-#include <cstring>
+#include <aurora/internal/arm/decoder.h>
 
-#include "../includes/port.h"
-#include "../includes/gba.h"
-#include "../includes/gbaElf.h"
+#include <aurora/internal/arm/decoder-inlines.h>
+#include <aurora/internal/debugger/symbols.h>
+#include <aurora-util/string.h>
 
-struct Opcodes {
-    uint32_t mask;
-    uint32_t cval;
-    const char* mnemonic;
+#ifdef ENABLE_DEBUGGERS
+#define ADVANCE(AMOUNT) \
+	if (AMOUNT >= blen) { \
+		buffer[blen - 1] = '\0'; \
+		return total; \
+	} \
+	total += AMOUNT; \
+	buffer += AMOUNT; \
+	blen -= AMOUNT;
+
+static int _decodeRegister(int reg, char* buffer, int blen);
+static int _decodeRegisterList(int list, char* buffer, int blen);
+static int _decodePSR(int bits, char* buffer, int blen);
+static int _decodePCRelative(uint32_t address, const struct mDebuggerSymbols* symbols, uint32_t pc, bool thumbBranch, char* buffer, int blen);
+static int _decodeMemory(struct ARMMemoryAccess memory, struct ARMCore* cpu, const struct mDebuggerSymbols* symbols, int pc, char* buffer, int blen);
+static int _decodeShift(union ARMOperand operand, bool reg, char* buffer, int blen);
+
+static const char* _armConditions[] = {
+	"eq",
+	"ne",
+	"cs",
+	"cc",
+	"mi",
+	"pl",
+	"vs",
+	"vc",
+	"hi",
+	"ls",
+	"ge",
+	"lt",
+	"gt",
+	"le",
+	"al",
+	"nv"
 };
 
-#define debuggerReadMemory(addr) \
-    READ32LE(((uint32_t*)&map[(addr) >> 24].address[(addr)&map[(addr) >> 24].mask]))
-
-#define debuggerReadHalfWord(addr) \
-    READ16LE(((uint16_t*)&map[(addr) >> 24].address[(addr)&map[(addr) >> 24].mask]))
-
-#define debuggerReadByte(addr) \
-    map[(addr) >> 24].address[(addr)&map[(addr) >> 24].mask]
-
-const char hdig[] = "0123456789abcdef";
-
-const char* decVals[16] = {
-    "0", "1", "2", "3", "4", "5", "6", "7", "8",
-    "9", "10", "11", "12", "13", "14", "15"
-};
-
-const char* regs[16] = {
-    "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7",
-    "r8", "r9", "r10", "r11", "r12", "sp", "lr", "pc"
-};
-
-const char* conditions[16] = {
-    "eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc",
-    "hi", "ls", "ge", "lt", "gt", "le", "", "nv"
-};
-
-const char* shifts[5] = {
-    "lsl", "lsr", "asr", "ror", "rrx"
-};
-
-const char* armMultLoadStore[12] = {
-    // non-stack
-    "da", "ia", "db", "ib",
-    // stack store
-    "ed", "ea", "fd", "fa",
-    // stack load
-    "fa", "fd", "ea", "ed"
-};
-
-const Opcodes thumbOpcodes[] = {
-    // Format 1
-    { 0xf800, 0x0000, "lsl %r0, %r3, %o" },
-    { 0xf800, 0x0800, "lsr %r0, %r3, %o" },
-    { 0xf800, 0x1000, "asr %r0, %r3, %o" },
-    // Format 2
-    { 0xfe00, 0x1800, "add %r0, %r3, %r6" },
-    { 0xfe00, 0x1a00, "sub %r0, %r3, %r6" },
-    { 0xfe00, 0x1c00, "add %r0, %r3, %i" },
-    { 0xfe00, 0x1e00, "sub %r0, %r3, %i" },
-    // Format 3
-    { 0xf800, 0x2000, "mov %r8, %O" },
-    { 0xf800, 0x2800, "cmp %r8, %O" },
-    { 0xf800, 0x3000, "add %r8, %O" },
-    { 0xf800, 0x3800, "sub %r8, %O" },
-    // Format 4
-    { 0xffc0, 0x4000, "and %r0, %r3" },
-    { 0xffc0, 0x4040, "eor %r0, %r3" },
-    { 0xffc0, 0x4080, "lsl %r0, %r3" },
-    { 0xffc0, 0x40c0, "lsr %r0, %r3" },
-    { 0xffc0, 0x4100, "asr %r0, %r3" },
-    { 0xffc0, 0x4140, "adc %r0, %r3" },
-    { 0xffc0, 0x4180, "sbc %r0, %r3" },
-    { 0xffc0, 0x41c0, "ror %r0, %r3" },
-    { 0xffc0, 0x4200, "tst %r0, %r3" },
-    { 0xffc0, 0x4240, "neg %r0, %r3" },
-    { 0xffc0, 0x4280, "cmp %r0, %r3" },
-    { 0xffc0, 0x42c0, "cmn %r0, %r3" },
-    { 0xffc0, 0x4300, "orr %r0, %r3" },
-    { 0xffc0, 0x4340, "mul %r0, %r3" },
-    { 0xffc0, 0x4380, "bic %r0, %r3" },
-    { 0xffc0, 0x43c0, "mvn %r0, %r3" },
-    // Format 5
-    { 0xff80, 0x4700, "bx %h36" },
-    { 0xfcc0, 0x4400, "[ ??? ]" },
-    { 0xff00, 0x4400, "add %h07, %h36" },
-    { 0xff00, 0x4500, "cmp %h07, %h36" },
-    { 0xff00, 0x4600, "mov %h07, %h36" },
-    // Format 6
-    { 0xf800, 0x4800, "ldr %r8, [%I] (=%J)" },
-    // Format 7
-    { 0xfa00, 0x5000, "str%b %r0, [%r3, %r6]" },
-    { 0xfa00, 0x5800, "ldr%b %r0, [%r3, %r6]" },
-    // Format 8
-    { 0xfe00, 0x5200, "strh %r0, [%r3, %r6]" },
-    { 0xfe00, 0x5600, "ldsb %r0, [%r3, %r6]" },
-    { 0xfe00, 0x5a00, "ldrh %r0, [%r3, %r6]" },
-    { 0xfe00, 0x5e00, "ldsh %r0, [%r3, %r6]" },
-    // Format 9
-    { 0xe800, 0x6000, "str%B %r0, [%r3, %p]" },
-    { 0xe800, 0x6800, "ldr%B %r0, [%r3, %p]" },
-    // Format 10
-    { 0xf800, 0x8000, "strh %r0, [%r3, %e]" },
-    { 0xf800, 0x8800, "ldrh %r0, [%r3, %e]" },
-    // Format 11
-    { 0xf800, 0x9000, "str %r8, [sp, %w]" },
-    { 0xf800, 0x9800, "ldr %r8, [sp, %w]" },
-    // Format 12
-    { 0xf800, 0xa000, "add %r8, pc, %w (=%K)" },
-    { 0xf800, 0xa800, "add %r8, sp, %w" },
-    // Format 13
-    { 0xff00, 0xb000, "add sp, %s" },
-    // Format 14
-    { 0xffff, 0xb500, "push {lr}" },
-    { 0xff00, 0xb400, "push {%l}" },
-    { 0xff00, 0xb500, "push {%l,lr}" },
-    { 0xffff, 0xbd00, "pop {pc}" },
-    { 0xff00, 0xbd00, "pop {%l,pc}" },
-    { 0xff00, 0xbc00, "pop {%l}" },
-    // Format 15
-    { 0xf800, 0xc000, "stmia %r8!, {%l}" },
-    { 0xf800, 0xc800, "ldmia %r8!, {%l}" },
-    // Format 17
-    { 0xff00, 0xdf00, "swi %m" },
-    // Format 16
-    { 0xf000, 0xd000, "b%c %W" },
-    // Format 18
-    { 0xf800, 0xe000, "b %a" },
-    // Format 19
-    { 0xf800, 0xf000, "bl %A" },
-    { 0xf800, 0xf800, "blh %Z" },
-    { 0xff00, 0xbe00, "bkpt %O" },
-    // Unknown
-    { 0x0000, 0x0000, "[ ??? ]" }
-};
-
-const Opcodes armOpcodes[] = {
-    // Undefined
-    { 0x0e000010, 0x06000010, "[ undefined ]" },
-    // Branch instructions
-    { 0x0ff000f0, 0x01200010, "bx%c %r0" },
-    { 0x0f000000, 0x0a000000, "b%c %o" },
-    { 0x0f000000, 0x0b000000, "bl%c %o" },
-    { 0x0f000000, 0x0f000000, "swi%c %q" },
-    // PSR transfer
-    { 0x0fbf0fff, 0x010f0000, "mrs%c %r3, %p" },
-    { 0x0db0f000, 0x0120f000, "msr%c %p, %i" },
-    // Multiply instructions
-    { 0x0fe000f0, 0x00000090, "mul%c%s %r4, %r0, %r2" },
-    { 0x0fe000f0, 0x00200090, "mla%c%s %r4, %r0, %r2, %r3" },
-    { 0x0fa000f0, 0x00800090, "%umull%c%s %r3, %r4, %r0, %r2" },
-    { 0x0fa000f0, 0x00a00090, "%umlal%c%s %r3, %r4, %r0, %r2" },
-    // Load/Store instructions
-    { 0x0fb00ff0, 0x01000090, "swp%c%b %r3, %r0, [%r4]" },
-    { 0x0fb000f0, 0x01000090, "[ ??? ]" },
-    { 0x0c100000, 0x04000000, "str%c%b%t %r3, %a" },
-    { 0x0c100000, 0x04100000, "ldr%c%b%t %r3, %a" },
-    { 0x0e100090, 0x00000090, "str%c%h %r3, %a" },
-    { 0x0e100090, 0x00100090, "ldr%c%h %r3, %a" },
-    { 0x0e100000, 0x08000000, "stm%c%m %r4%l" },
-    { 0x0e100000, 0x08100000, "ldm%c%m %r4%l" },
-    // Data processing
-    { 0x0de00000, 0x00000000, "and%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x00200000, "eor%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x00400000, "sub%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x00600000, "rsb%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x00800000, "add%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x00a00000, "adc%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x00c00000, "sbc%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x00e00000, "rsc%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x01000000, "tst%c%s %r4, %i" },
-    { 0x0de00000, 0x01200000, "teq%c%s %r4, %i" },
-    { 0x0de00000, 0x01400000, "cmp%c%s %r4, %i" },
-    { 0x0de00000, 0x01600000, "cmn%c%s %r4, %i" },
-    { 0x0de00000, 0x01800000, "orr%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x01a00000, "mov%c%s %r3, %i" },
-    { 0x0de00000, 0x01c00000, "bic%c%s %r3, %r4, %i" },
-    { 0x0de00000, 0x01e00000, "mvn%c%s %r3, %i" },
-    // Coprocessor operations
-    { 0x0f000010, 0x0e000000, "cdp%c %P, %N, %r3, %R4, %R0%V" },
-    { 0x0e100000, 0x0c000000, "stc%c%L %P, %r3, %A" },
-    { 0x0f100010, 0x0e000010, "mcr%c %P, %N, %r3, %R4, %R0%V" },
-    { 0x0f100010, 0x0e100010, "mrc%c %P, %N, %r3, %R4, %R0%V" },
-    // Unknown
-    { 0x00000000, 0x00000000, "[ ??? ]" }
-};
-
-char* addStr(char* dest, const char* src)
-{
-    while (*src) {
-        *dest++ = *src++;
-    }
-    return dest;
+static int _decodeRegister(int reg, char* buffer, int blen) {
+	switch (reg) {
+	case ARM_SP:
+		strlcpy(buffer, "sp", blen);
+		return 2;
+	case ARM_LR:
+		strlcpy(buffer, "lr", blen);
+		return 2;
+	case ARM_PC:
+		strlcpy(buffer, "pc", blen);
+		return 2;
+	case ARM_CPSR:
+		strlcpy(buffer, "cpsr", blen);
+		return 4;
+	case ARM_SPSR:
+		strlcpy(buffer, "spsr", blen);
+		return 4;
+	default:
+		return snprintf(buffer, blen, "r%i", reg);
+	}
 }
 
-char* addHex(char* dest, int siz, uint32_t val)
-{
-    if (siz == 0) {
-        siz = 28;
-        while ((((val >> siz) & 15) == 0) && (siz >= 4))
-            siz -= 4;
-        siz += 4;
-    }
-    while (siz > 0) {
-        siz -= 4;
-        *dest++ = hdig[(val >> siz) & 15];
-    }
-    return dest;
+static int _decodeRegisterList(int list, char* buffer, int blen) {
+	if (blen <= 0) {
+		return 0;
+	}
+	int total = 0;
+	strlcpy(buffer, "{", blen);
+	ADVANCE(1);
+	int i;
+	int start = -1;
+	int end = -1;
+	int written;
+	for (i = 0; i <= ARM_PC; ++i) {
+		if (list & 1) {
+			if (start < 0) {
+				start = i;
+				end = i;
+			} else if (end + 1 == i) {
+				end = i;
+			} else {
+				if (end > start) {
+					written = _decodeRegister(start, buffer, blen);
+					ADVANCE(written);
+					strlcpy(buffer, "-", blen);
+					ADVANCE(1);
+				}
+				written = _decodeRegister(end, buffer, blen);
+				ADVANCE(written);
+				strlcpy(buffer, ",", blen);
+				ADVANCE(1);
+				start = i;
+				end = i;
+			}
+		}
+		list >>= 1;
+	}
+	if (start >= 0) {
+		if (end > start) {
+			written = _decodeRegister(start, buffer, blen);
+			ADVANCE(written);
+			strlcpy(buffer, "-", blen);
+			ADVANCE(1);
+		}
+		written = _decodeRegister(end, buffer, blen);
+		ADVANCE(written);
+	}
+	strlcpy(buffer, "}", blen);
+	ADVANCE(1);
+	return total;
 }
 
-int disArm(uint32_t offset, char* dest, unsigned dest_sz, int flags)
-{
-    if (dest_sz < 80) {
-        *dest = '\0';
-        return 4;
-    }
-
-    uint32_t opcode = debuggerReadMemory(offset);
-
-    const Opcodes* sp = armOpcodes;
-    while (sp->cval != (opcode & sp->mask))
-        sp++;
-
-    if (flags & DIS_VIEW_ADDRESS) {
-        dest = addHex(dest, 32, offset);
-        *dest++ = ' ';
-    }
-    if (flags & DIS_VIEW_CODE) {
-        dest = addHex(dest, 32, opcode);
-        *dest++ = ' ';
-    }
-
-    const char* src = sp->mnemonic;
-    while (*src) {
-        if (*src != '%')
-            *dest++ = *src++;
-        else {
-            src++;
-            switch (*src) {
-            case 'c':
-                dest = addStr(dest, conditions[opcode >> 28]);
-                break;
-            case 'r':
-                dest = addStr(dest, regs[(opcode >> ((*(++src) - '0') * 4)) & 15]);
-                break;
-            case 'o': {
-                *dest++ = '$';
-                int off = opcode & 0xffffff;
-                if (off & 0x800000)
-                    off |= 0xff000000;
-                off <<= 2;
-                dest = addHex(dest, 32, offset + 8 + off);
-            } break;
-            case 'i':
-                if (opcode & (1 << 25)) {
-                    dest = addStr(dest, "#0x");
-                    int imm = opcode & 0xff;
-                    int rot = (opcode & 0xf00) >> 7;
-                    int val = (imm << (32 - rot)) | (imm >> rot);
-                    dest = addHex(dest, 0, val);
-                } else {
-                    dest = addStr(dest, regs[opcode & 0x0f]);
-                    int shi = (opcode >> 5) & 3;
-                    int sdw = (opcode >> 7) & 0x1f;
-                    if ((sdw == 0) && (shi == 3))
-                        shi = 4;
-                    if ((sdw) || (opcode & 0x10) || (shi)) {
-                        dest = addStr(dest, ", ");
-                        dest = addStr(dest, shifts[shi]);
-                        if (opcode & 0x10) {
-                            *dest++ = ' ';
-                            dest = addStr(dest, regs[(opcode >> 8) & 15]);
-                        } else {
-                            if (sdw == 0 && ((shi == 1) || (shi == 2)))
-                                sdw = 32;
-                            if (shi != 4) {
-                                dest = addStr(dest, " #0x");
-                                dest = addHex(dest, 8, sdw);
-                            }
-                        }
-                    }
-                }
-                break;
-            case 'p':
-                if (opcode & (1 << 22))
-                    dest = addStr(dest, "spsr");
-                else
-                    dest = addStr(dest, "cpsr");
-                if (opcode & 0x00F00000) {
-                    *dest++ = '_';
-                    if (opcode & 0x00080000)
-                        *dest++ = 'f';
-                    if (opcode & 0x00040000)
-                        *dest++ = 's';
-                    if (opcode & 0x00020000)
-                        *dest++ = 'x';
-                    if (opcode & 0x00010000)
-                        *dest++ = 'c';
-                }
-                break;
-            case 's':
-                if (opcode & (1 << 20))
-                    *dest++ = 's';
-                break;
-            case 'S':
-                if (opcode & (1 << 22))
-                    *dest++ = 's';
-                break;
-            case 'u':
-                if (opcode & (1 << 22))
-                    *dest++ = 's';
-                else
-                    *dest++ = 'u';
-                break;
-            case 'b':
-                if (opcode & (1 << 22))
-                    *dest++ = 'b';
-                break;
-            case 'a':
-                if ((opcode & 0x076f0000) == 0x004f0000) {
-                    *dest++ = '[';
-                    *dest++ = '$';
-                    int adr = offset + 8;
-                    int add = (opcode & 15) | ((opcode >> 8) & 0xf0);
-                    if (opcode & (1 << 23))
-                        adr += add;
-                    else
-                        adr -= add;
-                    dest = addHex(dest, 32, adr);
-                    *dest++ = ']';
-                    dest = addStr(dest, " (=");
-                    *dest++ = '$';
-                    dest = addHex(dest, 32, debuggerReadMemory(adr));
-                    *dest++ = ')';
-                }
-                if ((opcode & 0x072f0000) == 0x050f0000) {
-                    *dest++ = '[';
-                    *dest++ = '$';
-                    int adr = offset + 8;
-                    if (opcode & (1 << 23))
-                        adr += opcode & 0xfff;
-                    else
-                        adr -= opcode & 0xfff;
-                    dest = addHex(dest, 32, adr);
-                    *dest++ = ']';
-                    dest = addStr(dest, " (=");
-                    *dest++ = '$';
-                    dest = addHex(dest, 32, debuggerReadMemory(adr));
-                    *dest++ = ')';
-                } else {
-                    int reg = (opcode >> 16) & 15;
-                    *dest++ = '[';
-                    dest = addStr(dest, regs[reg]);
-                    if (!(opcode & (1 << 24)))
-                        *dest++ = ']';
-                    if (((opcode & (1 << 25)) && (opcode & (1 << 26))) || (!(opcode & (1 << 22)) && !(opcode & (1 << 26)))) {
-                        dest = addStr(dest, ", ");
-                        if (!(opcode & (1 << 23)))
-                            *dest++ = '-';
-                        dest = addStr(dest, regs[opcode & 0x0f]);
-                        int shi = (opcode >> 5) & 3;
-                        if (opcode & (1 << 26)) {
-                            if (((opcode >> 7) & 0x1f) || (opcode & 0x10) || (shi == 1) || (shi == 2)) {
-                                dest = addStr(dest, ", ");
-                                dest = addStr(dest, shifts[shi]);
-                                if (opcode & 0x10) {
-                                    *dest++ = ' ';
-                                    dest = addStr(dest, regs[(opcode >> 8) & 15]);
-                                } else {
-                                    int sdw = (opcode >> 7) & 0x1f;
-                                    if (sdw == 0 && ((shi == 1) || (shi == 2)))
-                                        sdw = 32;
-                                    dest = addStr(dest, " #0x");
-                                    dest = addHex(dest, 8, sdw);
-                                }
-                            }
-                        }
-                    } else {
-                        int off;
-                        if (opcode & (1 << 26))
-                            off = opcode & 0xfff;
-                        else
-                            off = (opcode & 15) | ((opcode >> 4) & 0xf0);
-                        if (off) {
-                            dest = addStr(dest, ", ");
-                            if (!(opcode & (1 << 23)))
-                                *dest++ = '-';
-                            dest = addStr(dest, "#0x");
-                            dest = addHex(dest, 0, off);
-                        }
-                    }
-                    if (opcode & (1 << 24)) {
-                        *dest++ = ']';
-                        if (opcode & (1 << 21))
-                            *dest++ = '!';
-                    }
-                }
-                break;
-            case 't':
-                if ((opcode & 0x01200000) == 0x01200000)
-                    *dest++ = 't';
-                break;
-            case 'h':
-                if (opcode & (1 << 6))
-                    *dest++ = 's';
-                if (opcode & (1 << 5))
-                    *dest++ = 'h';
-                else
-                    *dest++ = 'b';
-                break;
-            case 'm':
-                if (((opcode >> 16) & 15) == 13) {
-                    if (opcode & 0x00100000)
-                        dest = addStr(dest, armMultLoadStore[8 + ((opcode >> 23) & 3)]);
-                    else
-                        dest = addStr(dest, armMultLoadStore[4 + ((opcode >> 23) & 3)]);
-                } else
-                    dest = addStr(dest, armMultLoadStore[(opcode >> 23) & 3]);
-                break;
-            case 'l':
-                if (opcode & (1 << 21))
-                    *dest++ = '!';
-                dest = addStr(dest, ", {");
-                {
-                    int rlst = opcode & 0xffff;
-                    int msk = 0;
-                    int not_first = 0;
-                    while (msk < 16) {
-                        if (rlst & (1 << msk)) {
-                            int fr = msk;
-                            while (rlst & (1 << msk))
-                                msk++;
-                            int to = msk - 1;
-                            if (not_first)
-                                //dest = addStr(dest, ", ");
-                                *dest++ = ',';
-                            dest = addStr(dest, regs[fr]);
-                            if (fr != to) {
-                                if (fr == to - 1)
-                                    //dest = addStr(", ");
-                                    *dest++ = ',';
-                                else
-                                    *dest++ = '-';
-                                dest = addStr(dest, regs[to]);
-                            }
-                            not_first = 1;
-                        } else
-                            msk++;
-                    }
-                    *dest++ = '}';
-                    if (opcode & (1 << 22))
-                        *dest++ = '^';
-                }
-                break;
-            case 'q':
-                *dest++ = '$';
-                dest = addHex(dest, 24, opcode & 0xffffff);
-                break;
-            case 'P':
-                *dest++ = 'p';
-                dest = addStr(dest, decVals[(opcode >> 8) & 15]);
-                break;
-            case 'N':
-                if (opcode & 0x10)
-                    dest = addStr(dest, decVals[(opcode >> 21) & 7]);
-                else
-                    dest = addStr(dest, decVals[(opcode >> 20) & 15]);
-                break;
-            case 'R': {
-                src++;
-                int reg = 4 * (*src - '0');
-                *dest++ = 'c';
-                dest = addStr(dest, decVals[(opcode >> reg) & 15]);
-            } break;
-            case 'V': {
-                int val = (opcode >> 5) & 7;
-                if (val) {
-                    dest = addStr(dest, ", ");
-                    dest = addStr(dest, decVals[val]);
-                }
-            } break;
-            case 'L':
-                if (opcode & (1 << 22))
-                    *dest++ = 'l';
-                break;
-            case 'A':
-                if ((opcode & 0x012f0000) == 0x010f0000) {
-                    int adr = offset + 8;
-                    int add = (opcode & 0xff) << 2;
-                    if (opcode & (1 << 23))
-                        adr += add;
-                    else
-                        adr -= add;
-                    *dest++ = '$';
-                    addHex(dest, 32, adr);
-                } else {
-                    *dest++ = '[';
-                    dest = addStr(dest, regs[(opcode >> 16) & 15]);
-                    if (!(opcode & (1 << 24)))
-                        *dest++ = ']';
-                    int off = (opcode & 0xff) << 2;
-                    if (off) {
-                        dest = addStr(dest, ", ");
-                        if (!(opcode & (1 << 23)))
-                            *dest++ = '-';
-                        dest = addStr(dest, "#0x");
-                        dest = addHex(dest, 0, off);
-                    }
-                    if (opcode & (1 << 24)) {
-                        *dest++ = ']';
-                        if (opcode & (1 << 21))
-                            *dest++ = '!';
-                    }
-                }
-                break;
-            }
-            src++;
-        }
-    }
-    *dest++ = 0;
-
-    return 4;
+static int _decodePSR(int psrBits, char* buffer, int blen) {
+	if (!psrBits) {
+		return 0;
+	}
+	int total = 0;
+	strlcpy(buffer, "_", blen);
+	ADVANCE(1);
+	if (psrBits & ARM_PSR_C) {
+		strlcpy(buffer, "c", blen);
+		ADVANCE(1);
+	}
+	if (psrBits & ARM_PSR_X) {
+		strlcpy(buffer, "x", blen);
+		ADVANCE(1);
+	}
+	if (psrBits & ARM_PSR_S) {
+		strlcpy(buffer, "s", blen);
+		ADVANCE(1);
+	}
+	if (psrBits & ARM_PSR_F) {
+		strlcpy(buffer, "f", blen);
+		ADVANCE(1);
+	}
+	return total;
 }
 
-int disThumb(uint32_t offset, char* dest, unsigned dest_sz, int flags)
-{
-    if (dest_sz < 80) {
-        *dest = '\0';
-        return 2;
-    }
-
-    char* end = dest + dest_sz;
-
-    uint32_t opcode = debuggerReadHalfWord(offset);
-
-    const Opcodes* sp = thumbOpcodes;
-    int ret = 2;
-    while (sp->cval != (opcode & sp->mask))
-        sp++;
-
-    if (flags & DIS_VIEW_ADDRESS) {
-        dest = addHex(dest, 32, offset);
-        *dest++ = ' ';
-    }
-    if (flags & DIS_VIEW_CODE) {
-        dest = addHex(dest, 16, opcode);
-        *dest++ = ' ';
-    }
-
-    const char* src = sp->mnemonic;
-    while (*src) {
-        if (*src != '%')
-            *dest++ = *src++;
-        else {
-            src++;
-            switch (*src) {
-            case 'r':
-                src++;
-                dest = addStr(dest, regs[(opcode >> (*src - '0')) & 7]);
-                break;
-            case 'o':
-                dest = addStr(dest, "#0x");
-                {
-                    int val = (opcode >> 6) & 0x1f;
-                    dest = addHex(dest, 8, val);
-                }
-                break;
-            case 'p':
-                dest = addStr(dest, "#0x");
-                {
-                    int val = (opcode >> 6) & 0x1f;
-                    if (!(opcode & (1 << 12)))
-                        val <<= 2;
-                    dest = addHex(dest, 0, val);
-                }
-                break;
-            case 'e':
-                dest = addStr(dest, "#0x");
-                dest = addHex(dest, 0, ((opcode >> 6) & 0x1f) << 1);
-                break;
-            case 'i':
-                dest = addStr(dest, "#0x");
-                dest = addHex(dest, 0, (opcode >> 6) & 7);
-                break;
-            case 'h': {
-                src++;
-                int reg = (opcode >> (*src - '0')) & 7;
-                src++;
-                if (opcode & (1 << (*src - '0')))
-                    reg += 8;
-                dest = addStr(dest, regs[reg]);
-            } break;
-            case 'O':
-                dest = addStr(dest, "#0x");
-                dest = addHex(dest, 0, (opcode & 0xff));
-                break;
-            case 'I':
-                *dest++ = '$';
-                dest = addHex(dest, 32, (offset & 0xfffffffc) + 4 + ((opcode & 0xff) << 2));
-                break;
-            case 'J': {
-                uint32_t value = debuggerReadMemory((offset & 0xfffffffc) + 4 + ((opcode & 0xff) << 2));
-                *dest++ = '$';
-                dest = addHex(dest, 32, value);
-                const char* s = elfGetAddressSymbol(value);
-                if (*s && (dest + strlen(s) + 1) < end) {
-                    *dest++ = ' ';
-                    dest = addStr(dest, s);
-                }
-            } break;
-            case 'K': {
-                uint32_t value = (offset & 0xfffffffc) + 4 + ((opcode & 0xff) << 2);
-                *dest++ = '$';
-                dest = addHex(dest, 32, value);
-                const char* s = elfGetAddressSymbol(value);
-                if (*s && (dest + strlen(s) + 1) < end) {
-                    *dest++ = ' ';
-                    dest = addStr(dest, s);
-                }
-            } break;
-            case 'b':
-                if (opcode & (1 << 10))
-                    *dest++ = 'b';
-                break;
-            case 'B':
-                if (opcode & (1 << 12))
-                    *dest++ = 'b';
-                break;
-            case 'w':
-                dest = addStr(dest, "#0x");
-                dest = addHex(dest, 0, (opcode & 0xff) << 2);
-                break;
-            case 'W':
-                *dest++ = '$';
-                {
-                    int add = opcode & 0xff;
-                    if (add & 0x80)
-                        add |= 0xffffff00;
-                    dest = addHex(dest, 32, (offset & 0xfffffffe) + 4 + (add << 1));
-                }
-                break;
-            case 'c':
-                dest = addStr(dest, conditions[(opcode >> 8) & 15]);
-                break;
-            case 's':
-                if (opcode & (1 << 7))
-                    *dest++ = '-';
-                dest = addStr(dest, "#0x");
-                dest = addHex(dest, 0, (opcode & 0x7f) << 2);
-                break;
-            case 'l': {
-                int rlst = opcode & 0xff;
-                int msk = 0;
-                int not_first = 0;
-                while (msk < 8) {
-                    if (rlst & (1 << msk)) {
-                        int fr = msk;
-                        while (rlst & (1 << msk))
-                            msk++;
-                        int to = msk - 1;
-                        if (not_first)
-                            *dest++ = ',';
-                        dest = addStr(dest, regs[fr]);
-                        if (fr != to) {
-                            if (fr == to - 1)
-                                *dest++ = ',';
-                            else
-                                *dest++ = '-';
-                            dest = addStr(dest, regs[to]);
-                        }
-                        not_first = 1;
-                    } else
-                        msk++;
-                }
-            } break;
-            case 'm':
-                *dest++ = '$';
-                dest = addHex(dest, 8, opcode & 0xff);
-                break;
-            case 'Z':
-                *dest++ = '$';
-                dest = addHex(dest, 16, (opcode & 0x7ff) << 1);
-                break;
-            case 'a':
-                *dest++ = '$';
-                {
-                    int add = opcode & 0x07ff;
-                    if (add & 0x400)
-                        add |= 0xfffff800;
-                    add <<= 1;
-                    dest = addHex(dest, 32, offset + 4 + add);
-                }
-                break;
-            case 'A': {
-                int nopcode = debuggerReadHalfWord(offset + 2);
-                int add = opcode & 0x7ff;
-                if (add & 0x400)
-                    add |= 0xfff800;
-                add = (add << 12) | ((nopcode & 0x7ff) << 1);
-                *dest++ = '$';
-                dest = addHex(dest, 32, offset + 4 + add);
-                const char* s = elfGetAddressSymbol(offset + 4 + add);
-                if (*s && (dest + strlen(s) + 3) < end) {
-                    *dest++ = ' ';
-                    *dest++ = '(';
-                    dest = addStr(dest, s);
-                    *dest++ = ')';
-                }
-                ret = 4;
-            } break;
-            }
-            src++;
-        }
-    }
-    *dest++ = 0;
-    return ret;
+static int _decodePCRelative(uint32_t address, const struct mDebuggerSymbols* symbols, uint32_t pc, bool thumbBranch, char* buffer, int blen) {
+	address += pc;
+	const char* label = NULL;
+	if (symbols) {
+		label = mDebuggerSymbolReverseLookup(symbols, address, -1);
+		if (!label && thumbBranch) {
+			label = mDebuggerSymbolReverseLookup(symbols, address | 1, -1);
+		}
+	}
+	if (label) {
+		return strlcpy(buffer, label, blen);
+	} else {
+		return snprintf(buffer, blen, "0x%08X", address);
+	}
 }
-/* END gbaCpuArmDis.cpp */
 
-#else
-/* C translation unit stub: compiled in C++ aggregate mode only. */
-#endif
+static int _decodeMemory(struct ARMMemoryAccess memory, struct ARMCore* cpu, const struct mDebuggerSymbols* symbols, int pc, char* buffer, int blen) {
+	if (blen <= 1) {
+		return 0;
+	}
+	int total = 0;
+	bool elideClose = false;
+	char comment[64];
+	int written;
+	comment[0] = '\0';
+	if (memory.format & ARM_MEMORY_REGISTER_BASE) {
+		if (memory.baseReg == ARM_PC && memory.format & ARM_MEMORY_IMMEDIATE_OFFSET) {
+			uint32_t addrBase = memory.format & ARM_MEMORY_OFFSET_SUBTRACT ? -memory.offset.immediate : memory.offset.immediate;
+			if (!cpu || memory.format & ARM_MEMORY_STORE) {
+				strlcpy(buffer, "[", blen);
+				ADVANCE(1);
+				written = _decodePCRelative(addrBase, symbols, pc & 0xFFFFFFFC, false, buffer, blen);
+				ADVANCE(written);
+			} else {
+				uint32_t value;
+				_decodePCRelative(addrBase, symbols, pc & 0xFFFFFFFC, false, comment, sizeof(comment));
+				addrBase += pc & 0xFFFFFFFC; // Thumb does not have PC-relative LDRH/LDRB
+				switch (memory.width & 7) {
+				case 1:
+					value = cpu->memory.load8(cpu, addrBase, NULL);
+					break;
+				case 2:
+					value = cpu->memory.load16(cpu, addrBase, NULL);
+					break;
+				case 4:
+					value = cpu->memory.load32(cpu, addrBase, NULL);
+					break;
+				default:
+					// Should never be reached
+					abort();
+				}
+				const char* label = NULL;
+				if (symbols) {
+					label = mDebuggerSymbolReverseLookup(symbols, value, -1);
+				}
+				if (label) {
+					written = snprintf(buffer, blen, "=%s", label);
+				} else {
+					written = snprintf(buffer, blen, "=0x%08X", value);
+				}
+				ADVANCE(written);
+				elideClose = true;
+			}
+		} else {
+			strlcpy(buffer, "[", blen);
+			ADVANCE(1);
+			written = _decodeRegister(memory.baseReg, buffer, blen);
+			ADVANCE(written);
+			if (memory.format & (ARM_MEMORY_REGISTER_OFFSET | ARM_MEMORY_IMMEDIATE_OFFSET) && !(memory.format & ARM_MEMORY_POST_INCREMENT)) {
+				strlcpy(buffer, ", ", blen);
+				ADVANCE(2);
+			}
+		}
+	} else {
+		strlcpy(buffer, "[", blen);
+		ADVANCE(1);
+	}
+	if (memory.format & ARM_MEMORY_POST_INCREMENT) {
+		strlcpy(buffer, "], ", blen);
+		ADVANCE(3);
+		elideClose = true;
+	}
+	if (memory.format & ARM_MEMORY_IMMEDIATE_OFFSET && memory.baseReg != ARM_PC) {
+		if (memory.format & ARM_MEMORY_OFFSET_SUBTRACT) {
+			written = snprintf(buffer, blen, "#-%i", memory.offset.immediate);
+			ADVANCE(written);
+		} else {
+			written = snprintf(buffer, blen, "#%i", memory.offset.immediate);
+			ADVANCE(written);
+		}
+	} else if (memory.format & ARM_MEMORY_REGISTER_OFFSET) {
+		if (memory.format & ARM_MEMORY_OFFSET_SUBTRACT) {
+			strlcpy(buffer, "-", blen);
+			ADVANCE(1);
+		}
+		written = _decodeRegister(memory.offset.reg, buffer, blen);
+		ADVANCE(written);
+	}
+	if (memory.format & ARM_MEMORY_SHIFTED_OFFSET) {
+		written = _decodeShift(memory.offset, false, buffer, blen);
+		ADVANCE(written);
+	}
 
-#if !defined(__cplusplus)
-#include "../common.h"
-#include "../includes/cpu.h"
+	if (!elideClose) {
+		strlcpy(buffer, "]", blen);
+		ADVANCE(1);
+	}
+	if ((memory.format & (ARM_MEMORY_PRE_INCREMENT | ARM_MEMORY_WRITEBACK)) == (ARM_MEMORY_PRE_INCREMENT | ARM_MEMORY_WRITEBACK)) {
+		strlcpy(buffer, "!", blen);
+		ADVANCE(1);
+	}
+	if (comment[0]) {
+		written = snprintf(buffer, blen, "  @ %s", comment);
+		ADVANCE(written);
+	}
+	return total;
+}
 
-int cpuRunArmStep(u32 cycles)
-{
-    execute_arm_step(cycles);
-    return 1;
+static int _decodeShift(union ARMOperand op, bool reg, char* buffer, int blen) {
+	if (blen <= 1) {
+		return 0;
+	}
+	int total = 0;
+	strlcpy(buffer, ", ", blen);
+	ADVANCE(2);
+	int written;
+	switch (op.shifterOp) {
+	case ARM_SHIFT_LSL:
+		strlcpy(buffer, "lsl ", blen);
+		ADVANCE(4);
+		break;
+	case ARM_SHIFT_LSR:
+		strlcpy(buffer, "lsr ", blen);
+		ADVANCE(4);
+		break;
+	case ARM_SHIFT_ASR:
+		strlcpy(buffer, "asr ", blen);
+		ADVANCE(4);
+		break;
+	case ARM_SHIFT_ROR:
+		strlcpy(buffer, "ror ", blen);
+		ADVANCE(4);
+		break;
+	case ARM_SHIFT_RRX:
+		strlcpy(buffer, "rrx", blen);
+		ADVANCE(3);
+		return total;
+	}
+	if (!reg) {
+		written = snprintf(buffer, blen, "#%i", op.shifterImm);
+	} else {
+		written = _decodeRegister(op.shifterReg, buffer, blen);
+	}
+	ADVANCE(written);
+	return total;
+}
+
+static const char* _armMnemonicStrings[] = {
+	"ill",
+	"adc",
+	"add",
+	"and",
+	"asr",
+	"b",
+	"bic",
+	"bkpt",
+	"bl",
+	"bx",
+	"cmn",
+	"cmp",
+	"eor",
+	"ldm",
+	"ldr",
+	"lsl",
+	"lsr",
+	"mla",
+	"mov",
+	"mrs",
+	"msr",
+	"mul",
+	"mvn",
+	"neg",
+	"orr",
+	"ror",
+	"rsb",
+	"rsc",
+	"sbc",
+	"smlal",
+	"smull",
+	"stm",
+	"str",
+	"sub",
+	"swi",
+	"swp",
+	"teq",
+	"tst",
+	"umlal",
+	"umull",
+
+	"ill"
+};
+
+static const char* _armDirectionStrings[] = {
+	"da",
+	"ia",
+	"db",
+	"ib"
+};
+
+static const char* _armAccessTypeStrings[] = {
+	"",
+	"b",
+	"h",
+	"",
+	"",
+	"",
+	"",
+	"",
+
+	"",
+	"sb",
+	"sh",
+	"",
+	"",
+	"",
+	"",
+	"",
+
+	"",
+	"bt",
+	"",
+	"",
+	"t",
+	"",
+	"",
+	""
+};
+
+int ARMDisassemble(const struct ARMInstructionInfo* info, struct ARMCore* cpu, const struct mDebuggerSymbols* symbols, uint32_t pc, char* buffer, int blen) {
+	const char* mnemonic = _armMnemonicStrings[info->mnemonic];
+	int written;
+	int total = 0;
+	bool skip3 = false;
+	const char* cond = "";
+	if (info->condition != ARM_CONDITION_AL && info->condition < ARM_CONDITION_NV) {
+		cond = _armConditions[info->condition];
+	}
+	const char* flags = "";
+	switch (info->mnemonic) {
+	case ARM_MN_LDM:
+	case ARM_MN_STM:
+		flags = _armDirectionStrings[MEMORY_FORMAT_TO_DIRECTION(info->memory.format)];
+		break;
+	case ARM_MN_LDR:
+	case ARM_MN_STR:
+	case ARM_MN_SWP:
+		flags = _armAccessTypeStrings[info->memory.width];
+		break;
+	case ARM_MN_ADD:
+		if ((info->operandFormat & (ARM_OPERAND_3 | ARM_OPERAND_4)) == ARM_OPERAND_IMMEDIATE_3 && info->op3.immediate == 0 && info->execMode == MODE_THUMB) {
+			skip3 = true;
+			mnemonic = "mov";
+		}
+		// Fall through
+	case ARM_MN_ADC:
+	case ARM_MN_AND:
+	case ARM_MN_ASR:
+	case ARM_MN_BIC:
+	case ARM_MN_EOR:
+	case ARM_MN_LSL:
+	case ARM_MN_LSR:
+	case ARM_MN_MLA:
+	case ARM_MN_MUL:
+	case ARM_MN_MOV:
+	case ARM_MN_MVN:
+	case ARM_MN_ORR:
+	case ARM_MN_ROR:
+	case ARM_MN_RSB:
+	case ARM_MN_RSC:
+	case ARM_MN_SBC:
+	case ARM_MN_SMLAL:
+	case ARM_MN_SMULL:
+	case ARM_MN_SUB:
+	case ARM_MN_UMLAL:
+	case ARM_MN_UMULL:
+		if (info->affectsCPSR && info->execMode == MODE_ARM) {
+			flags = "s";
+		}
+		break;
+	default:
+		break;
+	}
+	written = snprintf(buffer, blen, "%s%s%s ", mnemonic, cond, flags);
+	ADVANCE(written);
+
+	switch (info->mnemonic) {
+	case ARM_MN_LDM:
+	case ARM_MN_STM:
+		written = _decodeRegister(info->memory.baseReg, buffer, blen);
+		ADVANCE(written);
+		if (info->memory.format & ARM_MEMORY_WRITEBACK) {
+			strlcpy(buffer, "!", blen);
+			ADVANCE(1);
+		}
+		strlcpy(buffer, ", ", blen);
+		ADVANCE(2);
+		written = _decodeRegisterList(info->op1.immediate, buffer, blen);
+		ADVANCE(written);
+		if (info->memory.format & ARM_MEMORY_SPSR_SWAP) {
+			strlcpy(buffer, "^", blen);
+			ADVANCE(1);
+		}
+		break;
+	case ARM_MN_B:
+	case ARM_MN_BL:
+		if (info->operandFormat & ARM_OPERAND_IMMEDIATE_1) {
+			written = _decodePCRelative(info->op1.immediate, symbols, pc, true, buffer, blen);
+			ADVANCE(written);
+		}
+		break;
+	default:
+		if (info->operandFormat & ARM_OPERAND_IMMEDIATE_1) {
+			written = snprintf(buffer, blen, "#%i", info->op1.immediate);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_MEMORY_1) {
+			written = _decodeMemory(info->memory, cpu, symbols, pc, buffer, blen);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_REGISTER_1) {
+			written = _decodeRegister(info->op1.reg, buffer, blen);
+			ADVANCE(written);
+			if (info->op1.reg > ARM_PC) {
+				written = _decodePSR(info->op1.psrBits, buffer, blen);
+				ADVANCE(written);
+			}
+		}
+		if (info->operandFormat & ARM_OPERAND_SHIFT_REGISTER_1) {
+			written = _decodeShift(info->op1, true, buffer, blen);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_SHIFT_IMMEDIATE_1) {
+			written = _decodeShift(info->op1, false, buffer, blen);
+			ADVANCE(written);
+		}
+		if (info->operandFormat & ARM_OPERAND_2) {
+			strlcpy(buffer, ", ", blen);
+			ADVANCE(2);
+		}
+		if (info->operandFormat & ARM_OPERAND_IMMEDIATE_2) {
+			written = snprintf(buffer, blen, "#%i", info->op2.immediate);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_MEMORY_2) {
+			written = _decodeMemory(info->memory, cpu, symbols, pc, buffer, blen);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_REGISTER_2) {
+			written = _decodeRegister(info->op2.reg, buffer, blen);
+			ADVANCE(written);
+		}
+		if (info->operandFormat & ARM_OPERAND_SHIFT_REGISTER_2) {
+			written = _decodeShift(info->op2, true, buffer, blen);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_SHIFT_IMMEDIATE_2) {
+			written = _decodeShift(info->op2, false, buffer, blen);
+			ADVANCE(written);
+		}
+		if (!skip3) {
+			if (info->operandFormat & ARM_OPERAND_3) {
+				strlcpy(buffer, ", ", blen);
+				ADVANCE(2);
+			}
+			if (info->operandFormat & ARM_OPERAND_IMMEDIATE_3) {
+				written = snprintf(buffer, blen, "#%i", info->op3.immediate);
+				ADVANCE(written);
+			} else if (info->operandFormat & ARM_OPERAND_MEMORY_3) {
+				written = _decodeMemory(info->memory, cpu, symbols, pc, buffer, blen);
+				ADVANCE(written);
+			} else if (info->operandFormat & ARM_OPERAND_REGISTER_3) {
+				written = _decodeRegister(info->op3.reg, buffer, blen);
+				ADVANCE(written);
+			}
+			if (info->operandFormat & ARM_OPERAND_SHIFT_REGISTER_3) {
+				written = _decodeShift(info->op3, true, buffer, blen);
+				ADVANCE(written);
+			} else if (info->operandFormat & ARM_OPERAND_SHIFT_IMMEDIATE_3) {
+				written = _decodeShift(info->op3, false, buffer, blen);
+				ADVANCE(written);
+			}
+		}
+		if (info->operandFormat & ARM_OPERAND_4) {
+			strlcpy(buffer, ", ", blen);
+			ADVANCE(2);
+		}
+		if (info->operandFormat & ARM_OPERAND_IMMEDIATE_4) {
+			written = snprintf(buffer, blen, "#%i", info->op4.immediate);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_MEMORY_4) {
+			written = _decodeMemory(info->memory, cpu, symbols, pc, buffer, blen);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_REGISTER_4) {
+			written = _decodeRegister(info->op4.reg, buffer, blen);
+			ADVANCE(written);
+		}
+		if (info->operandFormat & ARM_OPERAND_SHIFT_REGISTER_4) {
+			written = _decodeShift(info->op4, true, buffer, blen);
+			ADVANCE(written);
+		} else if (info->operandFormat & ARM_OPERAND_SHIFT_IMMEDIATE_4) {
+			written = _decodeShift(info->op4, false, buffer, blen);
+			ADVANCE(written);
+		}
+		break;
+	}
+	buffer[blen - 1] = '\0';
+	return total;
 }
 #endif
+
+uint32_t ARMResolveMemoryAccess(struct ARMInstructionInfo* info, struct ARMRegisterFile* regs, uint32_t pc) {
+	uint32_t address = 0;
+	int32_t offset = 0;
+	if (info->memory.format & ARM_MEMORY_REGISTER_BASE) {
+		if (info->memory.baseReg == ARM_PC && info->memory.format & ARM_MEMORY_IMMEDIATE_OFFSET) {
+			address = pc;
+		} else {
+			address = regs->gprs[info->memory.baseReg];
+		}
+	}
+	if (info->memory.format & ARM_MEMORY_POST_INCREMENT) {
+		return address;
+	}
+	if (info->memory.format & ARM_MEMORY_IMMEDIATE_OFFSET) {
+		offset = info->memory.offset.immediate;
+	} else if (info->memory.format & ARM_MEMORY_REGISTER_OFFSET) {
+		offset = info->memory.offset.reg == ARM_PC ? pc : (uint32_t) regs->gprs[info->memory.offset.reg];
+	}
+	if (info->memory.format & ARM_MEMORY_SHIFTED_OFFSET) {
+		uint8_t shiftSize = info->memory.offset.shifterImm;
+		switch (info->memory.offset.shifterOp) {
+			case ARM_SHIFT_LSL:
+				offset <<= shiftSize;
+				break;
+			case ARM_SHIFT_LSR:
+				offset = ((uint32_t) offset) >> shiftSize;
+				break;
+			case ARM_SHIFT_ASR:
+				offset >>= shiftSize;
+				break;
+			case ARM_SHIFT_ROR:
+				offset = ROR(offset, shiftSize);
+				break;
+			case ARM_SHIFT_RRX:
+				offset = (regs->cpsr.c << 31) | ((uint32_t) offset >> 1);
+				break;
+			default:
+				break;
+		};
+	}
+	return address + (info->memory.format & ARM_MEMORY_OFFSET_SUBTRACT ? -offset : offset);
+}
