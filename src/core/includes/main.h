@@ -3,6 +3,8 @@
 #ifndef MAIN_H
 #define MAIN_H
 
+#include "../common.h"
+
 typedef enum
 {
   TIMER_INACTIVE,
@@ -173,5 +175,4 @@ void make_rpath(char *buff, size_t size, const char *ext);
 void set_clock_speed();
 
 #endif
-
 
